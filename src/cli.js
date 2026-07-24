@@ -7,6 +7,7 @@
 //   dirf create <name> "<task>" [--path DIR]             route -> attempt workflow JSON only
 //   dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
 //   dirf list [--path DIR]                               list saved attempts
+//   dirf status [--path DIR]                             show project and repository state
 //   dirf resume <name-or-id> [--path DIR]                load the workflow handoff
 //   dirf validate                                        validate registries + workflows
 //   dirf skills scan [--path DIR]                        scan host, print installed skills + resolved refs
@@ -313,6 +314,40 @@ function cmdList(args) {
   for (const attempt of attempts) console.log(`  - ${attempt.id}  ${attempt.name}`);
 }
 
+function gitOutput(target, args) {
+  try {
+    return execFileSync("git", ["-C", target, ...args], { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return "";
+  }
+}
+
+function cmdStatus(args) {
+  const target = projectRoot(args.path);
+  let attempts = [];
+  let configured = true;
+  try { loadProjectConfig(target); attempts = listAttempts(target); }
+  catch { configured = false; }
+
+  const branch = gitOutput(target, ["branch", "--show-current"]);
+  const changes = gitOutput(target, ["status", "--porcelain"]).split(/\r?\n/).filter(Boolean);
+  const aheadBehind = gitOutput(target, ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"]).split(/\s+/).map(Number);
+
+  console.log("DIRF status");
+  console.log(`Target: ${target}`);
+  console.log(`Configured: ${configured ? "yes" : "no"}`);
+  console.log(`Attempts: ${attempts.length}`);
+  if (attempts.length) console.log(`Latest: ${attempts.at(-1).id}`);
+  if (!branch) {
+    console.log("Repository: not a Git repository");
+    return;
+  }
+  console.log(`Repository: ${branch} (${changes.length ? `${changes.length} changed path(s)` : "clean"})`);
+  if (aheadBehind.length === 2 && aheadBehind.every(Number.isFinite)) {
+    console.log(`Upstream: ${aheadBehind[0]} ahead, ${aheadBehind[1]} behind`);
+  }
+}
+
 function cmdResume(args) {
   const attempt = findAttempt(projectRoot(args.path), args.name);
   const readme = join(attempt.folder, "README.md");
@@ -444,6 +479,7 @@ Usage:
   dirf graph <folder>                                 print ordered folder DAG
   dirf run <folder> [--no-focused-output]             print deterministic execution handoff
   dirf list [--path DIR]                               list saved attempts
+  dirf status [--path DIR]                             show project and repository state
   dirf resume <name-or-id> [--path DIR]                load the workflow handoff
   dirf migrate [<name>]                                remove runtime paths from saved snapshots
   dirf validate                                        validate registries
@@ -512,6 +548,7 @@ function main() {
     else { args.name = target; cmdRender(args); }
   }
   else if (cmd === "list") cmdList(args);
+  else if (cmd === "status") cmdStatus(args);
   else if (cmd === "resume") { args.name = args._[0]; cmdResume(args); }
   else if (cmd === "migrate") cmdMigrate(args._[0], args.path);
   else if (cmd === "validate") args._[0] ? cmdFolderValidate(args._[0]) : cmdValidate();

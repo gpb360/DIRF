@@ -43,6 +43,9 @@ try {
   assertContains(setup, "Capability gaps:");
   assertContains(run(["setup", TARGET]), "Already configured; no files changed.");
   assertContains(readFileSync(join(TARGET, ".gitignore"), "utf8"), ".dirf/attempts/");
+  let status = run(["status", "--path", TARGET]);
+  assertContains(status, "Configured: yes");
+  assertContains(status, "Attempts: 0");
 
   let out = run(["build", "smoke", "build a landing page", "--path", TARGET]);
   assertContains(out, "Attempt saved:");
@@ -103,6 +106,9 @@ try {
   if (!readFileSync(html, "utf8").startsWith("<!doctype html>")) throw new Error("HTML missing doctype");
   assertContains(run(["render", "smoke", "--path", TARGET]), "Spec kit rendered:");
   assertContains(run(["list", "--path", TARGET]), attemptId);
+  status = run(["status", "--path", TARGET]);
+  assertContains(status, "Attempts: 3");
+  assertContains(status, "Latest:");
   assertContains(run(["resume", attemptId, "--path", TARGET]), "## Exact next action");
   run(["render", "does-not-exist-xyz", "--path", TARGET], true);
   const invalidAttemptId = smokeAttempts.find((name) => name !== attemptId);
