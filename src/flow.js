@@ -2,7 +2,7 @@
 // Selection happens in router.js; this module never classifies a task.
 import { bundledSkills } from "./skills.js";
 
-export const KNOWN_BRANCHES = new Set(["ui", "react", "security"]);
+export const KNOWN_BRANCHES = new Set(["ui", "react", "security", "multi-session", "research"]);
 
 export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
   const errors = [];
@@ -54,13 +54,17 @@ export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
   return errors;
 }
 
-function branchesFor(task, playbookAgents) {
-  const branches = new Set();
+function branchesFor(task, playbookAgents, forced = []) {
+  const branches = new Set(forced);
   const text = (task || "").toLowerCase();
   if (/\b(ui|page|component|landing|frontend|interface|button|form|screen)\b/.test(text)) branches.add("ui");
   if (/\b(react|hook|jsx|component)\b/.test(text)) branches.add("react");
   if (/\b(security|auth(?:enticated|entication|orization)?|privacy|permission|secret|credential|no[- ]spend|token spend|billing|kie|generation)\b/.test(text)) {
     branches.add("security");
+  }
+  if (/\b(research|evidence|primary sources?|compare|evaluate)\b/.test(text)) branches.add("research");
+  if (/\b(multi[- ]session|spec(?:ification)?|tickets?|roadmap|large feature|large project)\b/.test(text)) {
+    branches.add("multi-session");
   }
   if (playbookAgents?.some((agent) => ["frontend-developer", "ui-designer", "ux-researcher"].includes(agent))) {
     branches.add("ui");
@@ -122,7 +126,7 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
   const flow = selection?.skill_flow;
   if (!flow?.steps) throw new Error(`playbook ${selection?.playbook || "?"}: missing skill_flow`);
 
-  const branches = branchesFor(context.task, selection.agents);
+  const branches = branchesFor(context.task, selection.agents, context.branches);
   const requirements = flow.steps
     .filter((step) => !step.branch || branches.has(step.branch))
     .map(({ branch: _branch, skill: _legacySkill, ...step }) => ({ ...step, capability: step.capability || step.stage }));

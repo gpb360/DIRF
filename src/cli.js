@@ -3,6 +3,7 @@
 //
 //   dirf setup [path] [--reserve-percent N]              configure a target repository
 //   dirf build  <name> "<task>" [--path DIR] [--open] [--no-focused-output]
+//   dirf plan   <name> "<task>" [--path DIR] [--research] create a lifecycle planning attempt
 //   dirf create <name> "<task>" [--path DIR]             route -> attempt workflow JSON only
 //   dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
 //   dirf list [--path DIR]                               list saved attempts
@@ -95,8 +96,8 @@ function castAgents(agents, hostAgents) {
   });
 }
 
-function buildPlan(name, task, path, reservePercent = 5, focusedOutput = true) {
-  const { selection, skillFlow, discovered, hostAgents, facts } = assembleTaskRouting(task, path);
+function buildPlan(name, task, path, reservePercent = 5, focusedOutput = true, routing = {}) {
+  const { selection, skillFlow, discovered, hostAgents, facts } = assembleTaskRouting(task, path, routing);
   const agents = castAgents(enrichAgents(selection.agents), hostAgents).map((agent) => ({
     ...agent,
     skills: resolveAgentSkills(agent.name, agent.skills, [], discovered).filter((skill) => skill.status === "installed"),
@@ -166,17 +167,51 @@ function portablePlan(plan) {
   return out;
 }
 
-function assembleTaskRouting(task, path) {
+function assembleTaskRouting(task, path, options = {}) {
   const playbooks = loadPlaybooks();
   const errors = reconcile(playbooks);
   if (errors.length) throw new Error(`Task Routing reconciliation failed:\n${errors.map((error) => `  - ${error}`).join("\n")}`);
   const targetRoot = path ? (isAbsolute(path) ? path : resolve(process.cwd(), path)) : null;
   const facts = collectRoutingFacts(targetRoot);
-  const selection = recommend(task, facts, playbooks);
+  let selection = recommend(task, facts, playbooks);
+  if (options.playbook) {
+    const playbook = playbooks[options.playbook];
+    if (!playbook) throw new Error(`Unknown playbook ${options.playbook}`);
+    selection = {
+      ...selection,
+      playbook: options.playbook,
+      playbook_description: playbook.description,
+      workflow: playbook.workflow,
+      skill_flow: playbook.skill_flow,
+      agents: playbook.agents,
+      questions: playbook.questions,
+    };
+  }
+  if (options.planningOnly) {
+    selection.workflow = {
+      phases: [
+        "resolve load-bearing decisions",
+        "model domain language and durable decisions",
+        ...(options.branches?.includes("research") ? ["research unresolved decisions against primary sources"] : []),
+        "write the approved specification",
+        "split the specification into dependency-ordered tickets",
+        "write the execution handoff",
+      ],
+      output: "approved context, justified ADRs, a build-ready specification, dependency-ordered tickets, and an execution handoff",
+      validation: "every ticket traces to the approved specification and every durable decision traces to context, an ADR, or cited research",
+      recovery: "if a load-bearing decision remains unresolved, stop in discovery and record the blocker instead of producing speculative tickets",
+    };
+  }
   const discovered = enrichDiscovered(discover(targetRoot));
   const hostAgents = discoverAgents(targetRoot);
   const trustedSources = loadTrustedSources(targetRoot);
-  return { selection, discovered, hostAgents, facts, skillFlow: buildFlow(selection, { task, trustedSources }, discovered) };
+  const skillFlow = buildFlow(selection, { task, trustedSources, branches: options.branches }, discovered);
+  if (options.planningOnly) {
+    const planningStages = new Set(["discover", "model", "research", "specify", "slice", "handoff"]);
+    skillFlow.steps = skillFlow.steps.filter((step) => planningStages.has(step.stage));
+    skillFlow.gaps = skillFlow.gaps.filter((gap) => planningStages.has(gap.stage));
+  }
+  return { selection, discovered, hostAgents, facts, skillFlow };
 }
 
 function savePlan(plan, attempt) {
@@ -222,6 +257,23 @@ function cmdBuild(args) {
   const attempt = createAttempt(target, args.name);
   const planPath = savePlan(plan, attempt);
   console.log(`Attempt saved: ${attempt.id}`);
+  renderPlan(planPath, args.open);
+}
+
+function cmdPlan(args) {
+  if (!args.name || !args.task) throw new Error('usage: dirf plan <name> "<task>" [--path DIR] [--research]');
+  const target = projectRoot(args.path);
+  const config = loadProjectConfig(target);
+  const branches = ["multi-session", ...(args.research ? ["research"] : [])];
+  const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, args.focusedOutput !== false, {
+    playbook: "fullstack-feature",
+    branches,
+    planningOnly: true,
+  });
+  const attempt = createAttempt(target, args.name);
+  const planPath = savePlan(plan, attempt);
+  console.log(`Plan saved: ${attempt.id}`);
+  console.log(`Lifecycle: ${plan.skill_flow.steps.map((step) => step.stage).join(" -> ")}`);
   renderPlan(planPath, args.open);
 }
 
@@ -372,6 +424,7 @@ function parse(argv) {
     if (a === "--context") { out.context = rest[++i]; continue; }
     if (a === "--reserve-percent") { out.reservePercent = Number(rest[++i]); continue; }
     if (a === "--open") { out.open = true; continue; }
+    if (a === "--research") { out.research = true; continue; }
     if (a === "--no-focused-output") { out.focusedOutput = false; continue; }
     if (a === "--help" || a === "-h") { out.help = true; continue; }
     out._.push(a);
@@ -384,6 +437,7 @@ const HELP = `amf-dirf — Agent Spec Kit (Do It Right First)
 Usage:
   dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
   dirf build  <name> "<task>" [--path DIR] [--open] [--no-focused-output]
+  dirf plan   <name> "<task>" [--path DIR] [--research] [--open] [--no-focused-output]
   dirf create <name> "<task>" [--path DIR]             JSON only
   dirf render <name-or-id> [--path DIR] [--open]       re-render an attempt
   dirf validate <folder>                              validate a folder DAG
@@ -449,6 +503,7 @@ function main() {
 
   if (cmd === "setup") cmdSetup(args);
   else if (cmd === "build") { args.name = args._[0]; args.task = args._.slice(1).join(" "); cmdBuild(args); }
+  else if (cmd === "plan") { args.name = args._[0]; args.task = args._.slice(1).join(" "); cmdPlan(args); }
   else if (cmd === "create") { args.name = args._[0]; args.task = args._.slice(1).join(" "); cmdCreate(args); }
   else if (cmd === "render") {
     const target = args._[0];

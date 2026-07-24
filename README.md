@@ -144,6 +144,7 @@ done-when checklist.
 
 ```
 dirf build  <name> "<task>" [--path DIR] [--open]   full pipeline: route -> JSON -> md + html
+dirf plan   <name> "<task>" [--path DIR] [--research] discovery through handoff, without implementation
 dirf create <name> "<task>" [--path DIR]             route -> workflow JSON only
 dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
 dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
