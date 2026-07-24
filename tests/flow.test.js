@@ -117,6 +117,38 @@ test("single-word capabilities resolve against local install descriptions", () =
   assert.deepEqual(flow.gaps, []);
 });
 
+test("forced plan branches produce the lifecycle and optional research", () => {
+  const selection = {
+    playbook: "fullstack-feature",
+    agents: [],
+    skill_flow: {
+      label: "plan",
+      steps: [
+        { stage: "discover", capability: "stateful discovery", reason: "Discover" },
+        { stage: "model", branch: "multi-session", capability: "domain modeling", reason: "Model" },
+        { stage: "research", branch: "research", capability: "primary source research", reason: "Research" },
+        { stage: "specify", branch: "multi-session", capability: "specification synthesis", reason: "Specify" },
+        { stage: "slice", branch: "multi-session", capability: "dependency ticketing", reason: "Slice" },
+        { stage: "handoff", branch: "multi-session", capability: "session handoff", reason: "Handoff" },
+      ],
+    },
+  };
+  const bundledIndex = {
+    "grill-with-docs": { capabilities: ["stateful discovery"], provider: "dirf" },
+    "domain-modeling": { capabilities: ["domain modeling"], provider: "dirf" },
+    research: { capabilities: ["primary source research"], provider: "dirf" },
+    "to-spec": { capabilities: ["specification synthesis"], provider: "dirf" },
+    "to-tickets": { capabilities: ["dependency ticketing"], provider: "dirf" },
+    handoff: { capabilities: ["session handoff"], provider: "dirf" },
+  };
+
+  const normal = buildFlow(selection, { task: "build it", branches: ["multi-session"], bundledIndex });
+  assert.deepEqual(normal.steps.map(({ stage }) => stage), ["discover", "model", "specify", "slice", "handoff"]);
+
+  const researched = buildFlow(selection, { task: "build it", branches: ["multi-session", "research"], bundledIndex });
+  assert.deepEqual(researched.steps.map(({ stage }) => stage), ["discover", "model", "research", "specify", "slice", "handoff"]);
+});
+
 test("single-word capabilities do not match a passing description mention", () => {
   const selection = {
     playbook: "demo", agents: [],

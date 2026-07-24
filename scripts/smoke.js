@@ -47,6 +47,16 @@ try {
   let out = run(["build", "smoke", "build a landing page", "--path", TARGET]);
   assertContains(out, "Attempt saved:");
   assertContains(out, "Spec kit rendered:");
+  const planOutput = run(["plan", "planned", "build an account portal", "--path", TARGET]);
+  assertContains(planOutput, "Lifecycle: discover -> model -> specify -> slice -> handoff");
+  const researchOutput = run(["plan", "researched", "build an account portal", "--path", TARGET, "--research"]);
+  assertContains(researchOutput, "Lifecycle: discover -> model -> research -> specify -> slice -> handoff");
+  const plannedAttempt = readdirSync(join(TARGET, ".dirf", "attempts")).find((name) => name.endsWith("-planned"));
+  const plannedSnapshot = JSON.parse(readFileSync(join(TARGET, ".dirf", "attempts", plannedAttempt, "workflow.json"), "utf8"));
+  if (plannedSnapshot.skill_flow.steps.some((step) => ["build", "design", "quality", "review"].includes(step.stage))) {
+    throw new Error("dirf plan crossed the planning boundary");
+  }
+  if (!plannedSnapshot.workflow.output.includes("build-ready specification")) throw new Error("dirf plan did not persist its output contract");
   assertContains(run(["build", "quiet", "build a landing page", "--path", TARGET, "--no-focused-output"]), "Attempt saved:");
   assertContains(run(["create", "smoke", "build a landing page", "--path", TARGET]), "Attempt saved:");
 
@@ -99,7 +109,7 @@ try {
   writeFileSync(join(attemptsRoot, invalidAttemptId, "workflow.json"), "{");
   const migration = run(["migrate", "--path", TARGET]);
   assertContains(migration, `Failed to migrate ${invalidAttemptId}`);
-  assertContains(migration, "Migrated 2 workflow snapshot(s)");
+  assertContains(migration, "Migrated 4 workflow snapshot(s)");
 
   console.log("Smoke test passed");
 } finally {
