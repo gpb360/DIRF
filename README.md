@@ -128,6 +128,9 @@ loads only the detail file required by the active stage.
 Unread files cost zero tokens.
 
 DIRF reserves 5% of model context for a structured `HANDOFF.md` by default.
+Status updates, validation summaries, and handoffs also use focused output by
+default: result first, concrete evidence, at most five list items, and one next
+action. Disable it for a run with `--no-focused-output`.
 Hosts that expose remaining context trigger the handoff at that threshold;
 otherwise the workflow checkpoints after each completed phase. A different
 model can continue with `dirf resume <name-or-id> --path <project>`.

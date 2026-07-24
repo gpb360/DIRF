@@ -64,6 +64,8 @@ test("kickoff prompt is embedded in both renders and stays host-agnostic", () =>
   assert.ok(prompt.includes("Begin with phase 1: a"));
   assert.ok(prompt.includes("Required acceptance contract"));
   assert.ok(prompt.includes("derive every screen x state x viewport row"));
+  assert.ok(prompt.includes("For status updates, validation summaries, and handoffs"));
+  assert.ok(prompt.includes("End with exactly one next action, or `Complete`"));
   assert.ok(!/codex|claude/i.test(prompt));
   assert.ok(!prompt.includes("```"), "prompt must be safe inside a fenced block");
 
@@ -105,12 +107,30 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.ok(readme.includes("Definition of Done"));
   assert.ok(readme.includes("agents/frontend-developer.md"));
   assert.match(readme, /Keep 5% of the model context available for handoff/);
+  assert.match(readme, /## Focused output/);
+  assert.match(readme, /Keep lists to five relevant items or fewer/);
   assert.match(readme, /uses: \["playbook"\]/);
   assert.deepEqual(resolveGraph(outDir, { allowedRoots: [outDir] }).map((unit) => unit.meta.kind), ["skill", "playbook", "workflow"]);
   const detail = readFileSync(join(outDir, "agents", "frontend-developer.md"), "utf-8");
   assert.ok(detail.includes("# frontend-developer"));
   assert.ok(detail.includes("## Skills"));
   assert.ok(detail.includes("global skill"), "agent should be told it can use global skill discovery");
+});
+
+test("focused output can be disabled without changing task instructions", () => {
+  const workflow = {
+    name: "demo", task: "write a story", playbook: "content",
+    workflow: { phases: ["write"], output: "a story", validation: "review", recovery: "revise" },
+    agents: [], baseline_skills: [], skill_flow: { label: "write", steps: [] },
+    schema_version: 5, focused_output: false,
+  };
+  const outDir = mkdtempSync(join(tmpdir(), "dirf-unfocused-"));
+  buildInstructions(workflow, outDir);
+  const readme = readFileSync(join(outDir, "README.md"), "utf8");
+  assert.doesNotMatch(readme, /## Focused output/);
+  assert.doesNotMatch(kickoffPrompt(workflow), /For status updates, validation summaries, and handoffs/);
+  assert.doesNotMatch(buildHtml(workflow), /Focused output/);
+  assert.match(readme, /write a story/);
 });
 
 test("buildInstructions includes lifecycle guidance when persisted", () => {

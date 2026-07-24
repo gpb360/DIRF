@@ -5,6 +5,17 @@ import { AGENTS_DIR, ROOT } from "./paths.js";
 
 const GOVERNANCE_MARKER = "<!-- governance:v1 -->";
 const FM_RE = /^([A-Za-z0-9_-]+):\s*(.*)$/;
+export const FOCUSED_OUTPUT_RULES = [
+  "Lead with the result or current state.",
+  "Include concrete validation evidence.",
+  "Keep lists to five relevant items or fewer.",
+  "State failures plainly and name the affected step.",
+  "End with exactly one next action, or `Complete`.",
+];
+
+function usesFocusedOutput(workflow) {
+  return workflow.focused_output !== false;
+}
 
 function assertSnapshot(workflow) {
   if (![2, 3, 4, 5].includes(workflow.schema_version)) throw new Error(`workflow ${workflow.name || "?"}: unsupported schema_version`);
@@ -25,7 +36,7 @@ export function kickoffPrompt(workflow) {
   const repoLine = repo
     ? `Repository: ${repo.remote || repo.name}${repo.remote && repo.name ? ` (${repo.name})` : ""} — all work happens inside this repository. Clone or open it before starting; if you cannot access it, say so and ask for the relevant files instead of guessing.`
     : "Repository: not recorded — ask which repository this task targets and open it before starting.";
-  return [
+  const lines = [
     `You are executing the "${workflow.name || workflow.playbook || "workflow"}" DIRF workflow.`,
     "",
     `Task: ${workflow.task || "(ask for the task before starting)"}`,
@@ -40,11 +51,15 @@ export function kickoffPrompt(workflow) {
         : ""}`,
     `3. Work the phases in order${phases.length ? `: ${phases.join(" -> ")}` : ""}. Do not start the next phase until the current one is verifiably done. Validation: ${wf.validation || "state your evidence"}.`,
     `4. Done means: ${wf.output || "the task's outcome is verified"}. Report evidence, not claims.`,
-    ...(wf.requirements?.length ? [`5. Required acceptance contract: ${wf.requirements.join(" | ")}`] : []),
-    `${wf.requirements?.length ? "6" : "5"}. When your context is nearly exhausted, write a handoff note (completed work, decisions, changed files, validation, blockers, exact next action) and stop.`,
-    "",
-    `Begin with phase 1${phases[0] ? `: ${phases[0]}` : ""}.`,
-  ].join("\n");
+  ];
+  let nextRule = 5;
+  if (wf.requirements?.length) lines.push(`${nextRule++}. Required acceptance contract: ${wf.requirements.join(" | ")}`);
+  lines.push(`${nextRule++}. When your context is nearly exhausted, write a handoff note (completed work, decisions, changed files, validation, blockers, exact next action) and stop.`);
+  if (usesFocusedOutput(workflow)) {
+    lines.push(`${nextRule}. For status updates, validation summaries, and handoffs: ${FOCUSED_OUTPUT_RULES.join(" ")} This does not constrain task-specific or creative output.`);
+  }
+  lines.push("", `Begin with phase 1${phases[0] ? `: ${phases[0]}` : ""}.`);
+  return lines.join("\n");
 }
 
 // --------------------------------------------------------------------------- //
@@ -225,13 +240,20 @@ export function buildInstructions(workflow, outDir) {
     "",
     "## Context reserve",
     `Keep ${workflow.context_reserve_percent ?? 5}% of the model context available for handoff. When the host reports that reserve or less, update HANDOFF.md with completed work, decisions, changed files, validation, blockers, and the exact next action, then stop. If the host does not expose context usage, update HANDOFF.md after every completed phase.`,
+  ];
+  if (usesFocusedOutput(workflow)) {
+    lines.push("", "## Focused output", "", "For status updates, validation summaries, and handoffs:");
+    for (const rule of FOCUSED_OUTPUT_RULES) lines.push(`- ${rule}`);
+    lines.push("", "Task-specific and creative output is unchanged.");
+  }
+  lines.push(
     "",
     "Runtime paths belong to this execution only. If isolation is needed, place worktrees beside the target repository or under the user-configured worktree root. Select a scratch directory inside that workspace; do not fall back to another drive or the operating-system temp directory.",
     "",
     "## Definition of Done",
     wf.output || "_(no output contract declared)_",
     "",
-  ];
+  );
   if (wf.requirements?.length) {
     lines.push("## Required acceptance contract", "");
     for (const requirement of wf.requirements) lines.push(`- ${requirement}`);
@@ -463,6 +485,11 @@ export function buildHtml(workflow) {
   parts.push("<p class='mute'>Copy this into your model of choice to run the workflow. <button class='chip' onclick=\"navigator.clipboard.writeText(document.getElementById('kickoff').textContent).then(()=>{this.textContent='Copied ✓';})\">Copy prompt</button></p>");
   parts.push(`<pre id='kickoff'>${escapeHtml(kickoffPrompt(workflow))}</pre>`);
   parts.push("<p class='mute'>Runtime paths stay local to the current execution. Keep worktrees beside the target repository or in the configured worktree root, and select scratch space inside that workspace.</p>");
+  if (usesFocusedOutput(workflow)) {
+    parts.push("<h2>Focused output</h2><p>For status updates, validation summaries, and handoffs:</p><ul>");
+    for (const rule of FOCUSED_OUTPUT_RULES) parts.push(`<li>${inline(rule)}</li>`);
+    parts.push("</ul><p class='mute'>Task-specific and creative output is unchanged.</p>");
+  }
 
   parts.push("<h2>Objective &amp; Definition of Done</h2>");
   parts.push(`<p>${escapeHtml(workflow.task || "")}</p>`);

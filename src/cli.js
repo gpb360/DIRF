@@ -2,7 +2,7 @@
 // amf-dirf — Agent Spec Kit (Do It Right First). Unified CLI. Node built-ins only.
 //
 //   dirf setup [path] [--reserve-percent N]              configure a target repository
-//   dirf build  <name> "<task>" [--path DIR] [--open]   full pipeline into a disposable attempt
+//   dirf build  <name> "<task>" [--path DIR] [--open] [--no-focused-output]
 //   dirf create <name> "<task>" [--path DIR]             route -> attempt workflow JSON only
 //   dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
 //   dirf list [--path DIR]                               list saved attempts
@@ -18,7 +18,7 @@ import { createHash } from "node:crypto";
 import { ROOT, REGISTRY, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, fileHash, folderHash, loadJson } from "./paths.js";
 import { collectRoutingFacts, loadPlaybooks, recommend } from "./router.js";
 import { discover, discoverAgents, enrichDiscovered, loadRegistry, loadTrustedSources, providerForPath, resolveAgentSkills } from "./skills.js";
-import { buildInstructions, buildHtml } from "./renderer.js";
+import { FOCUSED_OUTPUT_RULES, buildInstructions, buildHtml } from "./renderer.js";
 import { main as validateMain } from "./validate.js";
 import { inspect } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
@@ -95,7 +95,7 @@ function castAgents(agents, hostAgents) {
   });
 }
 
-function buildPlan(name, task, path, reservePercent = 5) {
+function buildPlan(name, task, path, reservePercent = 5, focusedOutput = true) {
   const { selection, skillFlow, discovered, hostAgents, facts } = assembleTaskRouting(task, path);
   const agents = castAgents(enrichAgents(selection.agents), hostAgents).map((agent) => ({
     ...agent,
@@ -134,6 +134,7 @@ function buildPlan(name, task, path, reservePercent = 5) {
     },
     lifecycle: LIFECYCLE,
     context_reserve_percent: reservePercent,
+    focused_output: focusedOutput,
   };
 }
 
@@ -184,7 +185,9 @@ function savePlan(plan, attempt) {
   writeFileSync(path, JSON.stringify(portablePlan(plan), null, 2), "utf-8");
   const handoff = join(attempt.folder, "HANDOFF.md");
   if (!existsSync(handoff)) writeFileSync(handoff, [
-    "# DIRF Handoff", "", "## Objective", "", plan.task, "", "## Current phase", "", "_(not started)_", "",
+    "# DIRF Handoff", "",
+    ...(plan.focused_output !== false ? [`> ${FOCUSED_OUTPUT_RULES.join(" ")}`, ""] : []),
+    "## Objective", "", plan.task, "", "## Current phase", "", "_(not started)_", "",
     "## Completed", "", "- _(none yet)_", "", "## Decisions and assumptions", "", "- _(none yet)_", "",
     "## Changed files", "", "- _(none yet)_", "", "## Validation", "", "- _(not run)_", "",
     "## Blockers", "", "- _(none)_", "", "## Exact next action", "", "_(start the first workflow phase)_", "",
@@ -215,7 +218,7 @@ function openBrowserAt(filePath) {
 function cmdBuild(args) {
   const target = projectRoot(args.path);
   const config = loadProjectConfig(target);
-  const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent);
+  const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, args.focusedOutput !== false);
   const attempt = createAttempt(target, args.name);
   const planPath = savePlan(plan, attempt);
   console.log(`Attempt saved: ${attempt.id}`);
@@ -321,13 +324,14 @@ function cmdGraph(target) {
   console.log(graphLines(folderGraph(target)).join("\n"));
 }
 
-function cmdRun(target) {
+function cmdRun(target, focusedOutput = true) {
   const units = folderGraph(target);
   console.log("Execution order:");
   console.log(graphLines(units).join("\n"));
   console.log("\nExecution handoff:");
   for (const unit of units) console.log(`Read ${join(unit.folder, "README.md")}.`);
   console.log(`Execute ${join(resolve(target), "README.md")} as the root operating workflow.`);
+  if (focusedOutput) console.log(`Focused output: ${FOCUSED_OUTPUT_RULES.join(" ")}`);
 }
 
 function cmdFolderRender(target) {
@@ -368,6 +372,7 @@ function parse(argv) {
     if (a === "--context") { out.context = rest[++i]; continue; }
     if (a === "--reserve-percent") { out.reservePercent = Number(rest[++i]); continue; }
     if (a === "--open") { out.open = true; continue; }
+    if (a === "--no-focused-output") { out.focusedOutput = false; continue; }
     if (a === "--help" || a === "-h") { out.help = true; continue; }
     out._.push(a);
   }
@@ -378,12 +383,12 @@ const HELP = `amf-dirf — Agent Spec Kit (Do It Right First)
 
 Usage:
   dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
-  dirf build  <name> "<task>" [--path DIR] [--open]   full pipeline
+  dirf build  <name> "<task>" [--path DIR] [--open] [--no-focused-output]
   dirf create <name> "<task>" [--path DIR]             JSON only
   dirf render <name-or-id> [--path DIR] [--open]       re-render an attempt
   dirf validate <folder>                              validate a folder DAG
   dirf graph <folder>                                 print ordered folder DAG
-  dirf run <folder>                                   print deterministic execution handoff
+  dirf run <folder> [--no-focused-output]             print deterministic execution handoff
   dirf list [--path DIR]                               list saved attempts
   dirf resume <name-or-id> [--path DIR]                load the workflow handoff
   dirf migrate [<name>]                                remove runtime paths from saved snapshots
@@ -456,7 +461,7 @@ function main() {
   else if (cmd === "migrate") cmdMigrate(args._[0], args.path);
   else if (cmd === "validate") args._[0] ? cmdFolderValidate(args._[0]) : cmdValidate();
   else if (cmd === "graph") cmdGraph(args._[0]);
-  else if (cmd === "run") cmdRun(args._[0]);
+  else if (cmd === "run") cmdRun(args._[0], args.focusedOutput !== false);
   else if (cmd === "skills") {
     const sub = args._[0];
     if (sub === "scan") cmdSkillsScan(args);
