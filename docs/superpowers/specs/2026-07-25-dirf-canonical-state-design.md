@@ -1,6 +1,6 @@
 # DIRF Canonical State — Design
 
-- **Status:** Draft (pending user review)
+- **Status:** Draft v2 (revised after deep review; pending user review)
 - **Date:** 2026-07-25
 - **Scope:** `amf-dirf` (DIRF = Do It Right First)
 - **One-line goal:** Make DIRF coordination state canonical and centrally owned, so all agents and git worktrees read and write through one source of truth — no drifting per-checkout copies.
@@ -47,8 +47,12 @@ To keep the build lean and avoid creep:
   is a local timestamp used solely for `dirf state list` freshness display.
 - **No multi-user / cross-machine sync.** `~/.dirf/` is per-user-per-machine.
 - **No content versioning of attempts.** Attempts move as-is into the store.
-- **No `dirf state prune`** in this build. Stale-entry cleanup is named as a
-  possible future addition (§10), not built now.
+- **No `dirf state prune` or `re-associate`** in this build. Cleanup of stale
+  entries and re-association of a renamed main tree (see §4 limitation) are
+  named as possible future additions (§10), not built now.
+- **No local DIRF state in target checkouts.** Resolution is pure: via git
+  for git targets, via normalized path for non-git targets. There is no
+  pointer file and no per-checkout cache. (See §4 for why.)
 
 ## 3. Approach (selected)
 
@@ -81,6 +85,11 @@ passive worktree resolution.
 - **Main-tree canonical + worktree proxy** (no central store): most git-native
   but leaves state trapped inside a checkout, so cross-project queries and the
   registry facet stay weak. Rejected.
+- **Local pointer/cache file** (rejected in v2 review): a `<target>/.dirf/slug.json`
+  pointer was proposed to preserve project continuity across renames. Under
+  the chosen identity rule (§4 — git is ground truth, git wins on conflict),
+  the pointer has no remaining job and would add a precedence-rule category
+  with no offsetting value. Dropped. Pure resolution only.
 
 ## 4. Store topology & project identity
 
@@ -88,22 +97,54 @@ passive worktree resolution.
 
 `~/.dirf/projects/<slug>/`. The `~/.dirf/` directory is already DIRF's home
 (`trusted-sources.json` lives there per `src/skills.js`), so this extends an
-established precedent. Target checkouts hold **no canonical state** — that is
-what makes drift impossible (there is nothing local to drift).
+established precedent. Target checkouts hold **no DIRF state at all** — that
+is what makes drift impossible (there is nothing local to drift).
 
-### Slug derivation (the cross-worktree identity key)
+### Identity key & slug derivation
 
-The slug must be stable across all worktrees of the same repo. Mechanism:
+The slug is recomputed on *every* resolve, so the hashing input must be
+byte-stable across runs. If it isn't, the slug changes run-to-run, the
+registry forks new entries, and **drift returns silently — worse than before.**
+This is the single highest-risk piece of the design, so the normalization
+contract is explicit:
 
-- **Git repo** → derive from `git rev-parse --git-common-dir`. The common dir
-  is the shared `.git` that all worktrees point back to. A main tree and any
-  of its worktrees resolve to the same common dir → same slug → same store
-  entry. This collapse is what kills the storytellers drift.
-- **Non-git folder** → derive from the normalized absolute path hash (the kit
-  already supports non-git targets).
-- **Format:** readable + disambiguator — `<basename>-<hash8>`, e.g.
-  `storytellers-a1b2c3d4`. Basename is the main worktree's directory name for
-  git, cwd basename otherwise.
+1. **Determine the identity key:**
+   - **Git target:** `git rev-parse --git-common-dir`. This is the shared
+     `.git` that all worktrees point back to. A main tree and any of its
+     worktrees resolve to the same common dir → same key → same slug → same
+     store entry. This collapse is what kills the storytellers drift.
+   - **Non-git target:** the normalized absolute path of the project
+     directory.
+2. **Normalize the key deterministically, in this exact order:**
+   1. Resolve to absolute (older git can return a relative common-dir).
+   2. Normalize path separators to `/`.
+   3. Strip trailing slash.
+   4. Resolve symlinks.
+   5. **Case-fold to lower case.** Required on case-insensitive filesystems
+      (Windows, macOS default): the FS treats `E:/Storytellers` and
+      `e:/storytellers` as identical, so the slug must too. Lower-casing
+      everywhere is the simplest correct rule and is harmless on
+      case-sensitive FSes (paths there are already a single case in
+      practice for a given repo).
+3. **Hash:** `sha1(normalizedKey)` → first 8 hex chars.
+4. **Format slug:** `<basename>-<hash8>`, e.g. `storytellers-a1b2c3d4`.
+   Basename is the main worktree's directory name for git (from
+   `git rev-parse --show-toplevel`), cwd basename otherwise.
+
+The storytellers case: run from
+`C:/tmp/storytellers-m026-closure/` → common-dir normalizes to
+`e:/s7s-projects/storytellers/.git` → slug `storytellers-a1b2c3d4` → **same
+entry** as the main tree. Codex reads/writes the same store files.
+
+### Known limitation: a moved/renamed main tree orphans the store entry
+
+Because the slug is path-derived, renaming the main tree directory changes
+the common-dir → new slug → the old store entry is orphaned (data intact,
+just no longer reachable by resolution). This is the deliberate trade-off of
+"git wins" identity: it avoids the dangerous failure mode (a *copied*
+checkout silently attaching to the original's project and cross-contaminating
+it), at the cost of rename continuity. Recovery is a future `re-associate`
+command (§10), not built now. Named explicitly so it is not a surprise.
 
 ### Project registry: `projects.json`
 
@@ -114,8 +155,8 @@ The slug must be stable across all worktrees of the same repo. Mechanism:
     "storytellers-a1b2c3d4": {
       "slug": "storytellers-a1b2c3d4",
       "name": "storytellers",
-      "git_common_dir": "E:/s7s-projects/storytellers/.git",
-      "main_path": "E:/s7s-projects/storytellers",
+      "git_common_dir": "e:/s7s-projects/storytellers/.git",
+      "main_path": "e:/s7s-projects/storytellers",
       "created_at": "2026-07-25T12:00:00Z",
       "last_seen": "2026-07-25T14:30:00Z"
     }
@@ -123,9 +164,16 @@ The slug must be stable across all worktrees of the same repo. Mechanism:
 }
 ```
 
-This is the "project registry." Note: to avoid overload with the kit's bundled
+This is the "project registry." To avoid overload with the kit's bundled
 metadata, "project registry" refers to this file; the bare word "registry" in
 code continues to mean `registry/*.json` bundled metadata.
+
+### Concurrency
+
+Store files are written atomically: write to a temp file, then `fs.rename`
+onto the final path on the same volume. Two agents (Codex, Claude) writing the
+same handoff concurrently cannot corrupt the file; last-writer-wins, no merge
+(in scope, per the "current snapshot" model).
 
 ## 5. Resolution flow
 
@@ -149,9 +197,9 @@ state.importHandoff(targetPath, slug, { force })   ← §7 conflict hatch
 ```
 1. Is targetPath inside a git repo?
      git rev-parse --git-common-dir
-       git     → use common-dir as identity key
+       git     → use normalized common-dir as identity key
        non-git → use normalized absolute path as identity key
-2. Derive slug from the key (basename + hash8).
+2. Derive slug from the key (basename + hash8), per §4 normalization.
 3. Look up slug in projects.json:
        found     → project = record; bump last_seen
        not found → if <target>/.dirf/ has real state → migrateProject (§7)
@@ -159,35 +207,9 @@ state.importHandoff(targetPath, slug, { force })   ← §7 conflict hatch
 4. Return { slug }; all reads/writes go to ~/.dirf/projects/<slug>/
 ```
 
-Worked example — the storytellers drift case, fixed:
-
-- Run from `C:/tmp/storytellers-m026-closure/` →
-  `git-common-dir` = `E:/s7s-projects/storytellers/.git` →
-  slug `storytellers-a1b2c3d4` → **same store entry** as the main tree.
-  Codex reads/writes the same `HANDOFF.md`. Drift is impossible.
-
-### Slug pointer file (the one deliberate local artifact)
-
-`<target>/.dirf/slug.json` — a small (≈50-byte) hint:
-
-```json
-{ "slug": "storytellers-a1b2c3d4" }
-```
-
-- **Purpose:** make resolution instant and unambiguous without re-running
-  git, and let a non-git checkout remember its slug after a rename.
-- **Precedence:** the resolution ladder still runs. If the slug *derived*
-  from git/common-dir **matches** the pointer → fast path. If they
-  **disagree** → the **registry wins** and the pointer is rewritten. The
-  pointer can never *cause* drift; it can only speed up the common case.
-- **Worktrees:** the pointer is created at `dirf setup` of the **main tree
-  only**. Worktrees inherit identity from `git-common-dir`; they never get a
-  pointer and never need one. (This is why a pointer can disagree but never
-  wins.)
-- **Gitignored:** `.dirf/` stays in the target's `.gitignore`, so the pointer
-  is local-only and regenerable.
-
-The pointer is a cache, not a source of truth.
+No pointer file is read or written. Resolution is stateless and recomputed
+each time. (For a git target this is one `git rev-parse` call, ~10ms; the
+fast-path-cache argument for a pointer does not justify a local artifact.)
 
 ### What moves out of target checkouts
 
@@ -196,7 +218,10 @@ The pointer is a cache, not a source of truth.
 | `<target>/.dirf/config.json` | `~/.dirf/projects/<slug>/config.json` |
 | `<target>/.dirf/attempts/<id>/` | `~/.dirf/projects/<slug>/attempts/<id>/` |
 | `<target>/.dirf/HANDOFF.md` *(ad hoc, drift-prone)* | `~/.dirf/projects/<slug>/HANDOFF.md` |
-| — | `<target>/.dirf/slug.json` *(new: resolution hint, gitignored)* |
+
+No file is added to the target. The `<target>/.dirf/` directory is vacated by
+migration (§7) and may be removed; the `.gitignore` entry for `.dirf/` is
+harmless to leave.
 
 ## 6. Access surfaces
 
@@ -229,6 +254,7 @@ New `state` command group. Resolution defaults to cwd; `--path DIR` or
 | `dirf state list-attempts [--path\|slug]` | `listAttempts(slug)` | attempts for a project, from anywhere. |
 | `dirf state get-attempt <id> [--path\|slug]` | `getAttempt(slug, id)` | one attempt's detail. |
 | `dirf state import-handoff [--path] [--force]` | `importHandoff(...)` | promote a target's local HANDOFF into the store (conflict hatch, §7). |
+| `dirf state migrate-cleanup [--path]` | (migration finish) | remove the `.dirf.migrating.<ts>/` backup after the user confirms the migrated store works (§7). |
 
 Existing `build`/`create`/`render`/`list`/`resume` get rewired to resolve a
 slug first, then read/write through `state.js`. User-facing behavior is
@@ -248,6 +274,9 @@ the standard MCP `initialize` / `tools/list` / `tools/call` lifecycle by hand.
 | `dirf_write_handoff` | `project?`, `content` | `writeHandoff` |
 | `dirf_list_attempts` | `project?` | `listAttempts` |
 | `dirf_get_attempt` | `project?`, `id` | `getAttempt` |
+
+MCP does **not** expose `import-handoff` or `migrate-cleanup`: those are
+migration-time hatches for humans, not agent operations.
 
 MCP design choices:
 
@@ -282,51 +311,73 @@ You (anywhere):
 
 Non-destructive, lazy, explicit on conflict. Existing `<target>/.dirf/`
 directories move into the store **on first resolve**, not eagerly. Nothing is
-deleted until migration is confirmed. Conflicts never silently overwrite.
+deleted until the user explicitly confirms via `migrate-cleanup`. Conflicts
+never silently overwrite.
 
 ### Migration candidate
 
 A target migrates when, on resolve, the registry has no entry for its slug
 **but** `<target>/.dirf/` exists and contains real state (`config.json` or
-`attempts/`). A target with only a stray `.dirf/slug.json` and nothing else is
-*not* migratable — it is a fresh registration.
+`attempts/`). A target with no `.dirf/` is a fresh registration.
 
-### `state.migrateProject(targetPath, slug)` steps
+### `state.migrateProject(targetPath, slug)` steps (idempotent / restartable)
 
-1. **Backup copy.** Copy `<target>/.dirf/` →
-   `<target>/.dirf.migrating.<timestamp>/` before touching anything. This copy
-   is the recoverable safety net. It is removed only after the new store has
-   been confirmed working by the user running at least one command against it;
-   until then it stays (better a stale dir than lost data).
-2. **Register** the project in `projects.json` (slug, name, git-common-dir,
-   main_path, timestamps).
-3. **Move state** into the store:
-   - `<target>/.dirf/config.json` → `~/.dirf/projects/<slug>/config.json`
-   - `<target>/.dirf/attempts/` → `~/.dirf/projects/<slug>/attempts/`
-   - `<target>/.dirf/HANDOFF.md` → `~/.dirf/projects/<slug>/HANDOFF.md`
-   - Other recognized DIRF files found at target level → store.
-4. **Write the pointer:** `<target>/.dirf/slug.json`.
-5. Leave the backup copy from step 1 in place. (The originals were *moved* in
-   step 3, so their paths are vacated; the backup is the pre-move copy.)
+1. **Backup copy first — before touching anything.** Copy `<target>/.dirf/`
+   → `<target>/.dirf.migrating.<timestamp>/`. This is the recoverable safety
+   net. Because it precedes every move, an interrupted migration is always
+   recoverable: re-running picks up where it left off using the backup.
+2. **Register** the project in `projects.json` (slug, name, normalized
+   git-common-dir, main_path, timestamps). Idempotent: if already present
+   (e.g., a concurrent worktree registered it first), skip.
+3. **Move state** into the store (each move is independent, so a partial
+   failure leaves a consistent prefix):
+   - `<target>/.dirf/config.json` → store, upgraded to `schema_version` 2
+     (drops the now-stale `attempt_root`, adds `slug`).
+   - `<target>/.dirf/attempts/` → `~/.dirf/projects/<slug>/attempts/`.
+   - `<target>/.dirf/HANDOFF.md` → `~/.dirf/projects/<slug>/HANDOFF.md`.
+4. Done. The backup copy from step 1 stays until the user runs
+   `dirf state migrate-cleanup` (below). It is **not** auto-deleted by a
+   heuristic — auto-deleting on a guess clashes with "never lose data."
 
 ### Conflict handling (the contract)
 
-Three conflict shapes, three deterministic answers:
+When `resolveProject` finds the slug **already in the registry** while the
+target still has a local `.dirf/` (e.g., a worktree registered the project
+first, or these are leftover files), migration does **not** run. One code path
+with a sub-condition:
 
-| Situation | Resolution |
+| Condition | Resolution |
 |---|---|
-| Store entry exists, target has older-looking state, no local pointer | **Registry wins.** Do not migrate; the store is canonical. Log a clear message pointing to `dirf state which`. Leave target `.dirf/` untouched (never delete someone's files on a guess). |
-| Store entry exists, target pointer disagrees with derived slug | **Registry wins**, rewrite pointer (§5 precedence rule). |
-| Store entry exists for slug, but target has a `HANDOFF.md` whose mtime is newer than the store's | **Never auto-overwrite.** Prompt to run `dirf state import-handoff` (or `--force` for scripted use). This is the generalization of the storytellers drift and must require a human. |
+| Registry has entry; local `.dirf/` exists; local `HANDOFF.md` mtime **older than or equal to** store's (or absent) | **Registry wins.** Do not migrate. Log clearly: *"project storytellers-a1b2c3d4 already registered; local .dirf/ is orphaned. Review and remove it, or run `dirf state migrate-cleanup`."* Never delete the local files on a guess. |
+| Registry has entry; local `.dirf/` exists; local `HANDOFF.md` mtime **newer than** the store's | **Never auto-overwrite.** Surface it (see below); the user must run `dirf state import-handoff` to promote the local copy. This is the generalization of the storytellers drift and must require a human. |
 
-`dirf state import-handoff [--path] [--force]` is the explicit hatch for the
-third row: promotes a target's local HANDOFF into the canonical store,
-replacing it. Prompts for confirmation by default; `--force` skips it.
+**Surfacing the newer-HANDOFF conflict:**
+
+- **Interactive (TTY present):** prompt — offer to run `import-handoff`, or
+  defer.
+- **Non-interactive (no TTY — the common case inside an agent flow):**
+  **hard-stop with a clear instructive error and nonzero exit.** Never silent
+  skip, never silent overwrite. Example exit message:
+  *"Local HANDOFF.md is newer than canonical for storytellers-a1b2c3d4. Run
+  \`dirf state import-handoff\` to promote it, or \`--force\` to skip this
+  check. Refusing to proceed to avoid silent data loss."*
+
+### `dirf state import-handoff [--path] [--force]`
+
+Promotes a target's local `HANDOFF.md` into the canonical store, replacing
+it. **Before replacing, backs up the store's current handoff** to
+`HANDOFF.md.<timestamp>.bak` in the store — so promoting a local copy can
+never destroy the canonical one. Prompts for confirmation by default;
+`--force` skips it.
+
+### `dirf state migrate-cleanup [--path]`
+
+Removes the `<target>/.dirf.migrating.<timestamp>/` backup after the user has
+confirmed the migrated store works. Explicit only — never automatic.
 
 ### What does NOT migrate
 
-- The `<target>/.gitignore` entry for `.dirf/` — **stays.** The pointer is
-  still gitignored; correct.
+- The `<target>/.gitignore` entry for `.dirf/` — stays (harmless).
 - Content outside `.dirf/` that `setupProject()` scaffolds today
   (`CONTEXT.md`, `adr/`, specs, tickets) — **stays in the target.** That is
   project *content*, not DIRF *coordination state*. The line: if it is about
@@ -335,7 +386,8 @@ replacing it. Prompts for confirmation by default; `--force` skips it.
 ### Migration is one-shot per project
 
 Once a project is in the registry, `resolveProject` never tries to migrate it
-again. The lazy-migrate path only fires for slugs absent from the registry.
+again. The lazy-migrate path only fires for slugs absent from the registry;
+already-registered slugs hit the conflict path above instead.
 
 ## 8. Worktree resolution (passive)
 
@@ -348,9 +400,9 @@ and all reads/writes hit the same `~/.dirf/projects/<P-slug>/`.
 A worktree's filesystem location is irrelevant to identity. One made by raw
 `git worktree add`, by Codex, by Claude, or by hand all resolve identically.
 
-**First contact with a worktree:** when a DIRF command runs from a worktree
-with no local pointer (the normal case), resolution succeeds via the ladder's
-`git-common-dir` fallback. No setup step, no prompt, no error. The worktree is
+**First contact with a worktree:** when a DIRF command runs from a worktree,
+resolution succeeds via the ladder's `git-common-dir` step with no setup step,
+no prompt, no error — there is no local state to bootstrap. The worktree is
 immediately first-class. This is the property that makes "Codex spun up a
 worktree and DIRF just worked" true.
 
@@ -367,58 +419,79 @@ worktree and DIRF just worked" true.
 
 ## 9. Rollout & testing
 
-### Rollout staging (each stage independently testable, kit stays working)
+### Rollout — milestones (not independently-shippable stages)
 
-1. **`src/state.js` + store layout.** Core module and
-   `~/.dirf/projects/<slug>/` structure. Pure functions, unit-testable with a
-   temp `HOME`. Existing commands keep reading per-target `.dirf/` as today.
-2. **Resolution + registry.** `resolveProject`, `registerProject`,
-   `projects.json` read/write, slug derivation (git-common-dir + path-hash
-   fallback). Existing `setup` gets rewired to register + write the pointer.
-3. **Rewire existing commands.** `build`/`create`/`render`/`list`/`resume`
-   resolve a slug, then read/write through `state.js`. User-facing behavior
-   unchanged. Central store is live; the drift bug is fixed at this point.
-4. **`dirf state` command group.** The CLI verbs from §6.
-5. **Migration.** The lazy non-destructive migrate-on-first-resolve from §7.
-6. **`src/mcp.js`.** stdio JSON-RPC server over the same `state.js` core.
-   Last; purely additive — the CLI already does everything.
-7. **Prose updates.** `renderer.js:228/:460`, `README.md:180`.
+The original 7-stage framing had a broken intermediate: rewiring `setup` to
+write to the store *before* rewiring `build`/`list` to read from it leaves the
+kit half-cut-over. Reframed as milestones, where the cutover is atomic.
 
-If MCP (6) is deferred, nothing suffers.
+- **M1 — Core (no behavior change).** `src/state.js` + store layout +
+  slug derivation with the §4 normalization contract. Pure functions,
+  unit-tested with a temp `HOME`. Existing commands keep reading per-target
+  `.dirf/` as today. Kit unchanged from the user's view.
+- **M2 — Cutover (atomic, one release).** Resolution + registry; rewire
+  `setup` to register + write to the store; rewire
+  `build`/`create`/`render`/`list`/`resume` to resolve a slug and read/write
+  through `state.js`; define `config.json` `schema_version` 2 (new setups);
+  **and** update the worktree advisory prose (`renderer.js:228/:460`,
+  `README.md:180`) in the same release — without the prose update, generated
+  instruction sets would still tell agents to "keep worktrees beside the
+  target," actively causing the confusion being fixed. **This milestone is
+  where the drift bug goes away.**
+- **M3 — `dirf state` command group.** The CLI verbs from §6 (`which`,
+  `list`, `register`, `read-handoff`, `write-handoff`, `list-attempts`,
+  `get-attempt`, `import-handoff`, `migrate-cleanup`).
+- **M4 — Migration.** The lazy non-destructive migrate-on-first-resolve from
+  §7, including schema 1 → 2 upgrade of existing on-disk configs.
+- **M5 — `src/mcp.js`.** stdio JSON-RPC server over the same `state.js` core.
+  Last; purely additive — the CLI already does everything. Deferring it
+  hurts nothing.
 
 ### Testing approach
 
 - **Zero-dependency stays zero-dependency.** Tests use `node:test` (the kit's
   existing pattern — `tests/flow.test.js`). MCP JSON-RPC is tested by
   spawning the server process and speaking the protocol over stdio; no SDK.
-- **Slug derivation is the highest-risk logic** (the drift-killer), so it gets
-  the most thorough tests: git main tree, git worktree (both must produce the
-  same slug), non-git folder, renamed folder with a pointer, conflict cases.
-- **Migration tests** seed a temp target with a `.dirf/` and assert: state
-  lands in store, backup exists, pointer written, re-resolve is stable,
-  conflict rows behave per §7 contract.
-- **Equivalence test:** MCP `dirf_read_handoff` and `dirf state read-handoff`
-  return byte-identical output (same core, by construction).
+- **Slug derivation (M1, highest risk — the drift-killer).** Exhaustive
+  cases, all asserting the *same slug*: git main tree; git worktree (both
+  must match); path-separator variants (`/` vs `\`); case variants
+  (`E:/` vs `e:/`, `Storytellers` vs `storytellers`); trailing slash; relative
+  common-dir; symlinked repo path. Plus a negative case: two different repos
+  produce different slugs.
+- **Migration (M4).** Seed a temp target with a `.dirf/` and assert: state
+  lands in store; backup exists; re-resolve is stable; schema upgraded;
+  conflict rows behave per §7 contract (newer-local-HANDOFF non-interactive =
+  error + nonzero exit; interactive = prompt); `import-handoff` backs up the
+  store's handoff before replacing.
+- **Equivalence test (M5).** MCP `dirf_read_handoff` and
+  `dirf state read-handoff` return byte-identical output (same core, by
+  construction).
+- **Concurrency (M2).** Two concurrent `writeHandoff` calls leave a valid
+  file (atomic rename), no corruption.
 
 ## 10. Open questions (non-blocking)
 
-1. **Pointer file format.** Spec'd as `slug.json` (`{ "slug": "..." }`) for
-   extensibility. A single-line `.dirf/slug` text file is equally viable.
-2. **`config.json` schema bump.** Moving config to the store is a natural
-   moment to bump `schema_version` 1 → 2 and add the slug field. Low-risk;
-   flagged for the plan.
-3. **`dirf state prune`.** A later command to remove entries whose `main_path`
-   no longer exists. Not in this build (YAGNI), named so it is not forgotten.
+1. **`config.json` schema bump.** Spec'd as `schema_version` 1 → 2 in M2/M4:
+   drop the now-stale `attempt_root` (state is under the store, not a target
+   path) and add `slug`. Low-risk.
+2. **`dirf state prune` and `re-associate`.** Future commands: prune removes
+  registry entries whose `main_path` no longer exists; `re-associate` lets a
+  renamed main tree point back at its orphaned store entry. Neither in this
+  build (YAGNI), both named so the rename limitation (§4) has a planned
+  remedy.
 
 ## 11. Success criteria
 
 - From inside *any* worktree of a registered project, `dirf state read-handoff`
   returns the same content as from the main tree. **The storytellers drift is
   structurally impossible.**
+- Slug derivation is stable across path-separator, case, trailing-slash, and
+  symlink variants for the same repo (the normalization contract holds).
 - `dirf state list` from any cwd shows all registered projects with
   `last_seen`.
 - An existing target's `.dirf/` migrates on first resolve with a backup, never
-  losing data; HANDOFF conflicts require explicit `import-handoff`.
+  losing data; a newer local HANDOFF surfaces a hard-stop error
+  non-interactively and requires explicit `import-handoff` to promote.
 - MCP `dirf_read_handoff` and `dirf state read-handoff` return byte-identical
   output.
 - Zero dependencies preserved; `node src/cli.js validate` stays green.
