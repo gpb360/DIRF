@@ -2,7 +2,7 @@
 // Selection happens in router.js; this module never classifies a task.
 import { bundledSkills } from "./skills.js";
 
-export const KNOWN_BRANCHES = new Set(["ui", "react", "security"]);
+export const KNOWN_BRANCHES = new Set(["ui", "react", "security", "multi-session"]);
 
 export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
   const errors = [];
@@ -45,6 +45,12 @@ export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
       for (const field of ["stage", "reason"]) {
         if (!step[field]) errors.push(`playbook ${name}: step ${index + 1} missing ${field}`);
       }
+      // Optional per-step output contract (humanlayer F4: a step's output is
+      // checkable, not just invoked). When present it must be a non-empty
+      // string so the rendered checkpoint is meaningful.
+      if (step.output !== undefined && (typeof step.output !== "string" || !step.output.trim())) {
+        errors.push(`playbook ${name}: step ${index + 1} output must be a non-empty string`);
+      }
       if (!step.capability && !step.skill) errors.push(`playbook ${name}: step ${index + 1} missing capability`);
       if (step.branch && !knownBranches.has(step.branch)) {
         errors.push(`playbook ${name}: step ${index + 1} references unknown branch ${step.branch}`);
@@ -61,6 +67,9 @@ function branchesFor(task, playbookAgents) {
   if (/\b(react|hook|jsx|component)\b/.test(text)) branches.add("react");
   if (/\b(security|auth(?:enticated|entication|orization)?|privacy|permission|secret|credential|no[- ]spend|token spend|billing|kie|generation)\b/.test(text)) {
     branches.add("security");
+  }
+  if (/\b(multi[- ]session|spec(?:ification)?|tickets?|roadmap|large feature|large project)\b/.test(text)) {
+    branches.add("multi-session");
   }
   if (playbookAgents?.some((agent) => ["frontend-developer", "ui-designer", "ux-researcher"].includes(agent))) {
     branches.add("ui");
@@ -111,6 +120,7 @@ function selectCapability(requirement, selection, context, skillIndex) {
     skill: chosen.name,
     type: chosen.item.type || "skill",
     reason: requirement.reason,
+    output: requirement.output || "",
     status: "installed",
     provider: chosen.item.provider || "project",
     selection_reason: `best installed match (${chosen.score}) for ${requirement.capability || requirement.stage}`,

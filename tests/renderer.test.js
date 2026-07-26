@@ -123,6 +123,65 @@ test("buildInstructions includes lifecycle guidance when persisted", () => {
   assert.match(readme, /Review independently/);
 });
 
+test("compaction policy renders from config and falls back to defaults", () => {
+  const outDir = mkdtempSync(join(tmpdir(), "dirf-compaction-"));
+
+  // Configured policy surfaces in both renders.
+  const configured = {
+    name: "demo", task: "build", playbook: "fullstack-feature",
+    workflow: { phases: ["build"], output: "done", validation: "test", recovery: "stop" },
+    agents: [], baseline_skills: [], skill_flow: { label: "build", steps: [] }, schema_version: 5,
+    compaction: { method: "verbatim-line", preserve_recent: 3, compression_ratio: 0.4, protected: ["objective", "open-decisions"] },
+  };
+  buildInstructions(configured, outDir);
+  const readme = readFileSync(join(outDir, "README.md"), "utf-8");
+  assert.match(readme, /## Compaction policy/);
+  assert.match(readme, /40% of the lines/);
+  assert.match(readme, /preserving the 3 most recent turns/);
+  assert.match(readme, /`objective`, `open-decisions`/);
+  assert.match(readme, /byte-identical/);
+
+  const html = buildHtml(configured);
+  assert.match(html, /Compaction policy/);
+  assert.match(html, /40% of the lines/);
+  assert.match(html, /<code>open-decisions<\/code>/);
+
+  // Absent compaction -> defaults applied (no crash, default ratio/recent/protected).
+  const bare = { ...configured, compaction: undefined };
+  buildInstructions(bare, mkdtempSync(join(tmpdir(), "dirf-comp-default-")));
+});
+
+test("per-step output contract renders as a checkpoint", () => {
+  const outDir = mkdtempSync(join(tmpdir(), "dirf-output-"));
+  const workflow = {
+    name: "demo", task: "build", playbook: "fullstack-feature",
+    workflow: { phases: ["build"], output: "done", validation: "test", recovery: "stop" },
+    agents: [], baseline_skills: [], schema_version: 5,
+    skill_flow: {
+      label: "build",
+      steps: [
+        { stage: "build", skill: "tdd", reason: "Drive behavior", status: "recommended", output: "a green test with the touched surface building clean" },
+        { stage: "review", skill: "code-review", reason: "Review independently", status: "recommended" },
+      ],
+    },
+  };
+  buildInstructions(workflow, outDir);
+  const readme = readFileSync(join(outDir, "README.md"), "utf-8");
+  assert.match(readme, /\*\*Done at this step when:\*\* a green test/);
+  // A step without output renders no checkpoint line.
+  const reviewLine = readme.split("\n").find((l) => l.includes("`code-review`"));
+  assert.ok(reviewLine, "step without output still renders");
+  assert.ok(!/Done at this step when:/.test(reviewLine), "step without output has no checkpoint");
+
+  const html = buildHtml(workflow);
+  assert.match(html, /Done at this step when:/);
+  assert.match(html, /a green test/);
+
+  // Per-skill README surfaces output in its outputs frontmatter.
+  const skillReadme = readFileSync(join(outDir, "skills", "01-tdd", "README.md"), "utf-8");
+  assert.match(skillReadme, /outputs: \["a green test with the touched surface building clean"\]/);
+});
+
 test("buildHtml is self-contained and collapsible", () => {
   const workflow = {
     name: "demo", task: "build a landing page",

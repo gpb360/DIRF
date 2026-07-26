@@ -19,6 +19,48 @@
       "capabilities": ["plan interview"]
     },
     {
+      "name": "grill-with-docs",
+      "category": "planning",
+      "applies_to": ["workflow-orchestrator", "knowledge-synthesizer"],
+      "summary": "Stateful discovery that resolves decisions while maintaining the project glossary and justified ADRs",
+      "capabilities": ["stateful discovery", "plan interview"]
+    },
+    {
+      "name": "domain-modeling",
+      "category": "planning",
+      "applies_to": ["workflow-orchestrator", "knowledge-synthesizer"],
+      "summary": "Sharpen domain terminology and record only durable, hard-to-reverse decisions",
+      "capabilities": ["domain modeling"]
+    },
+    {
+      "name": "research",
+      "category": "research",
+      "applies_to": ["research-analyst", "knowledge-synthesizer"],
+      "summary": "Primary-source investigation captured as a cited repository artifact",
+      "capabilities": ["primary source research"]
+    },
+    {
+      "name": "to-spec",
+      "category": "planning",
+      "applies_to": ["workflow-orchestrator", "documentation-engineer"],
+      "summary": "Synthesize approved decisions into a build-ready specification",
+      "capabilities": ["specification synthesis"]
+    },
+    {
+      "name": "to-tickets",
+      "category": "planning",
+      "applies_to": ["workflow-orchestrator", "agent-organizer"],
+      "summary": "Split an approved specification into tracer-bullet tickets with blocking edges",
+      "capabilities": ["dependency ticketing"]
+    },
+    {
+      "name": "handoff",
+      "category": "orchestration",
+      "applies_to": ["workflow-orchestrator", "knowledge-synthesizer"],
+      "summary": "Compact active work into a redacted continuation document for a fresh session",
+      "capabilities": ["session handoff"]
+    },
+    {
       "name": "code-review",
       "category": "quality",
       "applies_to": ["test-engineer", "security-auditor", "workflow-orchestrator"],

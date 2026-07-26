@@ -13,6 +13,7 @@
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { dirname, join, isAbsolute, resolve } from "node:path";
 import { execFileSync, spawn } from "node:child_process";
+import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { ROOT, REGISTRY, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, fileHash, folderHash, loadJson } from "./paths.js";
@@ -24,6 +25,7 @@ import { inspect } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
+import { resolveProject, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeProjectDir, importHandoff, migrateCleanup } from "./state.js";
 
 const LIFECYCLE = {
   clarify: "Use the best installed interview capability before implementation.",
@@ -95,7 +97,7 @@ function castAgents(agents, hostAgents) {
   });
 }
 
-function buildPlan(name, task, path, reservePercent = 5) {
+function buildPlan(name, task, path, reservePercent = 5, compaction = null) {
   const { selection, skillFlow, discovered, hostAgents, facts } = assembleTaskRouting(task, path);
   const agents = castAgents(enrichAgents(selection.agents), hostAgents).map((agent) => ({
     ...agent,
@@ -134,6 +136,7 @@ function buildPlan(name, task, path, reservePercent = 5) {
     },
     lifecycle: LIFECYCLE,
     context_reserve_percent: reservePercent,
+    compaction,
   };
 }
 
@@ -215,7 +218,7 @@ function openBrowserAt(filePath) {
 function cmdBuild(args) {
   const target = projectRoot(args.path);
   const config = loadProjectConfig(target);
-  const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent);
+  const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction);
   const attempt = createAttempt(target, args.name);
   const planPath = savePlan(plan, attempt);
   console.log(`Attempt saved: ${attempt.id}`);
@@ -225,7 +228,7 @@ function cmdBuild(args) {
 function cmdCreate(args) {
   const target = projectRoot(args.path);
   const config = loadProjectConfig(target);
-  const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent);
+  const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction);
   const attempt = createAttempt(target, args.name);
   savePlan(plan, attempt);
   console.log(`Attempt saved: ${attempt.id}`);
@@ -358,6 +361,106 @@ function cmdExportPlaybooks() {
   console.log(`Compatibility playbook JSON exported: ${PLAYBOOKS}`);
 }
 
+function resolveStateSlug(args) {
+  if (args.slug) return args.slug;
+  const target = projectRoot(args.path || ".");
+  const resolved = resolveProject(target);
+  if (!resolved) {
+    throw new Error(`DIRF has no project registered for ${target}. Run: dirf setup "${target}"`);
+  }
+  return resolved.slug;
+}
+
+function cmdStateWhich(args) {
+  const target = projectRoot(args.path || ".");
+  const resolved = resolveProject(target);
+  if (!resolved) { console.log(`(no project registered for ${target})`); return; }
+  console.log(`${resolved.slug}  ->  ${storeProjectDir(resolved.slug)}`);
+}
+
+function cmdStateList() {
+  const projects = listProjects();
+  if (!projects.length) { console.log("(no projects registered)"); return; }
+  console.log("Registered projects:");
+  for (const p of projects) console.log(`  ${p.slug}   last_seen ${p.last_seen}   ${p.name}`);
+}
+
+function cmdStateRegister(args) {
+  const target = projectRoot(args.path || args._[0] || ".");
+  const { slug, isNew } = registerProject(target);
+  console.log(isNew ? `Registered: ${slug}` : `Already registered: ${slug}`);
+  console.log(`  ${storeProjectDir(slug)}`);
+}
+
+function cmdStateReadHandoff(args) {
+  const slug = resolveStateSlug(args);
+  const md = readHandoff(slug);
+  if (md === null) { console.error(`No HANDOFF.md for ${slug}`); process.exitCode = 1; return; }
+  process.stdout.write(md);
+}
+
+function cmdStateWriteHandoff(args) {
+  const slug = resolveStateSlug(args);
+  let md;
+  if (args.file === "-") {
+    md = readFileSync(0, "utf8"); // stdin
+  } else if (args.file) {
+    md = readFileSync(args.file, "utf8");
+  } else {
+    console.error("usage: dirf state write-handoff [--path DIR|--slug S] --file FILE|-");
+    process.exitCode = 2; return;
+  }
+  writeHandoff(slug, md);
+  console.log(`Wrote canonical handoff for ${slug}`);
+}
+
+function cmdStateListAttempts(args) {
+  const slug = resolveStateSlug(args);
+  const attempts = listAttemptsState(slug);
+  if (!attempts.length) { console.log("(no attempts saved)"); return; }
+  console.log("Saved attempts:");
+  for (const a of attempts) console.log(`  - ${a.id}  ${a.name}`);
+}
+
+function cmdStateGetAttempt(args) {
+  const slug = resolveStateSlug(args);
+  const id = args._[0];
+  if (!id) { console.error("usage: dirf state get-attempt <id> [--path DIR|--slug S]"); process.exitCode = 2; return; }
+  const a = getAttemptState(slug, id);
+  console.log(`id: ${a.id}`);
+  console.log(`name: ${a.name}`);
+  console.log(`created_at: ${a.created_at}`);
+  console.log(`folder: ${a.folder}`);
+}
+
+function cmdStateImportHandoff(args) {
+  const target = projectRoot(args.path || ".");
+  // Resolve the slug WITHOUT tripping the newer-local-HANDOFF conflict check that
+  // resolveProject would surface — import-handoff is the RESOLUTION of that
+  // conflict, so it must reach the promotion step even from the conflict state.
+  // registerProject is idempotent and never throws on handoff conflicts.
+  const slug = args.slug || registerProject(target).slug;
+  if (!slug) throw new Error(`DIRF has no project registered for ${target}. Run: dirf setup "${target}"`);
+  if (!args.force) {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(`Promote local HANDOFF.md into the store for ${slug}? [y/N] `, (answer) => {
+      rl.close();
+      if (!/^y/i.test(answer.trim())) { console.log("aborted"); return; }
+      importHandoff(target, slug, { force: true });
+      console.log(`Promoted local HANDOFF.md for ${slug}`);
+    });
+  } else {
+    importHandoff(target, slug, { force: true });
+    console.log(`Promoted local HANDOFF.md for ${slug}`);
+  }
+}
+
+function cmdStateMigrateCleanup(args) {
+  const target = projectRoot(args.path || ".");
+  const { removed } = migrateCleanup(target);
+  console.log(removed ? `Removed ${removed} migration backup(s) under ${target}` : "No migration backups to remove.");
+}
+
 function parse(argv) {
   const [cmd, ...rest] = argv;
   const out = { _: [] };
@@ -368,6 +471,9 @@ function parse(argv) {
     if (a === "--context") { out.context = rest[++i]; continue; }
     if (a === "--reserve-percent") { out.reservePercent = Number(rest[++i]); continue; }
     if (a === "--open") { out.open = true; continue; }
+    if (a === "--file") { out.file = rest[++i]; continue; }
+    if (a === "--force") { out.force = true; continue; }
+    if (a === "--slug") { out.slug = rest[++i]; continue; }
     if (a === "--help" || a === "-h") { out.help = true; continue; }
     out._.push(a);
   }
@@ -392,6 +498,15 @@ Usage:
   dirf export playbooks                                regenerate legacy playbooks JSON
   dirf inspect [<path>]                                detect a project's optimization stack + suggest gaps
   dirf flow "<task>" [--path DIR]                      show the ordered skill flow for a task (ask-matt style)
+  dirf state which [--path DIR]                       what project am I in? (slug + store path)
+  dirf state list                                      list all registered projects
+  dirf state register [--path DIR]                    register a project explicitly
+  dirf state read-handoff [--path DIR|--slug S]       print the canonical handoff
+  dirf state write-handoff --file FILE|- [...]        write the canonical handoff
+  dirf state list-attempts [--path DIR|--slug S]      list attempts for a project
+  dirf state get-attempt <id> [...]                   show one attempt
+  dirf state import-handoff [--path DIR] [--force]    promote a local HANDOFF.md into the store
+  dirf state migrate-cleanup [--path DIR]            remove migration backup(s) after confirming the store works
 `;
 
 function cmdFlow(args) {
@@ -465,6 +580,20 @@ function main() {
   else if (cmd === "export" && args._[0] === "playbooks") cmdExportPlaybooks();
   else if (cmd === "inspect") { args._ = args._.length ? args._ : [args.path]; cmdInspect(args); }
   else if (cmd === "flow") { cmdFlow(args); }
+  else if (cmd === "state") {
+    const sub = args._[0];
+    const subArgs = { ...args, _: args._.slice(1) };
+    if (sub === "which") cmdStateWhich(subArgs);
+    else if (sub === "list") cmdStateList();
+    else if (sub === "register") cmdStateRegister(subArgs);
+    else if (sub === "read-handoff") cmdStateReadHandoff(subArgs);
+    else if (sub === "write-handoff") cmdStateWriteHandoff(subArgs);
+    else if (sub === "list-attempts") cmdStateListAttempts(subArgs);
+    else if (sub === "get-attempt") cmdStateGetAttempt(subArgs);
+    else if (sub === "import-handoff") cmdStateImportHandoff(subArgs);
+    else if (sub === "migrate-cleanup") cmdStateMigrateCleanup(subArgs);
+    else { console.error(`unknown state subcommand: ${sub}\n\n${HELP}`); process.exit(2); }
+  }
   else { console.error(`unknown command: ${cmd}\n\n${HELP}`); process.exit(2); }
 }
 

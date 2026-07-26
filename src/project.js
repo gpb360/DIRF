@@ -1,9 +1,43 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { registerProject, storeProjectDir, createAttemptInStore, listAttempts as listAttemptsInStore, getAttempt as getAttemptInStore } from "./state.js";
 
-const CONFIG_PATH = join(".dirf", "config.json");
+function ensureRegistered(root) {
+  return registerProject(root);
+}
 const ATTEMPT_IGNORE = ".dirf/attempts/";
+
+const DEFAULT_COMPACTION = Object.freeze({
+  method: "verbatim-line",
+  preserve_recent: 2,
+  compression_ratio: 0.5,
+  protected: ["objective", "definition-of-done", "policy"],
+});
+
+function normalizeCompaction(raw) {
+  // Optional compaction policy (verbatim-line selection, not rewriting).
+  // Absent section -> full defaults. Present section -> per-field defaults,
+  // with each field validated independently like reserve_percent.
+  const compaction = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const method = compaction.method ?? DEFAULT_COMPACTION.method;
+  if (method !== "verbatim-line") {
+    throw new Error(`DIRF compaction.method must be "verbatim-line" (only supported method); got ${JSON.stringify(method)}`);
+  }
+  const preserveRecent = compaction.preserve_recent ?? DEFAULT_COMPACTION.preserve_recent;
+  if (!Number.isInteger(preserveRecent) || preserveRecent < 0) {
+    throw new Error("DIRF compaction.preserve_recent must be a non-negative integer");
+  }
+  const compressionRatio = compaction.compression_ratio ?? DEFAULT_COMPACTION.compression_ratio;
+  if (typeof compressionRatio !== "number" || compressionRatio < 0.1 || compressionRatio > 0.9) {
+    throw new Error("DIRF compaction.compression_ratio must be a number from 0.1 to 0.9");
+  }
+  const protectedSections = compaction.protected ?? DEFAULT_COMPACTION.protected;
+  if (!Array.isArray(protectedSections) || protectedSections.some((s) => typeof s !== "string" || !s)) {
+    throw new Error("DIRF compaction.protected must be an array of non-empty strings");
+  }
+  return { method, preserve_recent: preserveRecent, compression_ratio: compressionRatio, protected: [...protectedSections] };
+}
 
 function portable(path) {
   return path.replaceAll("\\", "/");
@@ -48,16 +82,18 @@ function existingFile(root, candidates) {
 }
 
 export function loadProjectConfig(root = process.cwd()) {
-  const path = join(projectRoot(root), CONFIG_PATH);
-  if (!existsSync(path)) throw new Error(`DIRF is not configured here. Run: dirf setup "${projectRoot(root)}"`);
+  root = projectRoot(root);
+  const { slug } = ensureRegistered(root);
+  const path = join(storeProjectDir(slug), "config.json");
+  if (!existsSync(path)) throw new Error(`DIRF is not configured here. Run: dirf setup "${root}"`);
   const config = JSON.parse(readFileSync(path, "utf8"));
-  if (config.schema_version !== 1) throw new Error(`Unsupported DIRF config schema ${config.schema_version}`);
+  if (config.schema_version !== 2) throw new Error(`Unsupported DIRF config schema ${config.schema_version}`);
   const reservePercent = config.context?.reserve_percent ?? 5;
   if (!Number.isInteger(reservePercent) || reservePercent < 1 || reservePercent > 50) {
     throw new Error("DIRF context reserve_percent must be an integer from 1 to 50");
   }
   config.context.reserve_percent = reservePercent;
-  containedPath(projectRoot(root), config.attempt_root, "DIRF attempt_root");
+  config.compaction = normalizeCompaction(config.compaction);
   containedPath(projectRoot(root), config.context?.path, "DIRF context path");
   containedPath(projectRoot(root), config.adr_path, "DIRF ADR path");
   containedPath(projectRoot(root), config.tracker?.specs_path, "DIRF specs path");
@@ -75,22 +111,33 @@ export function setupProject(root = process.cwd(), options = {}) {
   if (!Number.isInteger(reservePercent) || reservePercent < 1 || reservePercent > 50) throw new Error("reserve-percent must be an integer from 1 to 50");
 
   const created = [];
-  const existingConfig = existsSync(join(root, CONFIG_PATH)) ? loadProjectConfig(root) : null;
+  const { slug } = ensureRegistered(root);
+  const storeConfigPath = join(storeProjectDir(slug), "config.json");
+  const existingConfig = existsSync(storeConfigPath) ? loadProjectConfig(root) : null;
   const contextPath = existingConfig?.context.path || existingFile(root, ["CONTEXT.md", "docs/CONTEXT.md", "docs/context.md"]) || "docs/agents/domain/CONTEXT.md";
   const adrPath = existingConfig?.adr_path || existingDirectory(root, ["docs/adr", "adr", "docs/architecture/decisions", "docs/decisions"]) || "docs/agents/domain/adr";
   const config = existingConfig || {
-    schema_version: 1,
+    schema_version: 2,
+    slug,
     tracker: {
       provider: tracker,
       specs_path: "docs/agents/issues/specs",
       tickets_path: "docs/agents/issues/tickets.md",
     },
     context: { mode: contextMode, path: contextPath, reserve_percent: reservePercent },
+    compaction: { ...DEFAULT_COMPACTION },
     adr_path: adrPath,
-    attempt_root: ATTEMPT_IGNORE.slice(0, -1),
   };
 
-  writeMissing(root, CONFIG_PATH, JSON.stringify(config, null, 2) + "\n", created);
+  // Write config to the store (schema v2). Add slug if an old config lacks it.
+  const toWrite = { ...config, schema_version: 2, slug };
+  delete toWrite.attempt_root; // stale under the store model
+  const serialized = JSON.stringify(toWrite, null, 2) + "\n";
+  if (!existsSync(storeConfigPath) || readFileSync(storeConfigPath, "utf8") !== serialized) {
+    writeFileSync(storeConfigPath, serialized, "utf8");
+    created.push(`${slug}/config.json (store)`);
+  }
+
   const gitignore = join(root, ".gitignore");
   const ignored = existsSync(gitignore) ? readFileSync(gitignore, "utf8") : "";
   if (!ignored.split(/\r?\n/).includes(ATTEMPT_IGNORE)) {
@@ -101,61 +148,24 @@ export function setupProject(root = process.cwd(), options = {}) {
   writeMissing(root, join(adrPath, "README.md"), "# Architecture Decisions\n\nRecord hard-to-reverse decisions as numbered Markdown files.\n", created);
   writeMissing(root, join(config.tracker.specs_path, "README.md"), "# Specifications\n\nDurable destination documents for multi-session work.\n", created);
   writeMissing(root, config.tracker.tickets_path, "# Tickets\n\nDependency-ordered implementation slices.\n", created);
-  return { root, config: loadProjectConfig(root), created };
-}
-
-function slug(value) {
-  const result = String(value || "").trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^[.-]+|[.-]+$/g, "");
-  if (!result) throw new Error("attempt name must contain alphanumeric characters");
-  return result;
-}
-
-function timestamp(now) {
-  return now.toISOString().replace(/[-:]/g, "").replace(".", "");
+  return { root, slug, config: loadProjectConfig(root), created };
 }
 
 export function createAttempt(root, name, now = new Date()) {
   root = projectRoot(root);
-  const config = loadProjectConfig(root);
-  const baseId = `${timestamp(now)}-${slug(name)}`;
-  const attemptsRoot = join(root, config.attempt_root);
-  mkdirSync(attemptsRoot, { recursive: true });
-  let id;
-  let relativePath;
-  let folder;
-  for (let collision = 1; ; collision += 1) {
-    id = collision === 1 ? baseId : `${baseId}-${String(collision).padStart(2, "0")}`;
-    relativePath = portable(join(config.attempt_root, id));
-    folder = join(root, relativePath);
-    try { mkdirSync(folder); break; }
-    catch (error) { if (error.code !== "EEXIST") throw error; }
-  }
-  const attempt = { schema_version: 1, id, name, relativePath, created_at: now.toISOString() };
-  writeFileSync(join(folder, "attempt.json"), JSON.stringify(attempt, null, 2) + "\n", "utf8");
-  return { ...attempt, folder };
+  loadProjectConfig(root); // validates that setup has run
+  const { slug } = ensureRegistered(root);
+  return createAttemptInStore(slug, name, now);
 }
 
 export function listAttempts(root = process.cwd()) {
-  root = projectRoot(root);
-  const config = loadProjectConfig(root);
-  const base = join(root, config.attempt_root);
-  if (!existsSync(base)) return [];
-  return readdirSync(base, { withFileTypes: true }).filter((entry) => entry.isDirectory()).sort((a, b) => a.name.localeCompare(b.name)).flatMap((entry) => {
-    const folder = join(base, entry.name);
-    const metadata = join(folder, "attempt.json");
-    if (!existsSync(metadata)) return [];
-    return [{ ...JSON.parse(readFileSync(metadata, "utf8")), folder }];
-  });
+  const { slug } = ensureRegistered(projectRoot(root));
+  return listAttemptsInStore(slug);
 }
 
 export function findAttempt(root, nameOrId) {
-  const attempts = listAttempts(root);
-  const exact = attempts.find((attempt) => attempt.id === nameOrId);
-  if (exact) return exact;
-  const wanted = slug(nameOrId);
-  const matches = attempts.filter((attempt) => slug(attempt.name) === wanted);
-  if (!matches.length) throw new Error(`No DIRF attempt named ${JSON.stringify(nameOrId)}`);
-  return matches.at(-1);
+  const { slug } = ensureRegistered(projectRoot(root));
+  return getAttemptInStore(slug, nameOrId);
 }
 
 export function repositoryIdentity(targetRoot) {

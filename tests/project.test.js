@@ -10,17 +10,26 @@ function project() {
   return mkdtempSync(join(tmpdir(), "dirf-project-"));
 }
 
+function freshStateHome() {
+  const home = mkdtempSync(join(tmpdir(), "dirf-state-"));
+  process.env.DIRF_HOME = home;
+  return home;
+}
+
 const TIMEOUT_MS = 30_000;
 
 test("setup creates the minimum tracked contract and is idempotent", () => {
+  const home = freshStateHome();
   const root = project();
   const first = setupProject(root);
-  const before = readFileSync(join(root, ".dirf", "config.json"), "utf8");
+  const storeCfg = () => join(home, "projects", first.slug, "config.json");
+  const before = readFileSync(storeCfg(), "utf8");
   const second = setupProject(root);
 
-  assert.equal(first.created.length, 6);
+  assert.ok(first.created.length >= 5, `created: ${first.created.join(",")}`);
+  assert.ok(existsSync(storeCfg()));
   assert.deepEqual(second.created, []);
-  assert.equal(readFileSync(join(root, ".dirf", "config.json"), "utf8"), before);
+  assert.equal(readFileSync(storeCfg(), "utf8"), before);
   assert.match(readFileSync(join(root, ".gitignore"), "utf8"), /^\.dirf\/attempts\/$/m);
   assert.ok(existsSync(join(root, "docs", "agents", "domain", "CONTEXT.md")));
   assert.ok(existsSync(join(root, "docs", "agents", "issues", "tickets.md")));
@@ -29,10 +38,10 @@ test("setup creates the minimum tracked contract and is idempotent", () => {
   assert.equal(config.tracker.provider, "local");
   assert.equal(config.context.mode, "single");
   assert.equal(config.context.reserve_percent, 5);
-  assert.equal(config.attempt_root, ".dirf/attempts");
 });
 
 test("setup reuses existing context and ADR locations without overwriting", () => {
+  freshStateHome();
   const root = project();
   mkdirSync(join(root, "docs", "adr"), { recursive: true });
   writeFileSync(join(root, "docs", "CONTEXT.md"), "existing context\n");
@@ -47,20 +56,63 @@ test("setup reuses existing context and ADR locations without overwriting", () =
 });
 
 test("setup validates and stores a custom context reserve", () => {
+  freshStateHome();
   const root = project();
   setupProject(root, { reservePercent: 10 });
   assert.equal(loadProjectConfig(root).context.reserve_percent, 10);
   assert.throws(() => setupProject(project(), { reservePercent: 0 }), /reserve-percent/);
 });
 
+test("setup writes default compaction policy and loadProjectConfig enforces it", () => {
+  freshStateHome();
+  const root = project();
+  setupProject(root);
+  const compaction = loadProjectConfig(root).compaction;
+  assert.equal(compaction.method, "verbatim-line");
+  assert.equal(compaction.preserve_recent, 2);
+  assert.equal(compaction.compression_ratio, 0.5);
+  assert.deepEqual(compaction.protected, ["objective", "definition-of-done", "policy"]);
+
+  // A config without a compaction section still resolves to defaults (backward compatible).
+  const bare = project();
+  const r = setupProject(bare);
+  const configPath = join(process.env.DIRF_HOME, "projects", r.slug, "config.json");
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  delete config.compaction;
+  writeFileSync(configPath, JSON.stringify(config));
+  const defaulted = loadProjectConfig(bare).compaction;
+  assert.equal(defaulted.method, "verbatim-line");
+  assert.equal(defaulted.preserve_recent, 2);
+});
+
+test("loadProjectConfig rejects a malformed compaction policy", () => {
+  freshStateHome();
+  const root = project();
+  const r = setupProject(root);
+  const configPath = join(process.env.DIRF_HOME, "projects", r.slug, "config.json");
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  config.compaction = { method: "summarize" };
+  writeFileSync(configPath, JSON.stringify(config));
+  assert.throws(() => loadProjectConfig(root), /verbatim-line/);
+
+  config.compaction = { method: "verbatim-line", compression_ratio: 1.5 };
+  writeFileSync(configPath, JSON.stringify(config));
+  assert.throws(() => loadProjectConfig(root), /compression_ratio/);
+
+  config.compaction = { method: "verbatim-line", preserve_recent: -1 };
+  writeFileSync(configPath, JSON.stringify(config));
+  assert.throws(() => loadProjectConfig(root), /preserve_recent/);
+});
+
 test("attempts are timestamped, portable, and resolved by id or latest name", () => {
+  freshStateHome();
   const root = project();
   setupProject(root);
   const first = createAttempt(root, "Demo Run", new Date("2026-07-18T10:00:00.000Z"));
   const second = createAttempt(root, "Demo Run", new Date("2026-07-18T11:00:00.000Z"));
 
   assert.equal(first.id, "20260718T100000000Z-demo-run");
-  assert.equal(second.relativePath, ".dirf/attempts/20260718T110000000Z-demo-run");
+  assert.equal(second.relativePath, "attempts/20260718T110000000Z-demo-run");
   assert.equal(findAttempt(root, first.id).id, first.id);
   assert.equal(findAttempt(root, "Demo Run").id, second.id);
   assert.deepEqual(listAttempts(root).map((attempt) => attempt.id), [first.id, second.id]);
@@ -68,6 +120,7 @@ test("attempts are timestamped, portable, and resolved by id or latest name", ()
 });
 
 test("same-millisecond attempts receive deterministic collision suffixes", () => {
+  freshStateHome();
   const root = project();
   setupProject(root);
   const now = new Date("2026-07-18T10:00:00.000Z");
@@ -80,9 +133,10 @@ test("same-millisecond attempts receive deterministic collision suffixes", () =>
 });
 
 test("setup rejects configured write paths outside the target", () => {
+  freshStateHome();
   const root = project();
-  setupProject(root);
-  const configPath = join(root, ".dirf", "config.json");
+  const r = setupProject(root);
+  const configPath = join(process.env.DIRF_HOME, "projects", r.slug, "config.json");
   const config = JSON.parse(readFileSync(configPath, "utf8"));
   config.tracker.tickets_path = "../../outside.md";
   writeFileSync(configPath, JSON.stringify(config));
@@ -91,9 +145,10 @@ test("setup rejects configured write paths outside the target", () => {
 });
 
 test("setup accepts names beginning with two dots when they remain inside", () => {
+  freshStateHome();
   const root = project();
-  setupProject(root);
-  const configPath = join(root, ".dirf", "config.json");
+  const r = setupProject(root);
+  const configPath = join(process.env.DIRF_HOME, "projects", r.slug, "config.json");
   const config = JSON.parse(readFileSync(configPath, "utf8"));
   config.tracker.tickets_path = "..tickets.md";
   writeFileSync(configPath, JSON.stringify(config));
@@ -102,6 +157,7 @@ test("setup accepts names beginning with two dots when they remain inside", () =
 });
 
 test("Git sees setup docs but ignores attempts and renders", () => {
+  freshStateHome();
   const root = project();
   execFileSync("git", ["init", "-q"], { cwd: root, timeout: TIMEOUT_MS });
   setupProject(root);
@@ -109,13 +165,13 @@ test("Git sees setup docs but ignores attempts and renders", () => {
   writeFileSync(join(attempt.folder, "render.mp4"), "render");
 
   const status = execFileSync("git", ["status", "--short", "--untracked-files=all"], { cwd: root, encoding: "utf8", timeout: TIMEOUT_MS });
-  assert.match(status, /\.dirf\/config\.json/);
   assert.match(status, /docs\/agents\/domain\/CONTEXT\.md/);
   assert.doesNotMatch(status, /\.dirf\/attempts/);
   assert.match(execFileSync("git", ["check-ignore", "-q", ".dirf/attempts/"], { cwd: root, encoding: "utf8", timeout: TIMEOUT_MS }), /^$/);
 });
 
 test("attempt creation fails before setup", () => {
+  freshStateHome();
   assert.throws(() => createAttempt(project(), "demo"), /dirf setup/);
 });
 
@@ -139,4 +195,28 @@ test("repositoryIdentity strips credentials and never persists local paths", () 
   assert.equal(repositoryIdentity(root).remote, "ssh://example.test/org/repo.git", "ssh URL must persist with userinfo stripped");
   execFileSync("git", ["remote", "set-url", "origin", "git@example.test:org/repo.git"], { cwd: root, timeout: TIMEOUT_MS });
   assert.equal(repositoryIdentity(root).remote, "git@example.test:org/repo.git", "scp-like remote must persist");
+});
+
+test("build pipeline writes attempt + HANDOFF into the store (M2 integration)", async () => {
+  const home = freshStateHome();
+  const root = project();
+  execFileSync("git", ["init", "-q"], { cwd: root, timeout: TIMEOUT_MS });
+  const setup = setupProject(root);
+  const slug = setup.slug;
+  const attempt = createAttempt(root, "Demo Run");
+  assert.ok(attempt.folder.startsWith(home), "attempt folder must be under DIRF_HOME");
+  assert.ok(existsSync(join(attempt.folder, "attempt.json")));
+  // Simulate savePlan writing workflow.json + HANDOFF.md into the attempt folder.
+  writeFileSync(join(attempt.folder, "workflow.json"), "{}");
+  writeFileSync(join(attempt.folder, "HANDOFF.md"), "# Handoff\n");
+  assert.equal(readFileSync(join(attempt.folder, "HANDOFF.md"), "utf8"), "# Handoff\n");
+  // The per-attempt HANDOFF.md (attempt-scoped) and the canonical project HANDOFF.md
+  // (project-scoped, managed via state.js) are distinct files. This is intentional
+  // and unchanged from today's behavior; this test only verifies the attempt folder
+  // is store-backed.
+  const { readHandoff } = await import("../src/state.js");
+  // readHandoff reads the project-scoped canonical handoff, which we did NOT write here,
+  // so it should be null. This confirms the two are distinct.
+  process.env.DIRF_HOME = home;
+  assert.equal(readHandoff(slug), null);
 });

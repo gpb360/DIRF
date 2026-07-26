@@ -12,7 +12,7 @@ Use this policy in every generated workflow prompt.
 ## Runtime Portability
 - Operating instructions are host-neutral. The current host may be Claude, Codex, another agent, or a person.
 - Resolve repository, skill, and tool paths at runtime. Never persist absolute host paths as workflow identity.
-- When isolation is required, place worktrees beside the target repository by default or under a root explicitly configured by the user.
+- DIRF coordination state is canonical and central (~/.dirf/projects/<slug>/). Worktrees resolve to the same store entry automatically via git-common-dir, so no per-worktree setup is needed and state cannot drift between checkouts. Scratch isolation stays local to the current execution.
 - Select scratch space inside the active workspace. Never silently fall back to another drive or the operating-system temp directory.
 - Persist capability names and provider hints, not installation paths.
 
@@ -56,6 +56,14 @@ Use this policy in every generated workflow prompt.
 - When the host exposes remaining context and reaches the reserve, update `HANDOFF.md`, then stop.
 - If usage telemetry is unavailable, checkpoint after every completed workflow phase.
 - Record the objective, current phase, completed work, decisions, changed files, validation, blockers, and exact next action.
+
+## Compaction
+- Under context pressure, prefer dropping lines by selection over rewriting or summarizing.
+- Surviving lines stay byte-identical to their source — never paraphrase a line you keep.
+- Run one global pass, not chunked summarization.
+- Protect the objective, definition of done, policy, and open decisions from compaction.
+- Preserve the most recent turns intact before any historical trimming.
+- If the host cannot do verbatim-line compaction, fall back to its native compaction but still protect the sections above.
 
 ## Idea to Ship
 - Clarify the intent with the best installed interview capability before implementation.
