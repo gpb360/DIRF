@@ -1,18 +1,31 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setupProject } from "../src/project.js";
+import { readHandoff } from "../src/state.js";
 
-const CLI = join(process.cwd(), "src", "mcp.js");
+const MCP = join(process.cwd(), "src", "mcp.js");
+const CLI_PROJECT = join(process.cwd(), "src", "cli.js");
+const TIMEOUT = 30_000;
 
 function startServer(home) {
-  const child = spawn(process.execPath, [CLI], {
+  const child = spawn(process.execPath, [MCP], {
     stdio: ["pipe", "pipe", "inherit"],
     env: { ...process.env, DIRF_HOME: home },
   });
   return child;
+}
+
+function setupProj(home, dir) {
+  execFileSync("git", ["init", "-q"], { cwd: dir, timeout: TIMEOUT });
+  execFileSync(process.execPath, [CLI_PROJECT, "setup", dir], {
+    env: { ...process.env, DIRF_HOME: home },
+    encoding: "utf8",
+    timeout: TIMEOUT,
+  });
 }
 
 function send(child, obj) {
@@ -61,5 +74,34 @@ test("tools/list returns the expected dirf_* tools", async () => {
     assert.ok(names.includes("dirf_read_handoff"));
     assert.ok(names.includes("dirf_write_handoff"));
     assert.ok(names.includes("dirf_list_projects"));
+  } finally { child.kill(); }
+});
+
+test("dirf_write_handoff then dirf_read_handoff round-trip via MCP, byte-identical to CLI", async () => {
+  const home = mkdtempSync(join(tmpdir(), "mcp-eq-"));
+  const dir = mkdtempSync(join(tmpdir(), "eqproj-"));
+  setupProj(home, dir);
+
+  const child = startServer(home);
+  try {
+    send(child, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "1" } } });
+    await once(child);
+    send(child, { jsonrpc: "2.0", method: "notifications/initialized" });
+
+    // write via MCP, using the path as project
+    const md = "# Via MCP\n\nDrift impossible.\n";
+    send(child, { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "dirf_write_handoff", arguments: { project: dir, content: md } } });
+    const writeRes = await once(child);
+    assert.equal(writeRes.result.content[0].text.includes('"ok":true'), true);
+
+    // read via MCP
+    send(child, { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "dirf_read_handoff", arguments: { project: dir } } });
+    const readRes = await once(child);
+    const parsed = JSON.parse(readRes.result.content[0].text);
+    assert.equal(parsed.content, md);
+
+    // equivalence: CLI read-handoff returns the same bytes
+    const cliOut = execFileSync(process.execPath, [CLI_PROJECT, "state", "read-handoff"], { cwd: dir, env: { ...process.env, DIRF_HOME: home }, encoding: "utf8", timeout: TIMEOUT });
+    assert.equal(cliOut, md, "MCP and CLI must return byte-identical handoff (same core)");
   } finally { child.kill(); }
 });
