@@ -95,7 +95,7 @@ function castAgents(agents, hostAgents) {
   });
 }
 
-function buildPlan(name, task, path, reservePercent = 5) {
+function buildPlan(name, task, path, reservePercent = 5, compaction = null) {
   const { selection, skillFlow, discovered, hostAgents, facts } = assembleTaskRouting(task, path);
   const agents = castAgents(enrichAgents(selection.agents), hostAgents).map((agent) => ({
     ...agent,
@@ -134,6 +134,7 @@ function buildPlan(name, task, path, reservePercent = 5) {
     },
     lifecycle: LIFECYCLE,
     context_reserve_percent: reservePercent,
+    compaction,
   };
 }
 
@@ -215,7 +216,7 @@ function openBrowserAt(filePath) {
 function cmdBuild(args) {
   const target = projectRoot(args.path);
   const config = loadProjectConfig(target);
-  const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent);
+  const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction);
   const attempt = createAttempt(target, args.name);
   const planPath = savePlan(plan, attempt);
   console.log(`Attempt saved: ${attempt.id}`);
@@ -225,7 +226,7 @@ function cmdBuild(args) {
 function cmdCreate(args) {
   const target = projectRoot(args.path);
   const config = loadProjectConfig(target);
-  const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent);
+  const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction);
   const attempt = createAttempt(target, args.name);
   savePlan(plan, attempt);
   console.log(`Attempt saved: ${attempt.id}`);

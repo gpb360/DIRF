@@ -80,6 +80,25 @@ test("Reconciliation requires a complete workflow contract", () => {
   ]);
 });
 
+test("Reconciliation tolerates an optional per-step output contract", () => {
+  // Present and non-empty -> no error. Absent -> no error. Empty -> error.
+  const ok = reconcile({
+    triage: {
+      description: "Classify", keywords: [], agents: [], workflow: WORKFLOW,
+      skill_flow: { label: "triage", steps: [{ stage: "route", skill: "grill-me", reason: "Classify", output: "a route decision" }] },
+    },
+  });
+  assert.deepEqual(ok, []);
+
+  const empty = reconcile({
+    triage: {
+      description: "Classify", keywords: [], agents: [], workflow: WORKFLOW,
+      skill_flow: { label: "triage", steps: [{ stage: "route", skill: "grill-me", reason: "Classify", output: "  " }] },
+    },
+  });
+  assert.deepEqual(empty, ["playbook triage: step 1 output must be a non-empty string"]);
+});
+
 test("buildFlow assembles an existing Selection without classifying again", () => {
   const selection = {
     playbook: "fullstack-feature",
@@ -95,7 +114,7 @@ test("buildFlow assembles an existing Selection without classifying again", () =
     label: "build a feature",
     steps: [{
       stage: "build", capability: "testing", skill: "tdd", type: "skill", reason: "Drive one behavior",
-      status: "installed", provider: "project", selection_reason: "best installed match (105) for testing", rejected_candidates: [],
+      output: "", status: "installed", provider: "project", selection_reason: "best installed match (105) for testing", rejected_candidates: [],
     }],
     gaps: [],
     branches: [],
@@ -115,6 +134,29 @@ test("single-word capabilities resolve against local install descriptions", () =
   assert.equal(flow.steps.length, 1);
   assert.equal(flow.steps[0].skill, "copywriter-coach");
   assert.deepEqual(flow.gaps, []);
+});
+
+test("multi-session feature activates spec, ticket, and handoff branches", () => {
+  const selection = {
+    playbook: "fullstack-feature",
+    agents: [],
+    skill_flow: {
+      label: "build",
+      steps: [
+        { stage: "specify", branch: "multi-session", capability: "specification synthesis", reason: "Specify" },
+        { stage: "slice", branch: "multi-session", capability: "dependency ticketing", reason: "Slice" },
+        { stage: "handoff", branch: "multi-session", capability: "session handoff", reason: "Handoff" },
+      ],
+    },
+  };
+  const bundledIndex = {
+    "to-spec": { capabilities: ["specification synthesis"], provider: "dirf" },
+    "to-tickets": { capabilities: ["dependency ticketing"], provider: "dirf" },
+    handoff: { capabilities: ["session handoff"], provider: "dirf" },
+  };
+  const flow = buildFlow(selection, { task: "plan a multi-session feature", bundledIndex });
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["to-spec", "to-tickets", "handoff"]);
+  assert.ok(flow.branches.includes("multi-session"));
 });
 
 test("single-word capabilities do not match a passing description mention", () => {
@@ -320,4 +362,50 @@ test("schema v5 requires portable attempt metadata and lifecycle guidance", () =
 
   assert.ok(errors.includes("demo: attempt path must be target-relative"));
   assert.ok(errors.includes("demo: lifecycle.review must be a non-empty string"));
+});
+
+test("validateSnapshot accepts a valid compaction directive and rejects a malformed one", () => {
+  const base = {
+    schema_version: 5, name: "demo", task: "build", playbook: "fullstack-feature", playbook_description: "Build",
+    agents: [], baseline_skills: [], questions: [], capability_gaps: [], policy: "policies/workflow-policy.md",
+    skill_flow: { label: "build", steps: [] },
+    attempt: { id: "demo", path: "attempts/demo" },
+    lifecycle: { clarify: "c", prototype: "p", split: "s", implement: "i", review: "r" },
+  };
+  // Valid compaction -> no compaction-related error.
+  const valid = validateSnapshot({ ...base, compaction: { method: "verbatim-line", preserve_recent: 3, compression_ratio: 0.4, protected: ["objective"] } }, "demo");
+  assert.ok(!valid.some((e) => e.includes("compaction")));
+
+  // Absent compaction -> no error (backward compatible, applies defaults).
+  const absent = validateSnapshot({ ...base }, "demo");
+  assert.ok(!absent.some((e) => e.includes("compaction")));
+
+  // Malformed -> errors per field.
+  const bad = validateSnapshot({ ...base, compaction: { method: "summarize", preserve_recent: -1, compression_ratio: 2, protected: ["", 5] } }, "demo");
+  assert.ok(bad.includes("demo: compaction.method must be \"verbatim-line\""));
+  assert.ok(bad.includes("demo: compaction.preserve_recent must be a non-negative integer"));
+  assert.ok(bad.includes("demo: compaction.compression_ratio must be a number from 0.1 to 0.9"));
+  assert.ok(bad.includes("demo: compaction.protected must be an array of non-empty strings"));
+});
+
+test("validateSnapshot tolerates optional per-step output and rejects empty output", () => {
+  const base = {
+    schema_version: 5, name: "demo", task: "build", playbook: "fullstack-feature", playbook_description: "Build",
+    agents: [], baseline_skills: [], questions: [], capability_gaps: [], policy: "policies/workflow-policy.md",
+    skill_flow: { label: "build", steps: [{ stage: "build", capability: "testing", skill: "tdd", status: "installed", provider: "project", reason: "Drive behavior", output: "green test" }] },
+    attempt: { id: "demo", path: "attempts/demo" },
+    lifecycle: { clarify: "c", prototype: "p", split: "s", implement: "i", review: "r" },
+  };
+  // Present and non-empty -> no output error.
+  assert.ok(!validateSnapshot(base, "demo").some((e) => e.includes("output")));
+
+  // Absent -> no error.
+  const noOutput = structuredClone(base);
+  delete noOutput.skill_flow.steps[0].output;
+  assert.ok(!validateSnapshot(noOutput, "demo").some((e) => e.includes("output")));
+
+  // Empty -> error.
+  const empty = structuredClone(base);
+  empty.skill_flow.steps[0].output = "  ";
+  assert.ok(validateSnapshot(empty, "demo").includes("demo: skill_flow step 1 output must be a non-empty string"));
 });

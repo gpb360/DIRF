@@ -11,6 +11,26 @@ function assertSnapshot(workflow) {
   if (!workflow.skill_flow?.steps) throw new Error(`workflow ${workflow.name || "?"}: missing persisted skill_flow`);
 }
 
+// Verbatim-line compaction directive defaults. DIRF encodes the policy; the
+// host honors it. Mirrors project.js DEFAULT_COMPACTION so the renderer stands
+// alone for snapshots that predate the compaction field (defaults applied).
+const DEFAULT_COMPACTION = {
+  method: "verbatim-line",
+  preserve_recent: 2,
+  compression_ratio: 0.5,
+  protected: ["objective", "definition-of-done", "policy"],
+};
+
+function resolveCompaction(workflow) {
+  const c = workflow.compaction && typeof workflow.compaction === "object" && !Array.isArray(workflow.compaction) ? workflow.compaction : {};
+  return {
+    method: c.method || DEFAULT_COMPACTION.method,
+    preserve_recent: c.preserve_recent ?? DEFAULT_COMPACTION.preserve_recent,
+    compression_ratio: c.compression_ratio ?? DEFAULT_COMPACTION.compression_ratio,
+    protected: Array.isArray(c.protected) && c.protected.length ? c.protected : DEFAULT_COMPACTION.protected,
+  };
+}
+
 function executionHandoff() {
   return "Open the target repository in your current host. Load this README.md as the operating workflow and execute the task.";
 }
@@ -227,6 +247,18 @@ export function buildInstructions(workflow, outDir) {
     "",
     "Runtime paths belong to this execution only. If isolation is needed, place worktrees beside the target repository or under the user-configured worktree root. Select a scratch directory inside that workspace; do not fall back to another drive or the operating-system temp directory.",
     "",
+    "## Compaction policy",
+    (() => {
+      const c = resolveCompaction(workflow);
+      const ratio = `${Math.round(c.compression_ratio * 100)}%`;
+      const protectedList = c.protected.map((p) => `\`${p}\``).join(", ");
+      return [
+        `When context pressure rises, drop lines by **selection**, never by rewriting. Surviving lines stay byte-identical to their source. Run one global pass at roughly ${ratio} of the lines, preserving the ${c.preserve_recent} most recent turns intact.`,
+        `Never compact these sections: ${protectedList}.`,
+        "If the host cannot do verbatim-line compaction, fall back to its native compaction but still protect the sections above.",
+      ].join(" ");
+    })(),
+    "",
     "## Definition of Done",
     wf.output || "_(no output contract declared)_",
     "",
@@ -284,6 +316,7 @@ export function buildInstructions(workflow, outDir) {
     if (s.stage !== lastStage) { lines.push(`**${s.stage}**`); lastStage = s.stage; }
     const mark = s.status === "installed" ? "✅" : "⚠️";
     lines.push(`- ${mark} \`${s.skill}\` — ${s.reason}`);
+    if (s.output) lines.push(`  - **Done at this step when:** ${s.output}`);
   }
   if (flow.gaps?.length) {
     lines.push("", "## Capability gaps", "");
@@ -320,7 +353,8 @@ export function buildInstructions(workflow, outDir) {
     const skillReadme = join(skillDir, "README.md");
     writeFileSync(skillReadme, [
       "---", `name: ${JSON.stringify(step.skill)}`, "kind: skill", `description: ${JSON.stringify(step.reason)}`,
-      "uses: []", "details: []", `inputs: ${JSON.stringify([step.stage])}`, 'outputs: ["stage result"]',
+      "uses: []", "details: []", `inputs: ${JSON.stringify([step.stage])}`,
+      `outputs: ${JSON.stringify(step.output ? [step.output] : ["stage result"])}`,
       `capabilities: ${JSON.stringify(step.capability ? [step.capability] : [])}`, "---", "",
       `# ${step.skill}`, "", step.reason,
     ].join("\n"), "utf-8");
@@ -459,6 +493,16 @@ export function buildHtml(workflow) {
   parts.push(`<pre id='kickoff'>${escapeHtml(kickoffPrompt(workflow))}</pre>`);
   parts.push("<p class='mute'>Runtime paths stay local to the current execution. Keep worktrees beside the target repository or in the configured worktree root, and select scratch space inside that workspace.</p>");
 
+  {
+    const c = resolveCompaction(workflow);
+    const ratio = `${Math.round(c.compression_ratio * 100)}%`;
+    const protectedList = c.protected.map((p) => `<code>${escapeHtml(p)}</code>`).join(", ");
+    parts.push("<h2>Compaction policy</h2>");
+    parts.push(`<p>When context pressure rises, drop lines by <strong>selection</strong>, never by rewriting. Surviving lines stay byte-identical to their source. Run one global pass at roughly ${ratio} of the lines, preserving the ${c.preserve_recent} most recent turns intact.</p>`);
+    parts.push(`<p>Never compact these sections: ${protectedList}.</p>`);
+    parts.push(`<p class='mute'>If the host cannot do verbatim-line compaction, fall back to its native compaction but still protect the sections above.</p>`);
+  }
+
   parts.push("<h2>Objective &amp; Definition of Done</h2>");
   parts.push(`<p>${escapeHtml(workflow.task || "")}</p>`);
   parts.push(`<p><strong>Done looks like:</strong> ${escapeHtml(wf.output || "—")}</p>`);
@@ -491,7 +535,9 @@ export function buildHtml(workflow) {
   parts.push("<h2>Skill flow</h2><ol>");
   for (const step of workflow.skill_flow.steps) {
     const status = step.status === "installed" ? "installed" : "recommended";
-    parts.push(`<li><span class='chip ${status}'>${escapeHtml(step.skill)}</span> ${escapeHtml(step.reason)}</li>`);
+    parts.push(`<li><span class='chip ${status}'>${escapeHtml(step.skill)}</span> ${escapeHtml(step.reason)}`);
+    if (step.output) parts.push(`<br><span class='mute'><strong>Done at this step when:</strong> ${escapeHtml(step.output)}</span>`);
+    parts.push("</li>");
   }
   parts.push("</ol>");
 

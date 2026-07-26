@@ -74,10 +74,30 @@ export function validateSnapshot(data, label = "workflow") {
           errors.push(`${label}: skill_flow step ${index + 1} ${field} must be a non-empty string`);
         }
       }
+      // Optional per-step output contract (terse checkpoint string). When
+      // present it must read as a non-empty string so the rendered checkpoint
+      // is meaningful; absent is fine (agnostic/optional).
+      if (step?.output !== undefined && (typeof step.output !== "string" || !step.output.trim())) {
+        errors.push(`${label}: skill_flow step ${index + 1} output must be a non-empty string`);
+      }
     }
   }
   if (data.schema_version >= 3 && !Array.isArray(data.capability_gaps)) {
     errors.push(`${label}: capability_gaps must be an array`);
+  }
+  // Optional compaction directive (verbatim-line selection under context
+  // pressure). Absent is fine — the renderer applies defaults. Present but
+  // malformed is an error so a stale snapshot does not silently mislead a host.
+  if (data.compaction !== undefined) {
+    const c = data.compaction;
+    if (!c || typeof c !== "object" || Array.isArray(c)) {
+      errors.push(`${label}: compaction must be an object`);
+    } else {
+      if (c.method !== "verbatim-line") errors.push(`${label}: compaction.method must be "verbatim-line"`);
+      if (!Number.isInteger(c.preserve_recent) || c.preserve_recent < 0) errors.push(`${label}: compaction.preserve_recent must be a non-negative integer`);
+      if (typeof c.compression_ratio !== "number" || c.compression_ratio < 0.1 || c.compression_ratio > 0.9) errors.push(`${label}: compaction.compression_ratio must be a number from 0.1 to 0.9`);
+      if (!Array.isArray(c.protected) || c.protected.some((s) => typeof s !== "string" || !s)) errors.push(`${label}: compaction.protected must be an array of non-empty strings`);
+    }
   }
   if (data.schema_version >= 4 && "path" in data) {
     errors.push(`${label}: must not persist target repository path`);

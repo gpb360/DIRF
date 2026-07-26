@@ -53,6 +53,45 @@ test("setup validates and stores a custom context reserve", () => {
   assert.throws(() => setupProject(project(), { reservePercent: 0 }), /reserve-percent/);
 });
 
+test("setup writes default compaction policy and loadProjectConfig enforces it", () => {
+  const root = project();
+  setupProject(root);
+  const compaction = loadProjectConfig(root).compaction;
+  assert.equal(compaction.method, "verbatim-line");
+  assert.equal(compaction.preserve_recent, 2);
+  assert.equal(compaction.compression_ratio, 0.5);
+  assert.deepEqual(compaction.protected, ["objective", "definition-of-done", "policy"]);
+
+  // A config without a compaction section still resolves to defaults (backward compatible).
+  const bare = project();
+  setupProject(bare);
+  const configPath = join(bare, ".dirf", "config.json");
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  delete config.compaction;
+  writeFileSync(configPath, JSON.stringify(config));
+  const defaulted = loadProjectConfig(bare).compaction;
+  assert.equal(defaulted.method, "verbatim-line");
+  assert.equal(defaulted.preserve_recent, 2);
+});
+
+test("loadProjectConfig rejects a malformed compaction policy", () => {
+  const root = project();
+  setupProject(root);
+  const configPath = join(root, ".dirf", "config.json");
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  config.compaction = { method: "summarize" };
+  writeFileSync(configPath, JSON.stringify(config));
+  assert.throws(() => loadProjectConfig(root), /verbatim-line/);
+
+  config.compaction = { method: "verbatim-line", compression_ratio: 1.5 };
+  writeFileSync(configPath, JSON.stringify(config));
+  assert.throws(() => loadProjectConfig(root), /compression_ratio/);
+
+  config.compaction = { method: "verbatim-line", preserve_recent: -1 };
+  writeFileSync(configPath, JSON.stringify(config));
+  assert.throws(() => loadProjectConfig(root), /preserve_recent/);
+});
+
 test("attempts are timestamped, portable, and resolved by id or latest name", () => {
   const root = project();
   setupProject(root);

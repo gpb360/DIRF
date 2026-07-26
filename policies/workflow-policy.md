@@ -57,6 +57,14 @@ Use this policy in every generated workflow prompt.
 - If usage telemetry is unavailable, checkpoint after every completed workflow phase.
 - Record the objective, current phase, completed work, decisions, changed files, validation, blockers, and exact next action.
 
+## Compaction
+- Under context pressure, prefer dropping lines by selection over rewriting or summarizing.
+- Surviving lines stay byte-identical to their source — never paraphrase a line you keep.
+- Run one global pass, not chunked summarization.
+- Protect the objective, definition of done, policy, and open decisions from compaction.
+- Preserve the most recent turns intact before any historical trimming.
+- If the host cannot do verbatim-line compaction, fall back to its native compaction but still protect the sections above.
+
 ## Idea to Ship
 - Clarify the intent with the best installed interview capability before implementation.
 - Prototype only when a question needs a runnable answer.

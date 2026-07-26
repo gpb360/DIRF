@@ -5,6 +5,37 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 const CONFIG_PATH = join(".dirf", "config.json");
 const ATTEMPT_IGNORE = ".dirf/attempts/";
 
+const DEFAULT_COMPACTION = Object.freeze({
+  method: "verbatim-line",
+  preserve_recent: 2,
+  compression_ratio: 0.5,
+  protected: ["objective", "definition-of-done", "policy"],
+});
+
+function normalizeCompaction(raw) {
+  // Optional compaction policy (verbatim-line selection, not rewriting).
+  // Absent section -> full defaults. Present section -> per-field defaults,
+  // with each field validated independently like reserve_percent.
+  const compaction = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const method = compaction.method ?? DEFAULT_COMPACTION.method;
+  if (method !== "verbatim-line") {
+    throw new Error(`DIRF compaction.method must be "verbatim-line" (only supported method); got ${JSON.stringify(method)}`);
+  }
+  const preserveRecent = compaction.preserve_recent ?? DEFAULT_COMPACTION.preserve_recent;
+  if (!Number.isInteger(preserveRecent) || preserveRecent < 0) {
+    throw new Error("DIRF compaction.preserve_recent must be a non-negative integer");
+  }
+  const compressionRatio = compaction.compression_ratio ?? DEFAULT_COMPACTION.compression_ratio;
+  if (typeof compressionRatio !== "number" || compressionRatio < 0.1 || compressionRatio > 0.9) {
+    throw new Error("DIRF compaction.compression_ratio must be a number from 0.1 to 0.9");
+  }
+  const protectedSections = compaction.protected ?? DEFAULT_COMPACTION.protected;
+  if (!Array.isArray(protectedSections) || protectedSections.some((s) => typeof s !== "string" || !s)) {
+    throw new Error("DIRF compaction.protected must be an array of non-empty strings");
+  }
+  return { method, preserve_recent: preserveRecent, compression_ratio: compressionRatio, protected: [...protectedSections] };
+}
+
 function portable(path) {
   return path.replaceAll("\\", "/");
 }
@@ -57,6 +88,7 @@ export function loadProjectConfig(root = process.cwd()) {
     throw new Error("DIRF context reserve_percent must be an integer from 1 to 50");
   }
   config.context.reserve_percent = reservePercent;
+  config.compaction = normalizeCompaction(config.compaction);
   containedPath(projectRoot(root), config.attempt_root, "DIRF attempt_root");
   containedPath(projectRoot(root), config.context?.path, "DIRF context path");
   containedPath(projectRoot(root), config.adr_path, "DIRF ADR path");
@@ -86,6 +118,7 @@ export function setupProject(root = process.cwd(), options = {}) {
       tickets_path: "docs/agents/issues/tickets.md",
     },
     context: { mode: contextMode, path: contextPath, reserve_percent: reservePercent },
+    compaction: { ...DEFAULT_COMPACTION },
     adr_path: adrPath,
     attempt_root: ATTEMPT_IGNORE.slice(0, -1),
   };
