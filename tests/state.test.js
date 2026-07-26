@@ -91,3 +91,45 @@ test("deriveSlug: two distinct repos produce distinct slugs", () => {
   gitInit(a); gitInit(b);
   assert.notEqual(deriveSlug(a), deriveSlug(b));
 });
+
+import { registerProject, resolveProject, getProject, writeRegistry } from "../src/state.js";
+
+test("registerProject creates a store entry + registry record", () => {
+  const home = freshHome();
+  const repo = mkdtempSync(join(tmpdir(), "regproj-"));
+  gitInit(repo);
+  const { slug, isNew } = registerProject(repo);
+  assert.equal(isNew, true);
+  assert.match(slug, /^regproj-[a-z0-9]+-[0-9a-f]{8}$/);
+  assert.ok(existsSync(join(home, "projects", slug)));
+  assert.ok(getProject(slug));
+  assert.equal(getProject(slug).slug, slug);
+});
+
+test("registerProject is idempotent", () => {
+  const repo = mkdtempSync(join(tmpdir(), "regproj2-"));
+  gitInit(repo);
+  const first = registerProject(repo);
+  const second = registerProject(repo);
+  assert.equal(second.isNew, false);
+  assert.equal(second.slug, first.slug);
+});
+
+test("resolveProject returns slug for a registered repo and bumps last_seen", () => {
+  const repo = mkdtempSync(join(tmpdir(), "resproj-"));
+  gitInit(repo);
+  const { slug } = registerProject(repo);
+  const before = getProject(slug).last_seen;
+  // small delay then resolve
+  const resolved = resolveProject(repo);
+  assert.ok(resolved, "must resolve a registered project");
+  assert.equal(resolved.slug, slug);
+  assert.ok(getProject(slug).last_seen >= before);
+});
+
+test("resolveProject returns null for an unregistered path", () => {
+  freshHome();
+  const dir = mkdtempSync(join(tmpdir(), "unknown-"));
+  // not a git repo, not registered -> null
+  assert.equal(resolveProject(dir), null);
+});

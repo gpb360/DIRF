@@ -11,7 +11,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -105,4 +105,59 @@ export function deriveSlug(targetPath) {
   const key = identityKeyForPath(targetPath);
   const hash = createHash("sha1").update(key).digest("hex").slice(0, 8);
   return `${safeBasename(slugBasename(targetPath))}-${hash}`;
+}
+
+// Atomic write: temp file + rename, same volume. Prevents corruption under
+// concurrent writers (last-writer-wins, no merge — matches the snapshot model).
+export function atomicWrite(filePath, contents) {
+  const dir = dirname(filePath);
+  mkdirSync(dir, { recursive: true });
+  const tmp = join(dir, `.dirf-tmp-${process.pid}-${Date.now()}`);
+  writeFileSync(tmp, contents, "utf8");
+  renameSync(tmp, filePath);
+}
+
+export function storeProjectDir(slug) {
+  return join(storeHome(), "projects", slug);
+}
+
+export function writeRegistry(registry) {
+  atomicWrite(registryPath(), JSON.stringify(registry, null, 2) + "\n");
+}
+
+function nowIso() { return new Date().toISOString(); }
+
+export function getProject(slug) {
+  return readRegistry().projects[slug] || null;
+}
+
+export function registerProject(targetPath) {
+  const slug = deriveSlug(targetPath);
+  const registry = readRegistry();
+  const existing = registry.projects[slug];
+  const isNew = !existing;
+  const record = existing || {
+    slug,
+    name: basename(targetPath.replace(/\\/g, "/")),
+    git_common_dir: identityKeyForPath(targetPath),
+    main_path: resolve(targetPath).replaceAll("\\", "/"),
+    created_at: nowIso(),
+    last_seen: nowIso(),
+  };
+  record.last_seen = nowIso();
+  registry.projects[slug] = record;
+  writeRegistry(registry);
+  mkdirSync(storeProjectDir(slug), { recursive: true });
+  return { slug, isNew };
+}
+
+export function resolveProject(targetPath) {
+  const slug = deriveSlug(targetPath);
+  const registry = readRegistry();
+  const existing = registry.projects[slug];
+  if (!existing) return null;
+  existing.last_seen = nowIso();
+  registry.projects[slug] = existing;
+  writeRegistry(registry);
+  return { slug };
 }
