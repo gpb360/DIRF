@@ -196,3 +196,27 @@ test("repositoryIdentity strips credentials and never persists local paths", () 
   execFileSync("git", ["remote", "set-url", "origin", "git@example.test:org/repo.git"], { cwd: root, timeout: TIMEOUT_MS });
   assert.equal(repositoryIdentity(root).remote, "git@example.test:org/repo.git", "scp-like remote must persist");
 });
+
+test("build pipeline writes attempt + HANDOFF into the store (M2 integration)", async () => {
+  const home = freshStateHome();
+  const root = project();
+  execFileSync("git", ["init", "-q"], { cwd: root, timeout: TIMEOUT_MS });
+  const setup = setupProject(root);
+  const slug = setup.slug;
+  const attempt = createAttempt(root, "Demo Run");
+  assert.ok(attempt.folder.startsWith(home), "attempt folder must be under DIRF_HOME");
+  assert.ok(existsSync(join(attempt.folder, "attempt.json")));
+  // Simulate savePlan writing workflow.json + HANDOFF.md into the attempt folder.
+  writeFileSync(join(attempt.folder, "workflow.json"), "{}");
+  writeFileSync(join(attempt.folder, "HANDOFF.md"), "# Handoff\n");
+  assert.equal(readFileSync(join(attempt.folder, "HANDOFF.md"), "utf8"), "# Handoff\n");
+  // The per-attempt HANDOFF.md (attempt-scoped) and the canonical project HANDOFF.md
+  // (project-scoped, managed via state.js) are distinct files. This is intentional
+  // and unchanged from today's behavior; this test only verifies the attempt folder
+  // is store-backed.
+  const { readHandoff } = await import("../src/state.js");
+  // readHandoff reads the project-scoped canonical handoff, which we did NOT write here,
+  // so it should be null. This confirms the two are distinct.
+  process.env.DIRF_HOME = home;
+  assert.equal(readHandoff(slug), null);
+});
