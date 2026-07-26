@@ -253,6 +253,43 @@ workflows/       authored reusable workflow folders
 .dirf/attempts/  target-owned generated runs (gitignored in each target repo)
 ```
 
+## Canonical state (central store)
+
+DIRF coordination state — config, attempts, and the handoff — lives in a
+central store at `~/.dirf/projects/<slug>/`, keyed by a slug derived from
+`git rev-parse --git-common-dir`. Every worktree of a repo resolves to the
+**same** store entry, so state cannot drift between checkouts.
+
+Quick commands:
+
+```bash
+dirf state which                 # what project am I in? (slug + store path)
+dirf state list                  # all registered projects
+dirf state read-handoff          # print the canonical handoff
+dirf state write-handoff --file new-handoff.md
+```
+
+Existing per-target `.dirf/` directories migrate into the store automatically
+on first resolve (a backup copy is left at `.dirf.migrating.<ts>/` until you
+run `dirf state migrate-cleanup`). A local `HANDOFF.md` newer than the store's
+is never overwritten silently — run `dirf state import-handoff` to promote it.
+
+### Optional MCP server
+
+For agent hosts that speak MCP (Claude, Cursor), DIRF ships an optional
+stdio JSON-RPC server exposing the same operations as tools. Zero-dependency,
+no SDK:
+
+```jsonc
+// in your MCP client config
+{ "command": "node", "args": ["<path-to-amf-dirf>/src/mcp.js"] }
+```
+
+Tools: `dirf_resolve_project`, `dirf_list_projects`, `dirf_read_handoff`,
+`dirf_write_handoff`, `dirf_list_attempts`, `dirf_get_attempt`. Every tool is
+a thin call into the same `src/state.js` core as the CLI, so the two surfaces
+return byte-identical results.
+
 ## Conventions
 
 - **Zero dependencies.** Pure Node.js built-ins (no `node_modules`, no `npm install`, no CI). `npm run …` works as a script shortcut; nothing gets installed.
