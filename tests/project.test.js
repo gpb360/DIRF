@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, repositoryIdentity, setupProject } from "../src/project.js";
@@ -219,4 +219,29 @@ test("build pipeline writes attempt + HANDOFF into the store (M2 integration)", 
   // so it should be null. This confirms the two are distinct.
   process.env.DIRF_HOME = home;
   assert.equal(readHandoff(slug), null);
+});
+
+test("setup migrates legacy .dirf content (handoff + attempts + config) into the store", () => {
+  const home = freshStateHome();
+  const root = project();
+  // Seed a legacy .dirf/ as if this target predated the store.
+  mkdirSync(join(root, ".dirf", "attempts", "20260101T000000000Z-old"), { recursive: true });
+  writeFileSync(join(root, ".dirf", "attempts", "20260101T000000000Z-old", "attempt.json"), JSON.stringify({ schema_version: 1, id: "20260101T000000000Z-old", name: "old", relativePath: ".dirf/attempts/20260101T000000000Z-old", created_at: "2026-01-01T00:00:00.000Z" }));
+  writeFileSync(join(root, ".dirf", "config.json"), JSON.stringify({ schema_version: 1, tracker: { provider: "local", specs_path: "docs/agents/issues/specs", tickets_path: "docs/agents/issues/tickets.md" }, context: { mode: "single", path: "docs/CONTEXT.md", reserve_percent: 5 }, adr_path: "docs/adr", attempt_root: ".dirf/attempts" }));
+  writeFileSync(join(root, ".dirf", "HANDOFF.md"), "# Legacy handoff\n");
+
+  const result = setupProject(root);
+  const slug = result.slug;
+  const storeCfg = join(home, "projects", slug, "config.json");
+  // Config migrated + upgraded to schema v2 (setup wrote it; legacy upgrade skipped because store config exists).
+  const cfg = JSON.parse(readFileSync(storeCfg, "utf8"));
+  assert.equal(cfg.schema_version, 2);
+  assert.equal(cfg.slug, slug);
+  // Handoff migrated.
+  assert.equal(readFileSync(join(home, "projects", slug, "HANDOFF.md"), "utf8"), "# Legacy handoff\n");
+  // Attempt migrated.
+  assert.ok(existsSync(join(home, "projects", slug, "attempts", "20260101T000000000Z-old", "attempt.json")));
+  // Backup created.
+  const backups = readdirSync(root).filter((n) => n.startsWith(".dirf.migrating."));
+  assert.ok(backups.length >= 1, "a backup copy must exist");
 });

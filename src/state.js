@@ -257,42 +257,46 @@ function hasLegacyState(targetPath) {
   return existsSync(join(d, "config.json")) || existsSync(join(d, "attempts"));
 }
 
-// Migrate a legacy per-target .dirf/ into the store. Non-destructive:
-// 1) backup copy first, 2) register, 3) move state, 4) leave backup until
-// explicit migrate-cleanup. Idempotent: safe to re-run.
-export function migrateProject(targetPath, slug) {
+// Move the legacy per-target .dirf/ content (config, attempts, HANDOFF) into the
+// store. This is the shared "content" half of migration. It is NOT guarded by
+// the "already registered" check — that is the caller's responsibility
+// (migrateProject for resolveProject's path; setupProject registers then calls
+// this directly). Every item is moved only when the store does not already have
+// it (idempotent + non-destructive): importantly, the config move is guarded by
+// !existsSync(storeConfig) so setup's freshly-written schema-v2 config is never
+// overwritten by the legacy v1 config. Always backs up .dirf/ -> .dirf.migrating.<ts>/
+// first as a safety net.
+export function migrateLegacyContent(targetPath, slug) {
   const legacyDir = join(targetPath, ".dirf");
   if (!existsSync(legacyDir)) return { migrated: false, reason: "no legacy .dirf" };
 
-  const registry = readRegistry();
-  if (registry.projects[slug]) {
-    // Already registered — migration is a no-op (conflict path handles handoff in Task 10).
-    return { migrated: false, reason: "already registered" };
-  }
-
-  // 1. Backup copy (before touching anything).
+  // 1. Backup copy (before touching anything) — safety net for both call paths.
   const ts = timestampIso(new Date());
   const backup = join(targetPath, `.dirf.migrating.${ts}`);
   cpSync(legacyDir, backup, { recursive: true });
 
-  // 2. Register.
-  registerProject(targetPath);
-
-  // 3. Move state into the store.
+  // 2. Move state into the store.
   const storeDir = storeProjectDir(slug);
   mkdirSync(storeDir, { recursive: true });
 
-  // config.json: upgrade schema 1 -> 2, drop attempt_root, add slug.
+  // config.json: upgrade schema 1 -> 2, drop attempt_root, add slug. Only move
+  // if the store does NOT already have a config — setup writes schema-v2 config
+  // before calling us, so in the setup path this branch is skipped (setup's
+  // config wins). In the resolveProject path the store config does not exist
+  // yet, so the legacy config is upgraded into place.
   const legacyConfig = join(legacyDir, "config.json");
   if (existsSync(legacyConfig)) {
-    const cfg = JSON.parse(readFileSync(legacyConfig, "utf8"));
-    cfg.schema_version = 2;
-    cfg.slug = slug;
-    delete cfg.attempt_root;
-    atomicWrite(join(storeDir, "config.json"), JSON.stringify(cfg, null, 2) + "\n");
+    const storeConfig = join(storeDir, "config.json");
+    if (!existsSync(storeConfig)) {
+      const cfg = JSON.parse(readFileSync(legacyConfig, "utf8"));
+      cfg.schema_version = 2;
+      cfg.slug = slug;
+      delete cfg.attempt_root;
+      atomicWrite(storeConfig, JSON.stringify(cfg, null, 2) + "\n");
+    }
   }
 
-  // attempts/ — move whole directory contents if present.
+  // attempts/ — move whole directory contents if present, skipping any that already exist.
   const legacyAttempts = join(legacyDir, "attempts");
   if (existsSync(legacyAttempts)) {
     const storeAttempts = join(storeDir, "attempts");
@@ -314,6 +318,24 @@ export function migrateProject(targetPath, slug) {
     }
   }
 
+  return { migrated: true };
+}
+
+// Migrate a legacy per-target .dirf/ into the store. Non-destructive: backup
+// copy first, register, then move state. Leaves the backup until an explicit
+// migrate-cleanup. Idempotent: safe to re-run (a no-op once registered).
+export function migrateProject(targetPath, slug) {
+  const legacyDir = join(targetPath, ".dirf");
+  if (!existsSync(legacyDir)) return { migrated: false, reason: "no legacy .dirf" };
+
+  const registry = readRegistry();
+  if (registry.projects[slug]) {
+    // Already registered — migration is a no-op (conflict path handles handoff in Task 10).
+    return { migrated: false, reason: "already registered" };
+  }
+
+  registerProject(targetPath);
+  migrateLegacyContent(targetPath, slug);
   return { migrated: true };
 }
 
