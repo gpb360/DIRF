@@ -245,7 +245,7 @@ export function buildInstructions(workflow, outDir) {
     "## Context reserve",
     `Keep ${workflow.context_reserve_percent ?? 5}% of the model context available for handoff. When the host reports that reserve or less, update HANDOFF.md with completed work, decisions, changed files, validation, blockers, and the exact next action, then stop. If the host does not expose context usage, update HANDOFF.md after every completed phase.`,
     "",
-    "Runtime paths belong to this execution only. If isolation is needed, place worktrees beside the target repository or under the user-configured worktree root. Select a scratch directory inside that workspace; do not fall back to another drive or the operating-system temp directory.",
+    "Runtime paths belong to this execution only. DIRF state is canonical and central (~/.dirf/projects/<slug>/); worktrees resolve to it automatically via git-common-dir — no per-worktree setup is needed. If isolation is needed for scratch work, select a directory inside the worktree workspace; do not fall back to another drive or the operating-system temp directory.",
     "",
     "## Compaction policy",
     (() => {
@@ -491,7 +491,7 @@ export function buildHtml(workflow) {
   parts.push("<h2>Kickoff prompt</h2>");
   parts.push("<p class='mute'>Copy this into your model of choice to run the workflow. <button class='chip' onclick=\"navigator.clipboard.writeText(document.getElementById('kickoff').textContent).then(()=>{this.textContent='Copied ✓';})\">Copy prompt</button></p>");
   parts.push(`<pre id='kickoff'>${escapeHtml(kickoffPrompt(workflow))}</pre>`);
-  parts.push("<p class='mute'>Runtime paths stay local to the current execution. Keep worktrees beside the target repository or in the configured worktree root, and select scratch space inside that workspace.</p>");
+  parts.push("<p class='mute'>DIRF state is canonical and central (~/.dirf/projects/<slug>/). Worktrees resolve to it automatically via git-common-dir — no per-worktree setup is needed. Keep scratch paths local to the current execution.</p>");
 
   {
     const c = resolveCompaction(workflow);

@@ -12,7 +12,7 @@ Use this policy in every generated workflow prompt.
 ## Runtime Portability
 - Operating instructions are host-neutral. The current host may be Claude, Codex, another agent, or a person.
 - Resolve repository, skill, and tool paths at runtime. Never persist absolute host paths as workflow identity.
-- When isolation is required, place worktrees beside the target repository by default or under a root explicitly configured by the user.
+- DIRF coordination state is canonical and central (~/.dirf/projects/<slug>/). Worktrees resolve to the same store entry automatically via git-common-dir, so no per-worktree setup is needed and state cannot drift between checkouts. Scratch isolation stays local to the current execution.
 - Select scratch space inside the active workspace. Never silently fall back to another drive or the operating-system temp directory.
 - Persist capability names and provider hints, not installation paths.
 

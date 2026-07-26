@@ -177,9 +177,10 @@ the deleted legacy files.
 Generated attempts are host-neutral. Claude, Codex, another agent, or a person
 can execute the same README. Repository and installation paths are discovered
 for the current run only; snapshots retain capability names and provider hints.
-If a task needs isolation, keep worktrees beside the target repository unless
-the user configures another workspace root, and select scratch space inside that
-workspace instead of using an implicit operating-system temp directory.
+DIRF coordination state is canonical and central (`~/.dirf/projects/<slug>/`).
+Worktrees resolve to the same store entry automatically via `git-common-dir`,
+so no per-worktree setup is needed and state cannot drift between checkouts. If
+a task needs scratch isolation, keep it inside the worktree workspace.
 
 ## How skill mapping works (the heart of "right")
 
