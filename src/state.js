@@ -11,7 +11,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -160,4 +160,70 @@ export function resolveProject(targetPath) {
   registry.projects[slug] = existing;
   writeRegistry(registry);
   return { slug };
+}
+
+function portable(p) { return p.replaceAll("\\", "/"); }
+
+function slugifyName(value) {
+  const result = String(value || "").trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^[.-]+|[.-]+$/g, "");
+  if (!result) throw new Error("attempt name must contain alphanumeric characters");
+  return result;
+}
+
+function timestampIso(now) {
+  return now.toISOString().replace(/[-:]/g, "").replace(".", "");
+}
+
+export function storeAttemptDir(slug, attemptId) {
+  return join(storeProjectDir(slug), "attempts", attemptId);
+}
+
+// Create an attempt inside the store. Mirrors project.js createAttempt semantics
+// (timestamp id, collision suffix, attempt.json) but writes to the store.
+export function createAttemptInStore(slug, name, now = new Date()) {
+  const baseId = `${timestampIso(now)}-${slugifyName(name)}`;
+  const attemptsRoot = join(storeProjectDir(slug), "attempts");
+  mkdirSync(attemptsRoot, { recursive: true });
+  let id, folder;
+  for (let collision = 1; ; collision += 1) {
+    id = collision === 1 ? baseId : `${baseId}-${String(collision).padStart(2, "0")}`;
+    folder = storeAttemptDir(slug, id);
+    try { mkdirSync(folder); break; }
+    catch (error) { if (error.code !== "EEXIST") throw error; }
+  }
+  const relativePath = portable(join("attempts", id));
+  const attempt = { schema_version: 1, id, name, relativePath, created_at: now.toISOString() };
+  atomicWrite(join(folder, "attempt.json"), JSON.stringify(attempt, null, 2) + "\n");
+  return { ...attempt, folder };
+}
+
+export function listAttempts(slug) {
+  const base = join(storeProjectDir(slug), "attempts");
+  if (!existsSync(base)) return [];
+  return readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name)).flatMap((entry) => {
+    const folder = join(base, entry.name);
+    const metadata = join(folder, "attempt.json");
+    if (!existsSync(metadata)) return [];
+    return [{ ...JSON.parse(readFileSync(metadata, "utf8")), folder }];
+  });
+}
+
+export function getAttempt(slug, idOrName) {
+  const attempts = listAttempts(slug);
+  const exact = attempts.find((a) => a.id === idOrName);
+  if (exact) return exact;
+  const wanted = slugifyName(idOrName);
+  const matches = attempts.filter((a) => slugifyName(a.name) === wanted);
+  if (!matches.length) throw new Error(`No DIRF attempt named ${JSON.stringify(idOrName)} for project ${slug}`);
+  return matches.at(-1);
+}
+
+export function readHandoff(slug) {
+  const path = join(storeProjectDir(slug), "HANDOFF.md");
+  if (!existsSync(path)) return null;
+  return readFileSync(path, "utf8");
+}
+
+export function writeHandoff(slug, markdown) {
+  atomicWrite(join(storeProjectDir(slug), "HANDOFF.md"), markdown);
 }

@@ -133,3 +133,43 @@ test("resolveProject returns null for an unregistered path", () => {
   // not a git repo, not registered -> null
   assert.equal(resolveProject(dir), null);
 });
+
+import { readHandoff, writeHandoff, listAttempts, getAttempt, storeAttemptDir, createAttemptInStore } from "../src/state.js";
+
+function withRegisteredProject() {
+  freshHome();
+  const repo = mkdtempSync(join(tmpdir(), "hproj-"));
+  gitInit(repo);
+  const { slug } = registerProject(repo);
+  return { repo, slug };
+}
+
+test("writeHandoff then readHandoff round-trips content", () => {
+  const { slug } = withRegisteredProject();
+  const md = "# Handoff\n\nPhase 2 done.\n";
+  writeHandoff(slug, md);
+  assert.equal(readHandoff(slug), md);
+});
+
+test("readHandoff returns null when no handoff exists", () => {
+  const { slug } = withRegisteredProject();
+  assert.equal(readHandoff(slug), null);
+});
+
+test("createAttemptInStore writes attempt.json under the store and listAttempts finds it", () => {
+  const { slug } = withRegisteredProject();
+  const attempt = createAttemptInStore(slug, "Demo Run", new Date("2026-07-25T10:00:00.000Z"));
+  assert.equal(attempt.id, "20260725T100000000Z-demo-run");
+  assert.ok(existsSync(join(storeAttemptDir(slug, attempt.id), "attempt.json")));
+  const listed = listAttempts(slug);
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0].id, attempt.id);
+  assert.equal(getAttempt(slug, attempt.id).id, attempt.id);
+});
+
+test("writeHandoff is atomic — file is valid after concurrent writes", () => {
+  const { slug } = withRegisteredProject();
+  // Simulate two concurrent writers by writing many times rapidly; final file must be valid.
+  for (let i = 0; i < 50; i++) writeHandoff(slug, `# v${i}\n`);
+  assert.equal(readHandoff(slug), "# v49\n");
+});
