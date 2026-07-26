@@ -5,7 +5,7 @@
 
 import { createInterface } from "node:readline";
 import {
-  resolveProject, listProjects, registerProject,
+  resolveProject, listProjects,
   readHandoff, writeHandoff, listAttempts, getAttempt, storeProjectDir,
 } from "./state.js";
 import { resolve } from "node:path";
