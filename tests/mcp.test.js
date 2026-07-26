@@ -4,8 +4,6 @@ import { spawn, execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setupProject } from "../src/project.js";
-import { readHandoff } from "../src/state.js";
 
 const MCP = join(process.cwd(), "src", "mcp.js");
 const CLI_PROJECT = join(process.cwd(), "src", "cli.js");
