@@ -3,8 +3,6 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileS
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { registerProject, storeProjectDir, createAttemptInStore, listAttempts as listAttemptsInStore, getAttempt as getAttemptInStore } from "./state.js";
 
-const CONFIG_PATH = join(".dirf", "config.json");
-
 function ensureRegistered(root) {
   return registerProject(root);
 }
