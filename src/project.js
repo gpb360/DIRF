@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { registerProject, storeProjectDir, createAttemptInStore, listAttempts as listAttemptsInStore, getAttempt as getAttemptInStore } from "./state.js";
+import { registerProject, storeProjectDir, createAttemptInStore, listAttempts as listAttemptsInStore, getAttempt as getAttemptInStore, migrateLegacyContent } from "./state.js";
 
 function ensureRegistered(root) {
   return registerProject(root);
@@ -137,6 +137,15 @@ export function setupProject(root = process.cwd(), options = {}) {
     writeFileSync(storeConfigPath, serialized, "utf8");
     created.push(`${slug}/config.json (store)`);
   }
+
+  // Migrate any legacy per-target .dirf/ content (HANDOFF.md + attempts/) into
+  // the store. setup used to leave these stranded under .dirf/ because the
+  // "already registered" guard in migrateProject made its migration path
+  // unreachable after registration. migrateLegacyContent moves config ONLY when
+  // the store lacks one — and we just wrote the store config above — so the
+  // legacy schema-v1 config is never overwritten; only HANDOFF and attempts
+  // move. The backup safety net (.dirf.migrating.<ts>/) still runs.
+  migrateLegacyContent(root, slug);
 
   const gitignore = join(root, ".gitignore");
   const ignored = existsSync(gitignore) ? readFileSync(gitignore, "utf8") : "";
