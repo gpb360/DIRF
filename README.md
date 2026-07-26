@@ -26,10 +26,12 @@ Set up and run DIRF (Do It Right First), an agent workflow kit, against my proje
    task in one sentence.
 3. Run: node <dirf>/src/cli.js setup <my project>
 4. Run: node <dirf>/src/cli.js build <short-name> "<my task>" --path <my project>
-5. The build prints an attempt folder (<my project>/.dirf/attempts/<id>/).
-   Open its README.md and follow it as your operating workflow: act as one
-   agent role at a time, work the phases in order, and do not advance a phase
-   until it is verifiably done.
+5. The build prints an attempt folder. (If the project already had a legacy
+   `.dirf/`, setup migrates it into DIRF's central store at
+   `~/.dirf/projects/<slug>/` and leaves a backup; otherwise the attempt just
+   lives in the store.) Open that attempt folder's README.md and follow it as
+   your operating workflow: act as one agent role at a time, work the phases
+   in order, and do not advance a phase until it is verifiably done.
 6. If any command fails, stop and show me the exact command and its output
    instead of improvising around it.
 ```
@@ -76,8 +78,10 @@ node src/cli.js setup ../my-project --reserve-percent 5
 node src/cli.js build first-run "fix the checkout timeout" --path ../my-project
 ```
 
-Open the generated `.dirf/attempts/<timestamp>-first-run/README.md`. It contains
-the ordered workflow and the handoff your agent host should execute.
+Open the generated attempt's `README.md` (the path is printed by `build`; it
+lives under DIRF's central store at `~/.dirf/projects/<slug>/attempts/<id>/`,
+and `dirf state which` will show you the store path for the current project).
+It contains the ordered workflow and the handoff your agent host should execute.
 
 Useful next commands:
 
@@ -85,6 +89,7 @@ Useful next commands:
 node src/cli.js flow "review this pull request" --path ../my-project
 node src/cli.js skills scan
 node src/cli.js list --path ../my-project
+node src/cli.js state which --path ../my-project   # show the project's canonical store entry
 node src/cli.js validate
 ```
 
@@ -112,7 +117,7 @@ workflow folder
 ## Output structure (lean, progressive disclosure)
 
 ```
-.dirf/attempts/<timestamp>-<name>/
+~/.dirf/projects/<slug>/attempts/<timestamp>-<name>/
 ├── attempt.json                        # portable attempt identity
 ├── workflow.json                       # resolved workflow snapshot
 ├── README.md                           # authoritative router and frontmatter
@@ -127,10 +132,13 @@ The AI loads `README.md` first, follows its ordered folder references, then
 loads only the detail file required by the active stage.
 Unread files cost zero tokens.
 
-DIRF reserves 5% of model context for a structured `HANDOFF.md` by default.
-Hosts that expose remaining context trigger the handoff at that threshold;
-otherwise the workflow checkpoints after each completed phase. A different
-model can continue with `dirf resume <name-or-id> --path <project>`.
+Each attempt carries its own `HANDOFF.md` (written by `build`) for resuming that
+specific run. Separately, DIRF keeps one **canonical project handoff** in the
+central store (`~/.dirf/projects/<slug>/HANDOFF.md`) — the single source of
+truth a fresh agent session should read regardless of which checkout it starts
+from. Manage it with `dirf state read-handoff` / `dirf state write-handoff`.
+A different model can continue a specific attempt with
+`dirf resume <name-or-id> --path <project>`.
 
 Each per-agent detail file is self-contained: role, **USE THESE SKILLS**
 (resolved live from the host index, with installed/recommended status),
@@ -140,19 +148,36 @@ done-when checklist.
 ## CLI reference
 
 ```
+# building workflows
+dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
 dirf build  <name> "<task>" [--path DIR] [--open]   full pipeline: route -> JSON -> md + html
 dirf create <name> "<task>" [--path DIR]             route -> workflow JSON only
-dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
 dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
-dirf list [--path DIR]                               list target attempts
-dirf resume <name-or-id> [--path DIR]                load workflow + HANDOFF.md
-dirf migrate [<name-or-id>] [--path DIR]             refresh schema 2–5 attempt snapshots
+dirf list [--path DIR]                               list a project's attempts
+dirf resume <name-or-id> [--path DIR]                load one attempt's workflow + HANDOFF.md
+dirf migrate [<name-or-id>]                          refresh legacy schema 2–5 attempt snapshots
+                                                      (not the same as `state migrate-cleanup`)
+
+# central state (canonical store — see "Canonical state" below)
+dirf state which [--path DIR]                        what project am I in? (slug + store path)
+dirf state list                                      list all registered projects
+dirf state register [--path DIR]                     register a project explicitly
+dirf state read-handoff [--path DIR|--slug S]        print the canonical project handoff
+dirf state write-handoff --file FILE|- [...]         write the canonical project handoff
+dirf state list-attempts [--path DIR|--slug S]       list attempts for a project
+dirf state get-attempt <id> [...]                    show one attempt
+dirf state import-handoff [--path DIR] [--force]     promote a local HANDOFF.md into the store
+dirf state migrate-cleanup [--path DIR]              remove migration backup(s) once the store works
+
+# inspection + registries
+dirf skills scan [--path DIR]                        scan host, show installed skills + resolved refs
+dirf inspect [<path>]                                detect a project's optimization stack + suggest gaps
+dirf flow "<task>" [--path DIR]                      show the ordered skill flow for a task
 dirf validate                                        validate registries + workflows
 dirf validate <folder>                               validate one folder DAG
 dirf graph <folder>                                  show deterministic execution order
 dirf run <folder>                                    emit the execution handoff
 dirf render <folder>                                 generate its human HTML view
-dirf skills scan [--path DIR]                        scan host, show installed skills + resolved refs
 ```
 
 Run `node src/cli.js` with no arguments for help.
@@ -170,9 +195,9 @@ approval before side effects, and traceable evidence. Markdown is source, HTML
 is a generated human view, and the zero-dependency JavaScript CLI is the resolver.
 
 The previous committed `workflows/user/*.json` files were generated snapshots,
-not authored workflows, and were removed. `dirf migrate` refreshes snapshots
-already stored under a configured target's `.dirf/attempts/`; it does not import
-the deleted legacy files.
+not authored workflows, and were removed. `dirf migrate` (a one-off schema
+refresh for very old snapshots) is unrelated to `dirf state migrate-cleanup`
+(which removes `.dirf.migrating.*` backups left by the central-store cutover).
 
 Generated attempts are host-neutral. Claude, Codex, another agent, or a person
 can execute the same README. Repository and installation paths are discovered
@@ -240,7 +265,7 @@ explicit question asking whether to use them. Your own agents always win.
 ## Project layout
 
 ```
-src/             CLI, folder resolver, router, discovery, renderer, validation
+src/             CLI, folder resolver, router, discovery, renderer, validation, state core, MCP server
 playbooks/       authoritative reusable playbook folders
 skills/          bounded task-oriented skill folders
 tools/           isolated tool invocation folders
@@ -250,7 +275,7 @@ policies/        workflow-policy.md (embedded in every instruction set)
 tests/           <domain>.test.js files using node:test
 scripts/         smoke.js integration check
 workflows/       authored reusable workflow folders
-.dirf/attempts/  target-owned generated runs (gitignored in each target repo)
+~/.dirf/projects/<slug>/  central store: config, attempts, canonical handoff (per-user, not committed)
 ```
 
 ## Canonical state (central store)
@@ -269,10 +294,11 @@ dirf state read-handoff          # print the canonical handoff
 dirf state write-handoff --file new-handoff.md
 ```
 
-Existing per-target `.dirf/` directories migrate into the store automatically
-on first resolve (a backup copy is left at `.dirf.migrating.<ts>/` until you
-run `dirf state migrate-cleanup`). A local `HANDOFF.md` newer than the store's
-is never overwritten silently — run `dirf state import-handoff` to promote it.
+Existing per-target `.dirf/` directories migrate into the store when you run
+`dirf setup` or on first resolve — either way a backup copy is left at
+`.dirf.migrating.<ts>/` until you run `dirf state migrate-cleanup`. A local
+`HANDOFF.md` newer than the store's is never overwritten silently — run
+`dirf state import-handoff` to promote it (it backs up the canonical copy first).
 
 ### Optional MCP server
 
