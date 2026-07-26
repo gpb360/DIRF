@@ -43,10 +43,24 @@ try {
   assertContains(setup, "Capability gaps:");
   assertContains(run(["setup", TARGET]), "Already configured; no files changed.");
   assertContains(readFileSync(join(TARGET, ".gitignore"), "utf8"), ".dirf/attempts/");
+  let status = run(["status", "--path", TARGET]);
+  assertContains(status, "Configured: yes");
+  assertContains(status, "Attempts: 0");
 
   let out = run(["build", "smoke", "build a landing page", "--path", TARGET]);
   assertContains(out, "Attempt saved:");
   assertContains(out, "Spec kit rendered:");
+  const planOutput = run(["plan", "planned", "build an account portal", "--path", TARGET]);
+  assertContains(planOutput, "Lifecycle: discover -> model -> specify -> slice -> handoff");
+  const researchOutput = run(["plan", "researched", "build an account portal", "--path", TARGET, "--research"]);
+  assertContains(researchOutput, "Lifecycle: discover -> model -> research -> specify -> slice -> handoff");
+  const plannedAttempt = readdirSync(join(TARGET, ".dirf", "attempts")).find((name) => name.endsWith("-planned"));
+  const plannedSnapshot = JSON.parse(readFileSync(join(TARGET, ".dirf", "attempts", plannedAttempt, "workflow.json"), "utf8"));
+  if (plannedSnapshot.skill_flow.steps.some((step) => ["build", "design", "quality", "review"].includes(step.stage))) {
+    throw new Error("dirf plan crossed the planning boundary");
+  }
+  if (!plannedSnapshot.workflow.output.includes("build-ready specification")) throw new Error("dirf plan did not persist its output contract");
+  assertContains(run(["build", "quiet", "build a landing page", "--path", TARGET, "--no-focused-output"]), "Attempt saved:");
   assertContains(run(["create", "smoke", "build a landing page", "--path", TARGET]), "Attempt saved:");
 
   const attemptsRoot = join(TARGET, ".dirf", "attempts");
@@ -66,26 +80,42 @@ try {
   if (/codex|claude/i.test(readmeText)) throw new Error("host-specific agent leaked into operating instructions");
   assertContains(readmeText, "bundled default");
   assertContains(readmeText, "No installed agents were found on this host");
+  const handoffText = readFileSync(handoff, "utf8");
+  assertContains(handoffText, "Keep lists to five relevant items or fewer.");
+  assertContains(handoffText, "State failures plainly and name the affected step.");
 
   const snapshotText = readFileSync(wfJson, "utf8");
   const snapshot = JSON.parse(snapshotText);
   if (snapshot.schema_version !== 5) throw new Error("attempt did not use schema version 5");
+  if (snapshot.focused_output !== true) throw new Error("attempt did not enable focused output by default");
   if (snapshot.context_reserve_percent !== 5) throw new Error("attempt did not persist the context reserve");
   if ("path" in snapshot || snapshotText.includes(TARGET)) throw new Error("target path leaked into portable snapshot");
   assertContains(run(["migrate", "smoke", "--path", TARGET]), "portable schema version 5");
   assertContains(run(["validate", attempt]), "Folder validation passed");
   assertContains(run(["graph", attempt]), "[workflow] smoke");
+  const runOutput = run(["run", attempt]);
+  assertContains(runOutput, "Focused output:");
+  assertContains(runOutput, "Keep lists to five relevant items or fewer.");
+  assertContains(runOutput, "State failures plainly and name the affected step.");
+  if (run(["run", attempt, "--no-focused-output"]).includes("Focused output:")) throw new Error("run ignored --no-focused-output");
+
+  const quietAttemptId = readdirSync(attemptsRoot).find((name) => JSON.parse(readFileSync(join(attemptsRoot, name, "attempt.json"), "utf8")).name === "quiet");
+  const quietSnapshot = JSON.parse(readFileSync(join(attemptsRoot, quietAttemptId, "workflow.json"), "utf8"));
+  if (quietSnapshot.focused_output !== false) throw new Error("--no-focused-output was not persisted");
 
   if (!readFileSync(html, "utf8").startsWith("<!doctype html>")) throw new Error("HTML missing doctype");
   assertContains(run(["render", "smoke", "--path", TARGET]), "Spec kit rendered:");
   assertContains(run(["list", "--path", TARGET]), attemptId);
+  status = run(["status", "--path", TARGET]);
+  assertContains(status, "Attempts: 3");
+  assertContains(status, "Latest:");
   assertContains(run(["resume", attemptId, "--path", TARGET]), "## Exact next action");
   run(["render", "does-not-exist-xyz", "--path", TARGET], true);
   const invalidAttemptId = smokeAttempts.find((name) => name !== attemptId);
   writeFileSync(join(attemptsRoot, invalidAttemptId, "workflow.json"), "{");
   const migration = run(["migrate", "--path", TARGET]);
   assertContains(migration, `Failed to migrate ${invalidAttemptId}`);
-  assertContains(migration, "Migrated 1 workflow snapshot(s)");
+  assertContains(migration, "Migrated 4 workflow snapshot(s)");
 
   console.log("Smoke test passed");
 } finally {

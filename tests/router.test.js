@@ -155,6 +155,40 @@ test("explicit visual acceptance outranks incidental auth and Audit stage terms"
 
   assert.equal(r.playbook, "ui-ux-review");
   assert.ok(r.alternates.some((alternate) => alternate.playbook === "security-review"));
+  assert.match(r.workflow.output, /screen x state x viewport manifest/);
+  assert.match(r.workflow.validation, /source-discovery completeness/);
+  assert.ok(r.workflow.requirements.some((requirement) => requirement.includes("parent-page screenshot cannot cover")));
+  assert.ok(r.workflow.requirements.some((requirement) => requirement.includes("security, privacy, and no-spend")));
+  assert.deepEqual(r.workflow.phases.slice(0, 2), [
+    "derive the source-reachable screen and state inventory",
+    "freeze the complete screen x state x viewport manifest and exact references",
+  ]);
+});
+
+test("generic UI review does not receive the authenticated acceptance contract", () => {
+  const r = recommend("review responsive typography");
+  assert.equal(r.playbook, "ui-ux-review");
+  assert.equal(r.workflow.output, "UI/UX plan or review with concrete fixes and verification checks");
+  assert.equal(r.workflow.requirements, undefined);
+
+  for (const task of ["authenticated ui ux review", "unauthenticated visual acceptance"]) {
+    const generic = recommend(task);
+    assert.equal(generic.playbook, "ui-ux-review");
+    assert.equal(generic.workflow.requirements, undefined);
+  }
+});
+
+test("direct authenticated acceptance cues route to the complete UI contract", () => {
+  for (const task of [
+    "authenticated visual acceptance",
+    "authenticated visual regression",
+    "authenticated ui ux acceptance",
+    "authenticated ui/ux acceptance",
+  ]) {
+    const r = recommend(task);
+    assert.equal(r.playbook, "ui-ux-review");
+    assert.match(r.workflow.output, /screen x state x viewport manifest/);
+  }
 });
 
 test("collectRoutingFacts reads branch, changed paths, and active plan", () => {

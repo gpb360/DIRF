@@ -137,8 +137,13 @@ specific run. Separately, DIRF keeps one **canonical project handoff** in the
 central store (`~/.dirf/projects/<slug>/HANDOFF.md`) — the single source of
 truth a fresh agent session should read regardless of which checkout it starts
 from. Manage it with `dirf state read-handoff` / `dirf state write-handoff`.
-A different model can continue a specific attempt with
-`dirf resume <name-or-id> --path <project>`.
+
+Status updates, validation summaries, and handoffs use **focused output** by
+default: result first, concrete evidence, at most five list items, and one next
+action. Disable it for a run with `--no-focused-output`. Hosts that expose
+remaining context trigger the handoff at the context-reserve threshold;
+otherwise the workflow checkpoints after each completed phase. A different
+model can continue a specific attempt with `dirf resume <name-or-id> --path <project>`.
 
 Each per-agent detail file is self-contained: role, **USE THESE SKILLS**
 (resolved live from the host index, with installed/recommended status),
@@ -151,6 +156,7 @@ done-when checklist.
 # building workflows
 dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
 dirf build  <name> "<task>" [--path DIR] [--open]   full pipeline: route -> JSON -> md + html
+dirf plan   <name> "<task>" [--path DIR] [--research] discovery through handoff, without implementation
 dirf create <name> "<task>" [--path DIR]             route -> workflow JSON only
 dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
 dirf list [--path DIR]                               list a project's attempts

@@ -822,7 +822,37 @@
       ],
       "output": "UI/UX plan or review with concrete fixes and verification checks",
       "validation": "inspect small and large viewports, keyboard/touch states, contrast, reduced motion, and layout stability",
-      "recovery": "if the target UI is unclear, ask for page/component path and screenshots before edits"
+      "recovery": "if the target UI is unclear, ask for page/component path and screenshots before edits",
+      "conditional_contract": {
+        "when_all": [
+          "authenticated"
+        ],
+        "when_any": [
+          "visual acceptance",
+          "visual regression",
+          "ui ux acceptance",
+          "ui/ux acceptance"
+        ],
+        "phases": [
+          "derive the source-reachable screen and state inventory",
+          "freeze the complete screen x state x viewport manifest and exact references",
+          "run the audit-only authenticated comparison",
+          "approve the finding ledger and reference decisions",
+          "execute issue-owned non-overlapping fix waves",
+          "rediscover and recapture the complete final matrix"
+        ],
+        "output": "authenticated screen x state x viewport manifest, audit ledger, issue-owned phased fix plan, and final recapture; a generic page list or one screenshot per route does not count",
+        "validation": "prove source-discovery completeness, represent or explicitly block every reachable state, use authenticated no-spend fixtures, collect independent evidence per row, and pass security, privacy, and no-spend checks",
+        "recovery": "when an exact reference is missing or conflicting, mark reference decision required; when authentication or a fixture is missing, mark blocked - needs setup; do not start Browser capture or fixes by inference",
+        "requirements": [
+          "Derive scope from production routes, conditional render branches, feature flags, entitlements, planning and design sources, and existing issue ownership before Browser execution.",
+          "Freeze one row per screen x state x viewport with route, precondition or seeded fixture, flags and tier, exact reference identity and region, owning source, evidence types, and disposition.",
+          "Inventory nested drawers, modals, editors, and loading, error, stale, retry, regenerate, restore, recovery, and paygate states separately; a parent-page screenshot cannot cover them.",
+          "Use seeded authenticated no-spend fixtures for transient and failure states; preserve explicit security, privacy, and no-spend verification.",
+          "If an exact reference is missing or conflicting, mark reference decision required; never extrapolate visual approval.",
+          "Run an audit-only pass first; freeze findings and issue ownership before phased fix waves and a complete final recapture."
+        ]
+      }
     },
     "questions": [
       "What page, component, or flow should be reviewed?",
@@ -845,6 +875,12 @@
           "stage": "verify",
           "reason": "Verify responsive and runtime behavior.",
           "capability": "web quality"
+        },
+        {
+          "stage": "verify",
+          "reason": "Verify authentication, privacy, and no-spend boundaries when the UI task is security-sensitive.",
+          "capability": "security review",
+          "branch": "security"
         }
       ]
     }

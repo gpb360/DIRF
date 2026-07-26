@@ -2,10 +2,12 @@
 // amf-dirf — Agent Spec Kit (Do It Right First). Unified CLI. Node built-ins only.
 //
 //   dirf setup [path] [--reserve-percent N]              configure a target repository
-//   dirf build  <name> "<task>" [--path DIR] [--open]   full pipeline into a disposable attempt
+//   dirf build  <name> "<task>" [--path DIR] [--open] [--no-focused-output]
+//   dirf plan   <name> "<task>" [--path DIR] [--research] create a lifecycle planning attempt
 //   dirf create <name> "<task>" [--path DIR]             route -> attempt workflow JSON only
 //   dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
 //   dirf list [--path DIR]                               list saved attempts
+//   dirf status [--path DIR]                             show project and repository state
 //   dirf resume <name-or-id> [--path DIR]                load the workflow handoff
 //   dirf validate                                        validate registries + workflows
 //   dirf skills scan [--path DIR]                        scan host, print installed skills + resolved refs
@@ -19,7 +21,7 @@ import { createHash } from "node:crypto";
 import { ROOT, REGISTRY, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, fileHash, folderHash, loadJson } from "./paths.js";
 import { collectRoutingFacts, loadPlaybooks, recommend } from "./router.js";
 import { discover, discoverAgents, enrichDiscovered, loadRegistry, loadTrustedSources, providerForPath, resolveAgentSkills } from "./skills.js";
-import { buildInstructions, buildHtml } from "./renderer.js";
+import { FOCUSED_OUTPUT_RULES, buildInstructions, buildHtml } from "./renderer.js";
 import { main as validateMain } from "./validate.js";
 import { inspect } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
@@ -97,8 +99,8 @@ function castAgents(agents, hostAgents) {
   });
 }
 
-function buildPlan(name, task, path, reservePercent = 5, compaction = null) {
-  const { selection, skillFlow, discovered, hostAgents, facts } = assembleTaskRouting(task, path);
+function buildPlan(name, task, path, reservePercent = 5, compaction = null, focusedOutput = true, routing = {}) {
+  const { selection, skillFlow, discovered, hostAgents, facts } = assembleTaskRouting(task, path, routing);
   const agents = castAgents(enrichAgents(selection.agents), hostAgents).map((agent) => ({
     ...agent,
     skills: resolveAgentSkills(agent.name, agent.skills, [], discovered).filter((skill) => skill.status === "installed"),
@@ -137,6 +139,7 @@ function buildPlan(name, task, path, reservePercent = 5, compaction = null) {
     lifecycle: LIFECYCLE,
     context_reserve_percent: reservePercent,
     compaction,
+    focused_output: focusedOutput,
   };
 }
 
@@ -168,17 +171,51 @@ function portablePlan(plan) {
   return out;
 }
 
-function assembleTaskRouting(task, path) {
+function assembleTaskRouting(task, path, options = {}) {
   const playbooks = loadPlaybooks();
   const errors = reconcile(playbooks);
   if (errors.length) throw new Error(`Task Routing reconciliation failed:\n${errors.map((error) => `  - ${error}`).join("\n")}`);
   const targetRoot = path ? (isAbsolute(path) ? path : resolve(process.cwd(), path)) : null;
   const facts = collectRoutingFacts(targetRoot);
-  const selection = recommend(task, facts, playbooks);
+  let selection = recommend(task, facts, playbooks);
+  if (options.playbook) {
+    const playbook = playbooks[options.playbook];
+    if (!playbook) throw new Error(`Unknown playbook ${options.playbook}`);
+    selection = {
+      ...selection,
+      playbook: options.playbook,
+      playbook_description: playbook.description,
+      workflow: playbook.workflow,
+      skill_flow: playbook.skill_flow,
+      agents: playbook.agents,
+      questions: playbook.questions,
+    };
+  }
+  if (options.planningOnly) {
+    selection.workflow = {
+      phases: [
+        "resolve load-bearing decisions",
+        "model domain language and durable decisions",
+        ...(options.branches?.includes("research") ? ["research unresolved decisions against primary sources"] : []),
+        "write the approved specification",
+        "split the specification into dependency-ordered tickets",
+        "write the execution handoff",
+      ],
+      output: "approved context, justified ADRs, a build-ready specification, dependency-ordered tickets, and an execution handoff",
+      validation: "every ticket traces to the approved specification and every durable decision traces to context, an ADR, or cited research",
+      recovery: "if a load-bearing decision remains unresolved, stop in discovery and record the blocker instead of producing speculative tickets",
+    };
+  }
   const discovered = enrichDiscovered(discover(targetRoot));
   const hostAgents = discoverAgents(targetRoot);
   const trustedSources = loadTrustedSources(targetRoot);
-  return { selection, discovered, hostAgents, facts, skillFlow: buildFlow(selection, { task, trustedSources }, discovered) };
+  const skillFlow = buildFlow(selection, { task, trustedSources, branches: options.branches }, discovered);
+  if (options.planningOnly) {
+    const planningStages = new Set(["discover", "model", "research", "specify", "slice", "handoff"]);
+    skillFlow.steps = skillFlow.steps.filter((step) => planningStages.has(step.stage));
+    skillFlow.gaps = skillFlow.gaps.filter((gap) => planningStages.has(gap.stage));
+  }
+  return { selection, discovered, hostAgents, facts, skillFlow };
 }
 
 function savePlan(plan, attempt) {
@@ -187,7 +224,9 @@ function savePlan(plan, attempt) {
   writeFileSync(path, JSON.stringify(portablePlan(plan), null, 2), "utf-8");
   const handoff = join(attempt.folder, "HANDOFF.md");
   if (!existsSync(handoff)) writeFileSync(handoff, [
-    "# DIRF Handoff", "", "## Objective", "", plan.task, "", "## Current phase", "", "_(not started)_", "",
+    "# DIRF Handoff", "",
+    ...(plan.focused_output !== false ? [`> ${FOCUSED_OUTPUT_RULES.join(" ")}`, ""] : []),
+    "## Objective", "", plan.task, "", "## Current phase", "", "_(not started)_", "",
     "## Completed", "", "- _(none yet)_", "", "## Decisions and assumptions", "", "- _(none yet)_", "",
     "## Changed files", "", "- _(none yet)_", "", "## Validation", "", "- _(not run)_", "",
     "## Blockers", "", "- _(none)_", "", "## Exact next action", "", "_(start the first workflow phase)_", "",
@@ -218,10 +257,27 @@ function openBrowserAt(filePath) {
 function cmdBuild(args) {
   const target = projectRoot(args.path);
   const config = loadProjectConfig(target);
-  const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction);
+  const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction, args.focusedOutput !== false);
   const attempt = createAttempt(target, args.name);
   const planPath = savePlan(plan, attempt);
   console.log(`Attempt saved: ${attempt.id}`);
+  renderPlan(planPath, args.open);
+}
+
+function cmdPlan(args) {
+  if (!args.name || !args.task) throw new Error('usage: dirf plan <name> "<task>" [--path DIR] [--research]');
+  const target = projectRoot(args.path);
+  const config = loadProjectConfig(target);
+  const branches = ["multi-session", ...(args.research ? ["research"] : [])];
+  const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction, args.focusedOutput !== false, {
+    playbook: "fullstack-feature",
+    branches,
+    planningOnly: true,
+  });
+  const attempt = createAttempt(target, args.name);
+  const planPath = savePlan(plan, attempt);
+  console.log(`Plan saved: ${attempt.id}`);
+  console.log(`Lifecycle: ${plan.skill_flow.steps.map((step) => step.stage).join(" -> ")}`);
   renderPlan(planPath, args.open);
 }
 
@@ -259,6 +315,40 @@ function cmdList(args) {
   if (!attempts.length) { console.log("(no attempts saved)"); return; }
   console.log("Saved attempts:");
   for (const attempt of attempts) console.log(`  - ${attempt.id}  ${attempt.name}`);
+}
+
+function gitOutput(target, args) {
+  try {
+    return execFileSync("git", ["-C", target, ...args], { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return "";
+  }
+}
+
+function cmdStatus(args) {
+  const target = projectRoot(args.path);
+  let attempts = [];
+  let configured = true;
+  try { loadProjectConfig(target); attempts = listAttempts(target); }
+  catch { configured = false; }
+
+  const branch = gitOutput(target, ["branch", "--show-current"]);
+  const changes = gitOutput(target, ["status", "--porcelain"]).split(/\r?\n/).filter(Boolean);
+  const aheadBehind = gitOutput(target, ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"]).split(/\s+/).map(Number);
+
+  console.log("DIRF status");
+  console.log(`Target: ${target}`);
+  console.log(`Configured: ${configured ? "yes" : "no"}`);
+  console.log(`Attempts: ${attempts.length}`);
+  if (attempts.length) console.log(`Latest: ${attempts.at(-1).id}`);
+  if (!branch) {
+    console.log("Repository: not a Git repository");
+    return;
+  }
+  console.log(`Repository: ${branch} (${changes.length ? `${changes.length} changed path(s)` : "clean"})`);
+  if (aheadBehind.length === 2 && aheadBehind.every(Number.isFinite)) {
+    console.log(`Upstream: ${aheadBehind[0]} ahead, ${aheadBehind[1]} behind`);
+  }
 }
 
 function cmdResume(args) {
@@ -324,13 +414,14 @@ function cmdGraph(target) {
   console.log(graphLines(folderGraph(target)).join("\n"));
 }
 
-function cmdRun(target) {
+function cmdRun(target, focusedOutput = true) {
   const units = folderGraph(target);
   console.log("Execution order:");
   console.log(graphLines(units).join("\n"));
   console.log("\nExecution handoff:");
   for (const unit of units) console.log(`Read ${join(unit.folder, "README.md")}.`);
   console.log(`Execute ${join(resolve(target), "README.md")} as the root operating workflow.`);
+  if (focusedOutput) console.log(`Focused output: ${FOCUSED_OUTPUT_RULES.join(" ")}`);
 }
 
 function cmdFolderRender(target) {
@@ -474,6 +565,8 @@ function parse(argv) {
     if (a === "--file") { out.file = rest[++i]; continue; }
     if (a === "--force") { out.force = true; continue; }
     if (a === "--slug") { out.slug = rest[++i]; continue; }
+    if (a === "--research") { out.research = true; continue; }
+    if (a === "--no-focused-output") { out.focusedOutput = false; continue; }
     if (a === "--help" || a === "-h") { out.help = true; continue; }
     out._.push(a);
   }
@@ -484,13 +577,15 @@ const HELP = `amf-dirf — Agent Spec Kit (Do It Right First)
 
 Usage:
   dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
-  dirf build  <name> "<task>" [--path DIR] [--open]   full pipeline
+  dirf build  <name> "<task>" [--path DIR] [--open] [--no-focused-output]
+  dirf plan   <name> "<task>" [--path DIR] [--research] [--open] [--no-focused-output]
   dirf create <name> "<task>" [--path DIR]             JSON only
   dirf render <name-or-id> [--path DIR] [--open]       re-render an attempt
   dirf validate <folder>                              validate a folder DAG
   dirf graph <folder>                                 print ordered folder DAG
-  dirf run <folder>                                   print deterministic execution handoff
+  dirf run <folder> [--no-focused-output]             print deterministic execution handoff
   dirf list [--path DIR]                               list saved attempts
+  dirf status [--path DIR]                             show project and repository state
   dirf resume <name-or-id> [--path DIR]                load the workflow handoff
   dirf migrate [<name>]                                remove runtime paths from saved snapshots
   dirf validate                                        validate registries
@@ -515,7 +610,7 @@ Plain language (natural-English aliases for the same commands):
   dirf show me the attempts                           → state list-attempts
   dirf save the handoff --file FILE                   → state write-handoff --file FILE
   dirf start work on "<task>"                         → build <auto-name> "<task>"
-  dirf plan "<task>"                                  → flow "<task>" (preview the skill flow)
+  (dirf plan is a real lifecycle command, not an alias — use 'dirf flow' to preview)
   dirf what can i do                                  → this help
 `;
 
@@ -585,11 +680,9 @@ function translatePlainLanguage(argv) {
   if (joined.startsWith("show me the handoff")) return ["state", "read-handoff", ...argv.slice(4)];
   if (joined.startsWith("show me the attempts")) return ["state", "list-attempts", ...argv.slice(4)];
   if (joined.startsWith("save the handoff")) return ["state", "write-handoff", ...argv.slice(3)];
-  if (joined.startsWith("plan ")) {
-    // `plan "<task>"` -> `flow "<task>"` (preview the routed skill flow).
-    const task = argv.slice(1).join(" ");
-    return ["flow", task];
-  }
+  // NOTE: a plain-language `plan` alias is intentionally omitted — `dirf plan`
+  // is a real lifecycle command (create a planning attempt with --research).
+  // Use `dirf flow "<task>"` to preview the routed skill flow.
   if (joined.startsWith("start work on ")) {
     // Auto-generate a name from the task so the user doesn't have to.
     const task = argv.slice(3).join(" ");
@@ -607,6 +700,7 @@ function main() {
 
   if (cmd === "setup") cmdSetup(args);
   else if (cmd === "build") { args.name = args._[0]; args.task = args._.slice(1).join(" "); cmdBuild(args); }
+  else if (cmd === "plan") { args.name = args._[0]; args.task = args._.slice(1).join(" "); cmdPlan(args); }
   else if (cmd === "create") { args.name = args._[0]; args.task = args._.slice(1).join(" "); cmdCreate(args); }
   else if (cmd === "render") {
     const target = args._[0];
@@ -615,11 +709,12 @@ function main() {
     else { args.name = target; cmdRender(args); }
   }
   else if (cmd === "list") cmdList(args);
+  else if (cmd === "status") cmdStatus(args);
   else if (cmd === "resume") { args.name = args._[0]; cmdResume(args); }
   else if (cmd === "migrate") cmdMigrate(args._[0], args.path);
   else if (cmd === "validate") args._[0] ? cmdFolderValidate(args._[0]) : cmdValidate();
   else if (cmd === "graph") cmdGraph(args._[0]);
-  else if (cmd === "run") cmdRun(args._[0]);
+  else if (cmd === "run") cmdRun(args._[0], args.focusedOutput !== false);
   else if (cmd === "skills") {
     const sub = args._[0];
     if (sub === "scan") cmdSkillsScan(args);

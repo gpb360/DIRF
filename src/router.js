@@ -85,6 +85,30 @@ function scorePlaybook(haystack, taskTokens, playbook) {
   return { score, count: matched.length, context };
 }
 
+function matchesCue(text, cue) {
+  const escaped = String(cue).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`).test(text);
+}
+
+function resolveWorkflow(taskText, workflow = {}) {
+  const { conditional_contract: contract, ...base } = workflow;
+  if (!contract) return base;
+
+  const matches = (cue) => matchesCue(taskText, cue);
+  const allMatch = (contract.when_all || []).every(matches);
+  const anyMatch = !(contract.when_any || []).length || contract.when_any.some(matches);
+  if (!allMatch || !anyMatch) return base;
+
+  return {
+    ...base,
+    phases: contract.phases || base.phases,
+    output: contract.output || base.output,
+    validation: contract.validation || base.validation,
+    recovery: contract.recovery || base.recovery,
+    requirements: contract.requirements || [],
+  };
+}
+
 export function loadPlaybooks() {
   const folders = loadPlaybookFolders(PLAYBOOK_DIR);
   return Object.keys(folders).length ? folders : loadJson(PLAYBOOKS);
@@ -125,7 +149,10 @@ export function recommend(task, facts, playbooks = loadPlaybooks()) {
     b.score - a.score || b.count - a.count || b.context.length - a.context.length || b.index - a.index);
   if (isExplicitUiReview && !isExplicitSecurityAudit) {
     const uiIndex = ranked.findIndex(({ name }) => name === "ui-ux-review");
-    if (uiIndex > 0) ranked.unshift(ranked.splice(uiIndex, 1)[0]);
+    if (uiIndex >= 0) {
+      ranked[uiIndex].score = Math.max(ranked[uiIndex].score, 1);
+      if (uiIndex > 0) ranked.unshift(ranked.splice(uiIndex, 1)[0]);
+    }
   }
 
   let name, pb, score, context;
@@ -150,7 +177,7 @@ export function recommend(task, facts, playbooks = loadPlaybooks()) {
     matched_keywords: matched,
     matched_context: context,
     alternates,
-    workflow: pb.workflow || {},
+    workflow: resolveWorkflow(taskText, pb.workflow),
     skill_flow: pb.skill_flow,
     agents: pb.agents || [],
     questions: pb.questions || [],
