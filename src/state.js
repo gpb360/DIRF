@@ -11,7 +11,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -155,11 +155,18 @@ export function resolveProject(targetPath) {
   const slug = deriveSlug(targetPath);
   const registry = readRegistry();
   const existing = registry.projects[slug];
-  if (!existing) return null;
-  existing.last_seen = nowIso();
-  registry.projects[slug] = existing;
-  writeRegistry(registry);
-  return { slug };
+  if (existing) {
+    existing.last_seen = nowIso();
+    registry.projects[slug] = existing;
+    writeRegistry(registry);
+    return { slug };
+  }
+  // Not registered. If legacy per-target .dirf/ exists, migrate it.
+  if (hasLegacyState(targetPath)) {
+    migrateProject(targetPath, slug);
+    return { slug };
+  }
+  return null;
 }
 
 function portable(p) { return p.replaceAll("\\", "/"); }
@@ -226,4 +233,93 @@ export function readHandoff(slug) {
 
 export function writeHandoff(slug, markdown) {
   atomicWrite(join(storeProjectDir(slug), "HANDOFF.md"), markdown);
+}
+
+// Detect whether a target has migratable legacy state.
+function hasLegacyState(targetPath) {
+  const d = join(targetPath, ".dirf");
+  if (!existsSync(d)) return false;
+  return existsSync(join(d, "config.json")) || existsSync(join(d, "attempts"));
+}
+
+// Migrate a legacy per-target .dirf/ into the store. Non-destructive:
+// 1) backup copy first, 2) register, 3) move state, 4) leave backup until
+// explicit migrate-cleanup. Idempotent: safe to re-run.
+export function migrateProject(targetPath, slug) {
+  const legacyDir = join(targetPath, ".dirf");
+  if (!existsSync(legacyDir)) return { migrated: false, reason: "no legacy .dirf" };
+
+  const registry = readRegistry();
+  if (registry.projects[slug]) {
+    // Already registered — migration is a no-op (conflict path handles handoff in Task 10).
+    return { migrated: false, reason: "already registered" };
+  }
+
+  // 1. Backup copy (before touching anything).
+  const ts = timestampIso(new Date());
+  const backup = join(targetPath, `.dirf.migrating.${ts}`);
+  cpSync(legacyDir, backup, { recursive: true });
+
+  // 2. Register.
+  registerProject(targetPath);
+
+  // 3. Move state into the store.
+  const storeDir = storeProjectDir(slug);
+  mkdirSync(storeDir, { recursive: true });
+
+  // config.json: upgrade schema 1 -> 2, drop attempt_root, add slug.
+  const legacyConfig = join(legacyDir, "config.json");
+  if (existsSync(legacyConfig)) {
+    const cfg = JSON.parse(readFileSync(legacyConfig, "utf8"));
+    cfg.schema_version = 2;
+    cfg.slug = slug;
+    delete cfg.attempt_root;
+    atomicWrite(join(storeDir, "config.json"), JSON.stringify(cfg, null, 2) + "\n");
+  }
+
+  // attempts/ — move whole directory contents if present.
+  const legacyAttempts = join(legacyDir, "attempts");
+  if (existsSync(legacyAttempts)) {
+    const storeAttempts = join(storeDir, "attempts");
+    mkdirSync(storeAttempts, { recursive: true });
+    for (const entry of readdirSync(legacyAttempts, { withFileTypes: true })) {
+      const from = join(legacyAttempts, entry.name);
+      const to = join(storeAttempts, entry.name);
+      if (!existsSync(to)) renameSync(from, to);
+    }
+  }
+
+  // HANDOFF.md — move if a canonical handoff isn't already present.
+  const legacyHandoff = join(legacyDir, "HANDOFF.md");
+  if (existsSync(legacyHandoff)) {
+    const storeHandoff = join(storeDir, "HANDOFF.md");
+    if (!existsSync(storeHandoff)) {
+      const md = readFileSync(legacyHandoff, "utf8");
+      atomicWrite(storeHandoff, md);
+    }
+  }
+
+  return { migrated: true };
+}
+
+// Promote a target's local HANDOFF.md into the store. Backs up the store's
+// current handoff first (never destroy canonical to promote local).
+export function importHandoff(targetPath, slug, { force = false } = {}) {
+  const local = join(targetPath, ".dirf", "HANDOFF.md");
+  if (!existsSync(local)) throw new Error(`No local HANDOFF.md at ${local}`);
+  const storeHandoff = join(storeProjectDir(slug), "HANDOFF.md");
+  if (existsSync(storeHandoff)) {
+    const ts = timestampIso(new Date());
+    cpSync(storeHandoff, join(storeProjectDir(slug), `HANDOFF.md.${ts}.bak`));
+  }
+  atomicWrite(storeHandoff, readFileSync(local, "utf8"));
+  return { imported: true };
+}
+
+// Remove the migration backup after the user confirms the store works.
+export function migrateCleanup(targetPath) {
+  const entries = readdirSync(targetPath);
+  const backups = entries.filter((n) => n.startsWith(".dirf.migrating."));
+  for (const b of backups) rmSync(join(targetPath, b), { recursive: true, force: true });
+  return { removed: backups.length };
 }

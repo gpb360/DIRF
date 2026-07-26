@@ -1,12 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listProjects, storeHome } from "../src/state.js";
 import { deriveSlug, normalizeIdentityKey, identityKeyForPath } from "../src/state.js";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { migrateProject, importHandoff } from "../src/state.js";
 
 const TIMEOUT = 30_000;
 
@@ -172,4 +172,71 @@ test("writeHandoff is atomic — file is valid after concurrent writes", () => {
   // Simulate two concurrent writers by writing many times rapidly; final file must be valid.
   for (let i = 0; i < 50; i++) writeHandoff(slug, `# v${i}\n`);
   assert.equal(readHandoff(slug), "# v49\n");
+});
+
+import { storeProjectDir } from "../src/state.js";
+
+function seedLegacyDirf(target, { handoff = "# Legacy\n", config = null } = {}) {
+  mkdirSync(join(target, ".dirf", "attempts", "20260101T000000000Z-old"), { recursive: true });
+  writeFileSync(join(target, ".dirf", "attempts", "20260101T000000000Z-old", "attempt.json"), JSON.stringify({ schema_version: 1, id: "20260101T000000000Z-old", name: "old", relativePath: ".dirf/attempts/20260101T000000000Z-old", created_at: "2026-01-01T00:00:00.000Z" }));
+  const cfg = config || { schema_version: 1, tracker: { provider: "local", specs_path: "docs/agents/issues/specs", tickets_path: "docs/agents/issues/tickets.md" }, context: { mode: "single", path: "docs/CONTEXT.md", reserve_percent: 5 }, compaction: { method: "verbatim-line", preserve_recent: 2, compression_ratio: 0.5, protected: ["objective"] }, adr_path: "docs/adr", attempt_root: ".dirf/attempts" };
+  writeFileSync(join(target, ".dirf", "config.json"), JSON.stringify(cfg));
+  writeFileSync(join(target, ".dirf", "HANDOFF.md"), handoff);
+}
+
+test("migrateProject moves legacy .dirf into the store, schema upgraded to v2, with backup", () => {
+  const home = freshHome();
+  const target = mkdtempSync(join(tmpdir(), "migproj-"));
+  seedLegacyDirf(target);
+  const slug = deriveSlug(target);
+  migrateProject(target, slug);
+
+  // State now in store
+  const storeCfg = JSON.parse(readFileSync(join(storeProjectDir(slug), "config.json"), "utf8"));
+  assert.equal(storeCfg.schema_version, 2);
+  assert.equal(storeCfg.slug, slug);
+  assert.equal(storeCfg.attempt_root, undefined);
+  assert.ok(existsSync(join(storeProjectDir(slug), "attempts", "20260101T000000000Z-old", "attempt.json")));
+  assert.equal(readFileSync(join(storeProjectDir(slug), "HANDOFF.md"), "utf8"), "# Legacy\n");
+  // Backup exists
+  const backups = readdirSync(target).filter((n) => n.startsWith(".dirf.migrating."));
+  assert.ok(backups.length === 1, "a backup copy must exist");
+  assert.ok(readFileSync(join(target, backups[0], "HANDOFF.md"), "utf8").includes("Legacy"));
+});
+
+test("migrateProject is idempotent/restartable: re-running is a no-op once in store", () => {
+  const home = freshHome();
+  const target = mkdtempSync(join(tmpdir(), "migproj2-"));
+  seedLegacyDirf(target);
+  const slug = deriveSlug(target);
+  migrateProject(target, slug);
+  // second run must not throw or duplicate
+  migrateProject(target, slug);
+  assert.ok(getProject(slug));
+});
+
+test("resolveProject migrates a legacy target on first resolve", () => {
+  const home = freshHome();
+  const target = mkdtempSync(join(tmpdir(), "resolvemig-"));
+  seedLegacyDirf(target);
+  const resolved = resolveProject(target);
+  assert.ok(resolved, "resolve should have migrated + registered");
+  assert.equal(resolved.slug, deriveSlug(target));
+  assert.ok(existsSync(join(storeProjectDir(resolved.slug), "config.json")));
+});
+
+test("importHandoff backs up the store handoff before replacing", () => {
+  const home = freshHome();
+  const target = mkdtempSync(join(tmpdir(), "imphproj-"));
+  seedLegacyDirf(target, { handoff: "# Store copy\n" });
+  const slug = deriveSlug(target);
+  migrateProject(target, slug); // store now has "# Store copy"
+  // Simulate a newer local handoff
+  writeFileSync(join(target, ".dirf", "HANDOFF.md"), "# Newer local\n");
+  importHandoff(target, slug, { force: true });
+  assert.equal(readHandoff(slug), "# Newer local\n");
+  // Backup of the old store handoff exists
+  const backups = readdirSync(storeProjectDir(slug)).filter((n) => n.startsWith("HANDOFF.md.") && n.endsWith(".bak"));
+  assert.ok(backups.length >= 1);
+  assert.equal(readFileSync(join(storeProjectDir(slug), backups[0]), "utf8"), "# Store copy\n");
 });
