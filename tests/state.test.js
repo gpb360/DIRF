@@ -223,6 +223,24 @@ test("migrateProject is idempotent/restartable: re-running is a no-op once in st
   assert.ok(getProject(slug));
 });
 
+// Reproduces the real-world EXDEV: legacy target on one volume, store on another.
+// renameSync across volumes throws EXDEV (cross-device link not permitted); the
+// migration must copy-then-delete instead. Auto-skips on single-volume hosts.
+test("migrateProject moves attempts across volumes (EXDEV regression)", { skip: !process.env.DIRF_CROSS_VOLUME_ROOT ? "set DIRF_CROSS_VOLUME_ROOT to a second drive root (e.g. E:/) to run" : false }, () => {
+  // Store stays on the default (C: via tmpdir); the legacy target goes on the other volume.
+  const home = freshHome();
+  const otherRoot = process.env.DIRF_CROSS_VOLUME_ROOT.replace(/[\\/]+$/, "");
+  const target = mkdtempSync(join(otherRoot, "dirf-xvol-"));
+  seedLegacyDirf(target);
+  const slug = deriveSlug(target);
+  // Must not throw EXDEV.
+  migrateProject(target, slug);
+  // Attempt landed in the store (different volume from the source).
+  assert.ok(existsSync(join(storeProjectDir(slug), "attempts", "20260101T000000000Z-old", "attempt.json")));
+  // Source attempt removed from the legacy target (it was a move, not a copy).
+  assert.ok(!existsSync(join(target, ".dirf", "attempts", "20260101T000000000Z-old")), "source attempt should be removed after move");
+});
+
 test("resolveProject migrates a legacy target on first resolve", () => {
   const home = freshHome();
   const target = mkdtempSync(join(tmpdir(), "resolvemig-"));
