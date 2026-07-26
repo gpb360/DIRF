@@ -507,6 +507,16 @@ Usage:
   dirf state get-attempt <id> [...]                   show one attempt
   dirf state import-handoff [--path DIR] [--force]    promote a local HANDOFF.md into the store
   dirf state migrate-cleanup [--path DIR]            remove migration backup(s) after confirming the store works
+
+Plain language (natural-English aliases for the same commands):
+  dirf where am i                                     → state which
+  dirf show me the projects                           → state list
+  dirf show me the handoff                            → state read-handoff
+  dirf show me the attempts                           → state list-attempts
+  dirf save the handoff --file FILE                   → state write-handoff --file FILE
+  dirf start work on "<task>"                         → build <auto-name> "<task>"
+  dirf plan "<task>"                                  → flow "<task>" (preview the skill flow)
+  dirf what can i do                                  → this help
 `;
 
 function cmdFlow(args) {
@@ -551,8 +561,46 @@ function cmdInspect(args) {
   }
 }
 
+// Natural-language aliases — plain-English entry points that rewrite to the
+// canonical command form. Pure sugar over the existing surface: no new logic,
+// no parallel handlers. Keep phrases unambiguous and don't collide with the
+// real command verbs (setup/build/state/...). Anything unrecognized falls
+// through to normal dispatch (and errors there if truly unknown).
+function plainName(task) {
+  // Short, filesystem-safe name from a task sentence, for `start work on`.
+  return String(task || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40) || "task";
+}
+
+function translatePlainLanguage(argv) {
+  if (!argv.length) return argv;
+  const joined = argv.join(" ");
+  // Each phrase: match the leading words, return a rewritten canonical argv.
+  // Order longest-first where prefixes could overlap.
+  if (joined.startsWith("where am i")) return ["state", "which", ...argv.slice(3)];
+  if (joined.startsWith("show me the projects")) return ["state", "list", ...argv.slice(4)];
+  if (joined.startsWith("show me the handoff")) return ["state", "read-handoff", ...argv.slice(4)];
+  if (joined.startsWith("show me the attempts")) return ["state", "list-attempts", ...argv.slice(4)];
+  if (joined.startsWith("save the handoff")) return ["state", "write-handoff", ...argv.slice(3)];
+  if (joined.startsWith("plan ")) {
+    // `plan "<task>"` -> `flow "<task>"` (preview the routed skill flow).
+    const task = argv.slice(1).join(" ");
+    return ["flow", task];
+  }
+  if (joined.startsWith("start work on ")) {
+    // Auto-generate a name from the task so the user doesn't have to.
+    const task = argv.slice(3).join(" ");
+    return ["build", plainName(task), task];
+  }
+  if (joined.startsWith("what can i do") || joined === "help me") return ["--help"];
+  return argv;
+}
+
 function main() {
-  const argv = process.argv.slice(2);
+  const argv = translatePlainLanguage(process.argv.slice(2));
   if (!argv.length || argv[0] === "--help" || argv[0] === "-h") { console.log(HELP); return; }
   const { cmd, args } = parse(argv);
   if (args.help) { console.log(HELP); return; }
