@@ -114,6 +114,22 @@ Reference existing specs/tickets/decisions rather than restating them.
 | `dirf skills scan` | show installed skills + resolved refs on this host |
 | `dirf validate` | validate registries + workflows |
 
+### Plain language
+
+If you'd rather think in sentences, these natural-English forms do exactly the
+same thing as the commands above (both forms always work):
+
+| Plain English | Same as |
+|---|---|
+| `dirf where am i` | `state which` |
+| `dirf show me the handoff` | `state read-handoff` |
+| `dirf show me the projects` | `state list` |
+| `dirf show me the attempts` | `state list-attempts` |
+| `dirf start work on "<task>"` | `build <auto-name> "<task>"` (name generated for you) |
+| `dirf plan "<task>"` | `flow "<task>"` (preview the skill flow without building) |
+| `dirf save the handoff --file F` | `state write-handoff --file F` |
+| `dirf what can i do` | print this help |
+
 ## Worktrees
 
 If you're working in a git worktree of the project, **nothing changes**: `dirf

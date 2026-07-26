@@ -182,6 +182,20 @@ dirf render <folder>                                 generate its human HTML vie
 
 Run `node src/cli.js` with no arguments for help.
 
+### Plain language
+
+Prefer sentences to subcommands? These natural-English forms do the same thing
+(both always work):
+
+```bash
+dirf where am i                    # → state which
+dirf show me the handoff           # → state read-handoff
+dirf show me the attempts          # → state list-attempts
+dirf start work on "fix the bug"   # → build <auto-name> "fix the bug"
+dirf save the handoff --file h.md  # → state write-handoff --file h.md
+dirf what can i do                 # → help
+```
+
 ## Folder contract
 
 DIRF uses four separate filesystem units with one small README-frontmatter
