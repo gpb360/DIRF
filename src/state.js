@@ -125,6 +125,18 @@ export function writeRegistry(registry) {
   atomicWrite(registryPath(), JSON.stringify(registry, null, 2) + "\n");
 }
 
+// Move a directory tree from `from` to `to`, working across volumes.
+// renameSync cannot cross device boundaries on Windows (EXDEV) and on POSIX
+// when source/dest are on different filesystems, so migration must copy then
+// delete. Order matters for safety: copy fully first, then remove the source —
+// if the copy fails partway, the source is intact and the destination is just
+// partial (and the caller's !existsSync(to) guard or migrate-cleanup handles it).
+// For single-file same-directory atomic writes, use atomicWrite (renameSync).
+export function moveAcrossVolumes(from, to) {
+  cpSync(from, to, { recursive: true });
+  rmSync(from, { recursive: true, force: true });
+}
+
 function nowIso() { return new Date().toISOString(); }
 
 export function getProject(slug) {
@@ -304,7 +316,7 @@ export function migrateLegacyContent(targetPath, slug) {
     for (const entry of readdirSync(legacyAttempts, { withFileTypes: true })) {
       const from = join(legacyAttempts, entry.name);
       const to = join(storeAttempts, entry.name);
-      if (!existsSync(to)) renameSync(from, to);
+      if (!existsSync(to)) moveAcrossVolumes(from, to);
     }
   }
 
