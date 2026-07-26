@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, existsSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -45,4 +45,17 @@ test("dirf state write-handoff --file writes the canonical handoff", () => {
   run(["state", "write-handoff", "--file", src], { DIRF_HOME: home }, main);
   const out = run(["state", "read-handoff"], { DIRF_HOME: home }, main);
   assert.equal(out, md);
+});
+
+test("dirf state migrate-cleanup removes backup dirs", () => {
+  const home = freshHome();
+  const main = mkdtempSync(join(tmpdir(), "mcp-"));
+  execFileSync("git", ["init", "-q"], { cwd: main, timeout: TIMEOUT });
+  run(["setup", main], { DIRF_HOME: home });
+  // plant a fake backup dir
+  mkdirSync(join(main, ".dirf.migrating.20260101T000000000Z"));
+  writeFileSync(join(main, ".dirf.migrating.20260101T000000000Z", "x"), "x");
+  run(["state", "migrate-cleanup"], { DIRF_HOME: home }, main);
+  const leftovers = readdirSync(main).filter((n) => n.startsWith(".dirf.migrating."));
+  assert.equal(leftovers.length, 0);
 });

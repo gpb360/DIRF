@@ -13,6 +13,7 @@
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { dirname, join, isAbsolute, resolve } from "node:path";
 import { execFileSync, spawn } from "node:child_process";
+import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { ROOT, REGISTRY, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, fileHash, folderHash, loadJson } from "./paths.js";
@@ -24,7 +25,7 @@ import { inspect } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeProjectDir } from "./state.js";
+import { resolveProject, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeProjectDir, importHandoff, migrateCleanup } from "./state.js";
 
 const LIFECYCLE = {
   clarify: "Use the best installed interview capability before implementation.",
@@ -432,6 +433,34 @@ function cmdStateGetAttempt(args) {
   console.log(`folder: ${a.folder}`);
 }
 
+function cmdStateImportHandoff(args) {
+  const target = projectRoot(args.path || ".");
+  // Resolve the slug WITHOUT tripping the newer-local-HANDOFF conflict check that
+  // resolveProject would surface — import-handoff is the RESOLUTION of that
+  // conflict, so it must reach the promotion step even from the conflict state.
+  // registerProject is idempotent and never throws on handoff conflicts.
+  const slug = args.slug || registerProject(target).slug;
+  if (!slug) throw new Error(`DIRF has no project registered for ${target}. Run: dirf setup "${target}"`);
+  if (!args.force) {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(`Promote local HANDOFF.md into the store for ${slug}? [y/N] `, (answer) => {
+      rl.close();
+      if (!/^y/i.test(answer.trim())) { console.log("aborted"); return; }
+      importHandoff(target, slug, { force: true });
+      console.log(`Promoted local HANDOFF.md for ${slug}`);
+    });
+  } else {
+    importHandoff(target, slug, { force: true });
+    console.log(`Promoted local HANDOFF.md for ${slug}`);
+  }
+}
+
+function cmdStateMigrateCleanup(args) {
+  const target = projectRoot(args.path || ".");
+  const { removed } = migrateCleanup(target);
+  console.log(removed ? `Removed ${removed} migration backup(s) under ${target}` : "No migration backups to remove.");
+}
+
 function parse(argv) {
   const [cmd, ...rest] = argv;
   const out = { _: [] };
@@ -476,6 +505,8 @@ Usage:
   dirf state write-handoff --file FILE|- [...]        write the canonical handoff
   dirf state list-attempts [--path DIR|--slug S]      list attempts for a project
   dirf state get-attempt <id> [...]                   show one attempt
+  dirf state import-handoff [--path DIR] [--force]    promote a local HANDOFF.md into the store
+  dirf state migrate-cleanup [--path DIR]            remove migration backup(s) after confirming the store works
 `;
 
 function cmdFlow(args) {
@@ -559,6 +590,8 @@ function main() {
     else if (sub === "write-handoff") cmdStateWriteHandoff(subArgs);
     else if (sub === "list-attempts") cmdStateListAttempts(subArgs);
     else if (sub === "get-attempt") cmdStateGetAttempt(subArgs);
+    else if (sub === "import-handoff") cmdStateImportHandoff(subArgs);
+    else if (sub === "migrate-cleanup") cmdStateMigrateCleanup(subArgs);
     else { console.error(`unknown state subcommand: ${sub}\n\n${HELP}`); process.exit(2); }
   }
   else { console.error(`unknown command: ${cmd}\n\n${HELP}`); process.exit(2); }

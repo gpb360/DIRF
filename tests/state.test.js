@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, symlinkSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, utimesSync, writeFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listProjects, storeHome } from "../src/state.js";
@@ -239,4 +239,23 @@ test("importHandoff backs up the store handoff before replacing", () => {
   const backups = readdirSync(storeProjectDir(slug)).filter((n) => n.startsWith("HANDOFF.md.") && n.endsWith(".bak"));
   assert.ok(backups.length >= 1);
   assert.equal(readFileSync(join(storeProjectDir(slug), backups[0]), "utf8"), "# Store copy\n");
+});
+
+test("resolveProject surfaces a newer-local-HANDOFF conflict (registered + newer local)", () => {
+  const home = freshHome();
+  const target = mkdtempSync(join(tmpdir(), "confproj-"));
+  seedLegacyDirf(target, { handoff: "# old\n" });
+  const slug = deriveSlug(target);
+  migrateProject(target, slug); // store now has "# old"
+  // Recreate a local .dirf/HANDOFF.md (migration moved it) and set its mtime AHEAD of the store's.
+  mkdirSync(join(target, ".dirf"), { recursive: true });
+  const localPath = join(target, ".dirf", "HANDOFF.md");
+  writeFileSync(localPath, "# newer local\n");
+  const future = new Date(Date.now() + 60_000);
+  utimesSync(localPath, future, future);
+  const storeHandoff = join(storeProjectDir(slug), "HANDOFF.md");
+  utimesSync(storeHandoff, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+
+  // Non-interactive (test has no TTY): resolve must throw a clear, instructive error.
+  assert.throws(() => resolveProject(target), /newer than canonical|import-handoff/i);
 });

@@ -11,7 +11,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -156,6 +156,21 @@ export function resolveProject(targetPath) {
   const registry = readRegistry();
   const existing = registry.projects[slug];
   if (existing) {
+    // Conflict check: registered, but a local HANDOFF.md is newer than the store's.
+    // Never silently overwrite — surface it with an instructive error (spec §7 contract).
+    const localHandoff = join(targetPath, ".dirf", "HANDOFF.md");
+    const storeHandoff = join(storeProjectDir(slug), "HANDOFF.md");
+    if (existsSync(localHandoff) && existsSync(storeHandoff)) {
+      const localMtime = statSync(localHandoff).mtimeMs;
+      const storeMtime = statSync(storeHandoff).mtimeMs;
+      if (localMtime > storeMtime) {
+        throw new Error(
+          `Local HANDOFF.md is newer than canonical for ${slug}. ` +
+          `Run \`dirf state import-handoff\` to promote it (or \`dirf state import-handoff --force\` to skip this prompt). ` +
+          `Refusing to proceed to avoid silent data loss.`
+        );
+      }
+    }
     existing.last_seen = nowIso();
     registry.projects[slug] = existing;
     writeRegistry(registry);
