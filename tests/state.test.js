@@ -106,13 +106,21 @@ test("registerProject creates a store entry + registry record", () => {
   assert.equal(getProject(slug).slug, slug);
 });
 
-test("registerProject is idempotent", () => {
+test("registerProject is idempotent and preserves the original record", () => {
   const repo = mkdtempSync(join(tmpdir(), "regproj2-"));
   gitInit(repo);
   const first = registerProject(repo);
+  const before = getProject(first.slug);
   const second = registerProject(repo);
+  const after = getProject(first.slug);
   assert.equal(second.isNew, false);
   assert.equal(second.slug, first.slug);
+  // Re-register must preserve the original record (created_at, name, identity) — only last_seen moves.
+  assert.equal(after.created_at, before.created_at, "created_at must be preserved on re-register");
+  assert.equal(after.name, before.name);
+  assert.equal(after.git_common_dir, before.git_common_dir);
+  assert.equal(after.main_path, before.main_path);
+  assert.ok(after.last_seen >= before.last_seen, "last_seen should bump");
 });
 
 test("resolveProject returns slug for a registered repo and bumps last_seen", () => {

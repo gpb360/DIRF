@@ -59,3 +59,19 @@ test("dirf state migrate-cleanup removes backup dirs", () => {
   const leftovers = readdirSync(main).filter((n) => n.startsWith(".dirf.migrating."));
   assert.equal(leftovers.length, 0);
 });
+
+test("dirf state import-handoff --force promotes a local HANDOFF into the store", () => {
+  const home = freshHome();
+  const main = mkdtempSync(join(tmpdir(), "imph-"));
+  execFileSync("git", ["init", "-q"], { cwd: main, timeout: TIMEOUT });
+  run(["setup", main], { DIRF_HOME: home });
+  // Plant a local .dirf/HANDOFF.md that should be promoted.
+  mkdirSync(join(main, ".dirf"), { recursive: true });
+  const localMd = "# Promoted from local\n\nNewer content.\n";
+  writeFileSync(join(main, ".dirf", "HANDOFF.md"), localMd);
+  // Promote via the CLI with --force (skips the prompt).
+  run(["state", "import-handoff", "--force"], { DIRF_HOME: home }, main);
+  // The canonical store handoff now equals the promoted local content.
+  const readBack = run(["state", "read-handoff"], { DIRF_HOME: home }, main);
+  assert.equal(readBack, localMd);
+});
