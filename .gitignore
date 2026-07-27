@@ -1,6 +1,13 @@
 # Node
 node_modules/
 
+# DIRF local working artifacts (central store lives in ~/.dirf/, not the repo)
+.dirf/
+.dirf.migrating.*/
+
+# Editor / agent session state (local only)
+.zcode/
+
 # Legacy generated runs; new target-owned runs live under each target's .dirf/attempts/
 workflows/user/
 *.html

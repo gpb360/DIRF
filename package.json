@@ -11,12 +11,16 @@
     "test:router": "node --test tests/router.test.js",
     "test:skills": "node --test tests/skills.test.js",
     "test:renderer": "node --test tests/renderer.test.js",
+    "typecheck": "tsc --noEmit",
     "smoke": "node scripts/smoke.js",
     "validate": "node src/cli.js validate",
     "scan": "node src/cli.js skills scan"
   },
   "engines": {
-    "node": ">=18.17"
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
   },
   "license": "MIT"
 }
