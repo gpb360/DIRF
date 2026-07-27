@@ -130,6 +130,35 @@ same thing as the commands above (both forms always work):
 | `dirf save the handoff --file F` | `state write-handoff --file F` |
 | `dirf what can i do` | print this help |
 
+## Side observations (`dirf notice`)
+
+Mid-attempt you'll spot things that are **not the current task** — a side bug, a
+stale doc, a "should fix later." The destructive options are: fold it into the
+status handoff (pollutes the signal — exactly the drift that breaks multi-session
+work), derail the attempt to fix it (the "bleed"), or silently drop it. Use
+`dirf notice` instead — a non-derailing channel that parks the note and lets you
+continue.
+
+```bash
+dirf notice "Sidebar still uses text-white in 23 spots — separate from this task"
+dirf notice list                       # read the current attempt's observations back
+dirf notice list --project             # read the project-level (promoted) observations
+dirf notice promote 2                  # lift entry #2 to project-level (survives sessions)
+```
+
+Rules (also enforced by the workflow policy embedded in every attempt):
+
+- **Never put side observations in HANDOFF.md.** They are not status, decisions,
+  or blockers — they're noise that doesn't belong in the resume document.
+- **Do not act on a side observation in the current attempt.** Log it and continue
+  with the task. If it genuinely blocks the task, it goes in `Blockers`, not here.
+- **Observations are ephemeral to the attempt by default.** Promote one to
+  project-level (`dirf notice promote <N>`) only if it should survive across
+  sessions. Most don't.
+- **This is not an issue tracker.** No status, assignee, priority. A timestamped
+  log. Things needing real tracking graduate to the project's committed
+  `tickets.md` (the `slice` lifecycle), not this channel.
+
 ## Worktrees
 
 If you're working in a git worktree of the project, **nothing changes**: `dirf
