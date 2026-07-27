@@ -11,7 +11,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -371,4 +371,86 @@ export function migrateCleanup(targetPath) {
   const backups = entries.filter((n) => n.startsWith(".dirf.migrating."));
   for (const b of backups) rmSync(join(targetPath, b), { recursive: true, force: true });
   return { removed: backups.length };
+}
+
+// ─── Side observations (`dirf notice`) ─────────────────────────────────────
+// A non-derailing channel for anything NOT the current task: a side bug, a doc
+// staleness, a "fix later." Append-only markdown, one entry per line, numbered
+// and timestamped. Default target: the current (most-recent) attempt's
+// OBSERVATIONS.md. Promotable to the project-level OBSERVATIONS.md so an entry
+// survives across sessions. Never flows into workflow.json or HANDOFF.md.
+
+// The most recent attempt for a project (newest-last in listAttempts), or null.
+export function currentAttempt(slug) {
+  const attempts = listAttempts(slug);
+  return attempts.length ? attempts.at(-1) : null;
+}
+
+function observationsFile(slug, attemptId) {
+  // attemptId null/undefined => project-level file.
+  return attemptId
+    ? join(storeAttemptDir(slug, attemptId), "OBSERVATIONS.md")
+    : join(storeProjectDir(slug), "OBSERVATIONS.md");
+}
+
+// Parse OBSERVATIONS.md back into [{n, ts, text}]. Lines that don't match the
+// format are skipped (defensive — the file is agent-touched).
+function parseObservations(content) {
+  const entries = [];
+  for (const line of content.split(/\r?\n/)) {
+    const m = line.match(/^(\d+)\.\s+(\S+)\s+—\s+(.*)$/);
+    if (m) entries.push({ n: Number(m[1]), ts: m[2], text: m[3] });
+  }
+  return entries;
+}
+
+export function listObservations(slug, { attemptId, project = false } = {}) {
+  // Default target: the current attempt (symmetric with appendObservation).
+  // project:true short-circuits to the project-level file.
+  let target = attemptId;
+  if (project) {
+    target = null;
+  } else if (!target) {
+    const cur = currentAttempt(slug);
+    target = cur ? cur.id : null;
+  }
+  const file = observationsFile(slug, target);
+  if (!existsSync(file)) return [];
+  return parseObservations(readFileSync(file, "utf8"));
+}
+
+// Append an observation. Default target: the current attempt (throws clearly if
+// none exists). Options: { attemptId, project } — attemptId wins over default,
+// project wins over both (writes the project-level file).
+export function appendObservation(slug, text, { attemptId, project = false } = {}) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) throw new Error("observation text must not be empty");
+  let target = attemptId;
+  if (project) {
+    target = null;
+  } else if (!target) {
+    const cur = currentAttempt(slug);
+    if (!cur) throw new Error("No attempt to attach the observation to — run `dirf build` first, or pass --attempt <id>.");
+    target = cur.id;
+  }
+  const file = observationsFile(slug, target);
+  mkdirSync(dirname(file), { recursive: true });
+  const existing = listObservations(slug, { attemptId: target, project });
+  const n = existing.length ? Math.max(...existing.map((e) => e.n)) + 1 : 1;
+  const ts = new Date().toISOString();
+  appendFileSync(file, `${n}. ${ts} — ${trimmed}\n`, "utf8");
+  return { n, ts, text: trimmed, file };
+}
+
+// Promote entry N from an attempt to the project-level file. Non-destructive:
+// the source attempt keeps its log; the promoted entry is copied (re-numbered)
+// into the project file.
+export function promoteObservation(slug, entryN, { attemptId } = {}) {
+  const cur = attemptId ? { id: attemptId } : currentAttempt(slug);
+  if (!cur) throw new Error("No attempt to promote from — run `dirf build` first, or pass --attempt <id>.");
+  const source = listObservations(slug, { attemptId: cur.id });
+  const entry = source.find((e) => e.n === entryN);
+  if (!entry) throw new Error(`No observation #${entryN} in attempt ${cur.id}. Run \`dirf notice list\` to see entries.`);
+  appendObservation(slug, entry.text, { project: true });
+  return { promoted: entryN, from: cur.id, text: entry.text };
 }
