@@ -672,7 +672,7 @@ Plain language (natural-English aliases for the same commands):
 function cmdFlow(args) {
   const task = args._.join(" ");
   if (!task) { console.error("usage: dirf flow \"<task>\" [--path DIR]"); process.exit(2); }
-  const { skillFlow: flow } = assembleTaskRouting(task, args.path || null);
+  const { skillFlow: flow } = assembleTaskRouting(task, projectRoot(args.path));
   console.log(`Flow: ${flow.label}`);
   console.log(`Playbook: ${flow.playbook}${flow.branches.length ? ` (branches: ${flow.branches.join(", ")})` : ""}\n`);
   let lastStage = "";
