@@ -29,6 +29,12 @@ Use this policy in every generated workflow prompt.
 - Use concrete files, commands, diffs, tests, and errors as proof.
 - Do not add AI attribution footers or generated-by boilerplate.
 
+## Side observations
+- Park anything noticed that is NOT the current task (a side bug, a doc staleness, a "fix later") via `dirf notice "<note>"`. Default target: the current attempt.
+- Never put side observations in HANDOFF.md — they are not status, decisions, or blockers.
+- Do not act on a side observation in the current attempt. Log it and continue.
+- Observations are ephemeral to the attempt. Promote one to the project-level list with `dirf notice promote <N>` only if it should survive across sessions.
+
 ## Workflow Audit
 - Name the selected playbook.
 - List selected agents and skipped obvious agents with reasons.
@@ -56,6 +62,7 @@ Use this policy in every generated workflow prompt.
 - When the host exposes remaining context and reaches the reserve, update `HANDOFF.md`, then stop.
 - If usage telemetry is unavailable, checkpoint after every completed workflow phase.
 - Record the objective, current phase, completed work, decisions, changed files, validation, blockers, and exact next action.
+- Side observations go to `OBSERVATIONS.md` via `dirf notice`, not the handoff.
 
 ## Compaction
 - Under context pressure, prefer dropping lines by selection over rewriting or summarizing.
