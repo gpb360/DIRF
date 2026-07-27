@@ -27,7 +27,7 @@ import { inspect } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeProjectDir, importHandoff, migrateCleanup } from "./state.js";
+import { resolveProject, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation } from "./state.js";
 
 const LIFECYCLE = {
   clarify: "Use the best installed interview capability before implementation.",
@@ -552,6 +552,52 @@ function cmdStateMigrateCleanup(args) {
   console.log(removed ? `Removed ${removed} migration backup(s) under ${target}` : "No migration backups to remove.");
 }
 
+// `dirf notice` — a non-derailing side-observation channel. Park anything NOT
+// the current task (a side bug, a doc staleness, a "fix later") without acting
+// on it or polluting HANDOFF.md. Default target: the current attempt.
+function resolveNoticeSlug(args) {
+  // Resolve slug for a notice op. Reuses the state slug-resolution path.
+  if (args.slug) return args.slug;
+  const target = projectRoot(args.path || ".");
+  const resolved = resolveProject(target);
+  if (!resolved) throw new Error(`DIRF has no project registered for ${target}. Run: dirf setup "${target}"`);
+  return resolved.slug;
+}
+
+function cmdNoticeAppend(args, text) {
+  const slug = resolveNoticeSlug(args);
+  const opts = {};
+  if (args.project) opts.project = true;
+  if (args.attempt) opts.attemptId = args.attempt;
+  const { n, ts, file } = appendObservation(slug, text, opts);
+  const scope = args.project ? "project" : (args.attempt || "current attempt");
+  console.log(`Noted #${n} (${scope}) at ${ts}`);
+  console.log(`  ${text}`);
+}
+
+function cmdNoticeList(args) {
+  const slug = resolveNoticeSlug(args);
+  const opts = {};
+  if (args.project) opts.project = true;
+  if (args.attempt) opts.attemptId = args.attempt;
+  const entries = listObservations(slug, opts);
+  const scope = args.project ? "project" : (args.attempt || "current attempt");
+  if (!entries.length) { console.log(`(no observations for ${scope})`); return; }
+  console.log(`Observations (${scope}):`);
+  for (const e of entries) console.log(`  ${e.n}. ${e.ts} — ${e.text}`);
+}
+
+function cmdNoticePromote(args, entryN) {
+  const slug = resolveNoticeSlug(args);
+  const opts = {};
+  if (args.attempt) opts.attemptId = args.attempt;
+  const n = Number(entryN);
+  if (!Number.isInteger(n) || n < 1) { console.error("usage: dirf notice promote <N> [--attempt ID]"); process.exitCode = 2; return; }
+  const { promoted, from, text } = promoteObservation(slug, n, opts);
+  console.log(`Promoted #${promoted} from ${from} to project-level.`);
+  console.log(`  ${text}`);
+}
+
 function parse(argv) {
   const [cmd, ...rest] = argv;
   const out = { _: [] };
@@ -564,7 +610,9 @@ function parse(argv) {
     if (a === "--open") { out.open = true; continue; }
     if (a === "--file") { out.file = rest[++i]; continue; }
     if (a === "--force") { out.force = true; continue; }
+    if (a === "--project") { out.project = true; continue; }
     if (a === "--slug") { out.slug = rest[++i]; continue; }
+    if (a === "--attempt") { out.attempt = rest[++i]; continue; }
     if (a === "--research") { out.research = true; continue; }
     if (a === "--no-focused-output") { out.focusedOutput = false; continue; }
     if (a === "--help" || a === "-h") { out.help = true; continue; }
@@ -602,6 +650,13 @@ Usage:
   dirf state get-attempt <id> [...]                   show one attempt
   dirf state import-handoff [--path DIR] [--force]    promote a local HANDOFF.md into the store
   dirf state migrate-cleanup [--path DIR]            remove migration backup(s) after confirming the store works
+
+Side observations (park non-task notes without derailing):
+  dirf notice "<text>"                                log an observation to the current attempt
+  dirf notice "<text>" --attempt <id|name>           log to a specific attempt
+  dirf notice "<text>" --project                      log to the project-level list (survives sessions)
+  dirf notice list [--project|--attempt <id>]         read observations back
+  dirf notice promote <N>                             copy entry N from current attempt to project-level
 
 Plain language (natural-English aliases for the same commands):
   dirf where am i                                     → state which
@@ -736,6 +791,25 @@ function main() {
     else if (sub === "import-handoff") cmdStateImportHandoff(subArgs);
     else if (sub === "migrate-cleanup") cmdStateMigrateCleanup(subArgs);
     else { console.error(`unknown state subcommand: ${sub}\n\n${HELP}`); process.exit(2); }
+  }
+  else if (cmd === "notice") {
+    // dirf notice "<text>"            -> append to current attempt
+    // dirf notice list [--project]    -> list observations
+    // dirf notice promote <N>         -> lift entry N to project level
+    const sub = args._[0];
+    if (sub === "list") cmdNoticeList(args);
+    else if (sub === "promote") {
+      const entryN = args._[1];
+      if (!entryN) { console.error("usage: dirf notice promote <N> [--attempt ID]"); process.exit(2); }
+      cmdNoticePromote(args, entryN);
+    }
+    else {
+      // Everything else is the observation text (so multi-word notes work
+      // without quotes: `dirf notice Sidebar still uses text-white`).
+      const text = args._.join(" ");
+      if (!text) { console.error('usage: dirf notice "<text>" [--attempt ID | --project]'); process.exit(2); }
+      cmdNoticeAppend(args, text);
+    }
   }
   else { console.error(`unknown command: ${cmd}\n\n${HELP}`); process.exit(2); }
 }
