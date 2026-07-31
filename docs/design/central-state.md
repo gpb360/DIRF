@@ -1,10 +1,21 @@
 # Design: central DIRF state
 
-> Status: **approved, unimplemented.** All six design sections confirmed in a
-> prior design session; work stopped before implementation.
-> Captured here so the design stops living only in a session and can be cited,
-> critiqued, and picked up. No code in `src/` reflects this yet — current
-> behavior is still per-target `.dirf/`.
+> Status: **implemented.** All seven rollout stages have landed. Canonical state
+> lives in `~/.dirf/projects/<slug>/`; `config.json`, `HANDOFF.md`, and
+> `attempts/` are read and written there, and `project.js` delegates to
+> `state.js` rather than touching per-target files. The drift this design set
+> out to kill is gone.
+>
+> Two deviations from the design as written, both worth knowing:
+>
+> - **The `slug.json` pointer was never built.** `grep slug.json src/` finds
+>   nothing. Resolution recomputes the slug from `git rev-parse --git-common-dir`
+>   on every call instead of caching it in the checkout. Same guarantee, one
+>   fewer file to keep in sync — the design's pointer is arguably YAGNI.
+> - **Checkouts can still carry a vestigial `.dirf/`.** Post-migration it holds a
+>   `schema_version: 1` `config.json` and an empty `attempts/`. Nothing reads it:
+>   `loadProjectConfig` resolves to the store and rejects any schema other than
+>   2. It is residue, not state. `dirf state migrate-cleanup` clears it.
 
 ## Problem
 
@@ -77,14 +88,26 @@ store. **Registry wins on conflict; never silent overwrite.**
 
 Seven stages, each independently testable. Do not collapse them.
 
-1. `src/state.js` + store layout
-2. Resolution + registry (slug derivation, `resolveProject`, `registerProject`)
-3. Rewire existing commands (`build`/`create`/`render`/`list`/`resume`) through
-   `state.js`
-4. `dirf state` CLI command group
-5. Migration (lazy on-first-resolve)
-6. `src/mcp.js` (additive, last — nothing else depends on it)
-7. Prose updates (`src/renderer.js` worktree advisories, `README.md`)
+Status as of the last audit of `src/` — verified against the code, not assumed:
+
+1. ✅ `src/state.js` + store layout
+2. ✅ Resolution + registry (slug derivation, `resolveProject`, `registerProject`)
+3. ✅ Rewire existing commands — done inside `project.js`, not `cli.js`:
+   `createAttempt`/`listAttempts`/`findAttempt`/`loadProjectConfig` are thin
+   wrappers over `createAttemptInStore`/`listAttemptsInStore`/`getAttemptInStore`
+   and `storeProjectDir`. `cli.js` still imports them from `project.js`, so the
+   rewire is invisible at the call sites
+4. ✅ `dirf state` CLI command group — `which`, `list`, `register`,
+   `read-handoff`, `write-handoff`, `list-attempts`, `get-attempt`, plus
+   `import-handoff` and `migrate-cleanup` beyond the original design
+5. ✅ Migration (lazy on-first-resolve; `migrateLegacyContent` in `project.js`)
+6. ✅ `src/mcp.js`
+7. ✅ Prose updates — `src/renderer.js:271,521` and `README.md:30,82,120,136`
+   all describe the central store
+
+Also built but **not** part of this design: an observations layer
+(`appendObservation`/`listObservations`/`promoteObservation`, `OBSERVATIONS.md`
+in the store). It postdates this doc and has no design section here.
 
 ## Explicit non-goals
 
