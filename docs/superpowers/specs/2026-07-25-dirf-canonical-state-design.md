@@ -16,12 +16,12 @@ ad-hoc `HANDOFF.md` files. Three structural problems follow:
    (Codex, Claude, …) spins up a worktree and reads `.dirf/HANDOFF.md`, it
    reads the worktree's local copy — which may be stale, partial, or never
    written. **This is the actual failure that motivated this design:** on the
-   `storytellers` project, a worktree at `C:/tmp/storytellers-m026-closure/`
+   `myproject` project, a worktree at `C:/tmp/myproject-wt-closure/`
    read an out-of-date `HANDOFF.md` that never received a rewrite made in the
    main tree. The worktree and main tree drifted apart.
 
 2. **No central registry.** Nothing records "these are DIRF's projects, here's
-   where each lives." You cannot ask DIRF "what's happening on storytellers?"
+   where each lives." You cannot ask DIRF "what's happening on myproject?"
    from outside that checkout. The word "registry" in the code today refers
    only to the kit's *bundled* playbook/agent/skill metadata
    (`registry/agents.json`, `registry/skills.json`, `registry/playbooks.json`),
@@ -112,7 +112,7 @@ contract is explicit:
    - **Git target:** `git rev-parse --git-common-dir`. This is the shared
      `.git` that all worktrees point back to. A main tree and any of its
      worktrees resolve to the same common dir → same key → same slug → same
-     store entry. This collapse is what kills the storytellers drift.
+     store entry. This collapse is what kills the myproject drift.
    - **Non-git target:** the normalized absolute path of the project
      directory.
 2. **Normalize the key deterministically, in this exact order:**
@@ -121,19 +121,19 @@ contract is explicit:
    3. Strip trailing slash.
    4. Resolve symlinks.
    5. **Case-fold to lower case.** Required on case-insensitive filesystems
-      (Windows, macOS default): the FS treats `E:/Storytellers` and
-      `e:/storytellers` as identical, so the slug must too. Lower-casing
+      (Windows, macOS default): the FS treats `C:/MyProject` and
+      `c:/myproject` as identical, so the slug must too. Lower-casing
       everywhere is the simplest correct rule and is harmless on
       case-sensitive FSes (paths there are already a single case in
       practice for a given repo).
 3. **Hash:** `sha1(normalizedKey)` → first 8 hex chars.
-4. **Format slug:** `<basename>-<hash8>`, e.g. `storytellers-a1b2c3d4`.
+4. **Format slug:** `<basename>-<hash8>`, e.g. `myproject-a1b2c3d4`.
    Basename is the main worktree's directory name for git (from
    `git rev-parse --show-toplevel`), cwd basename otherwise.
 
-The storytellers case: run from
-`C:/tmp/storytellers-m026-closure/` → common-dir normalizes to
-`e:/s7s-projects/storytellers/.git` → slug `storytellers-a1b2c3d4` → **same
+The myproject case: run from
+`C:/tmp/myproject-wt-closure/` → common-dir normalizes to
+`c:/code/myproject/.git` → slug `myproject-a1b2c3d4` → **same
 entry** as the main tree. Codex reads/writes the same store files.
 
 ### Known limitation: a moved/renamed main tree orphans the store entry
@@ -152,11 +152,11 @@ command (§10), not built now. Named explicitly so it is not a surprise.
 {
   "schema_version": 1,
   "projects": {
-    "storytellers-a1b2c3d4": {
-      "slug": "storytellers-a1b2c3d4",
-      "name": "storytellers",
-      "git_common_dir": "e:/s7s-projects/storytellers/.git",
-      "main_path": "e:/s7s-projects/storytellers",
+    "myproject-a1b2c3d4": {
+      "slug": "myproject-a1b2c3d4",
+      "name": "myproject",
+      "git_common_dir": "c:/code/myproject/.git",
+      "main_path": "c:/code/myproject",
       "created_at": "2026-07-25T12:00:00Z",
       "last_seen": "2026-07-25T14:30:00Z"
     }
@@ -242,11 +242,11 @@ behavior exists, it lives in `state.js` — never in a surface.
 ### CLI: `dirf state <subcommand>`
 
 New `state` command group. Resolution defaults to cwd; `--path DIR` or
-`--slug X` override (so you can query storytellers from inside amf-dirf).
+`--slug X` override (so you can query myproject from inside amf-dirf).
 
 | Verb | → `state.js` | Purpose |
 |---|---|---|
-| `dirf state which` | `resolveProject(cwd)` | "what project am I in?" — prints slug + store path. The diagnostic for the storytellers case. |
+| `dirf state which` | `resolveProject(cwd)` | "what project am I in?" — prints slug + store path. The diagnostic for the myproject case. |
 | `dirf state list` | `listProjects()` | all registered projects, from anywhere. |
 | `dirf state register [--path]` | `registerProject(path)` | explicit add (also happens implicitly on `setup`). |
 | `dirf state read-handoff [--path\|slug]` | `readHandoff(slug)` | print canonical handoff to stdout. |
@@ -290,9 +290,9 @@ MCP design choices:
 ### Agent flow under this design
 
 ```
-Codex (in worktree C:/tmp/storytellers-m026-closure/):
+Codex (in worktree C:/tmp/myproject-wt-closure/):
   $ dirf state which
-  storytellers-a1b2c3d4  →  ~/.dirf/projects/storytellers-a1b2c3d4/
+  myproject-a1b2c3d4  →  ~/.dirf/projects/myproject-a1b2c3d4/
   $ dirf state read-handoff
   ... canonical HANDOFF.md ...
   # does work, updates handoff:
@@ -300,8 +300,8 @@ Codex (in worktree C:/tmp/storytellers-m026-closure/):
 
 You (anywhere):
   $ dirf state list
-  storytellers-a1b2c3d4   last_seen 14:30   storytellers
-  $ dirf state read-handoff --slug storytellers-a1b2c3d4
+  myproject-a1b2c3d4   last_seen 14:30   myproject
+  $ dirf state read-handoff --slug myproject-a1b2c3d4
   ... same canonical handoff Codex just wrote ...
 ```
 
@@ -348,8 +348,8 @@ with a sub-condition:
 
 | Condition | Resolution |
 |---|---|
-| Registry has entry; local `.dirf/` exists; local `HANDOFF.md` mtime **older than or equal to** store's (or absent) | **Registry wins.** Do not migrate. Log clearly: *"project storytellers-a1b2c3d4 already registered; local .dirf/ is orphaned. Review and remove it, or run `dirf state migrate-cleanup`."* Never delete the local files on a guess. |
-| Registry has entry; local `.dirf/` exists; local `HANDOFF.md` mtime **newer than** the store's | **Never auto-overwrite.** Surface it (see below); the user must run `dirf state import-handoff` to promote the local copy. This is the generalization of the storytellers drift and must require a human. |
+| Registry has entry; local `.dirf/` exists; local `HANDOFF.md` mtime **older than or equal to** store's (or absent) | **Registry wins.** Do not migrate. Log clearly: *"project myproject-a1b2c3d4 already registered; local .dirf/ is orphaned. Review and remove it, or run `dirf state migrate-cleanup`."* Never delete the local files on a guess. |
+| Registry has entry; local `.dirf/` exists; local `HANDOFF.md` mtime **newer than** the store's | **Never auto-overwrite.** Surface it (see below); the user must run `dirf state import-handoff` to promote the local copy. This is the generalization of the myproject drift and must require a human. |
 
 **Surfacing the newer-HANDOFF conflict:**
 
@@ -358,7 +358,7 @@ with a sub-condition:
 - **Non-interactive (no TTY — the common case inside an agent flow):**
   **hard-stop with a clear instructive error and nonzero exit.** Never silent
   skip, never silent overwrite. Example exit message:
-  *"Local HANDOFF.md is newer than canonical for storytellers-a1b2c3d4. Run
+  *"Local HANDOFF.md is newer than canonical for myproject-a1b2c3d4. Run
   \`dirf state import-handoff\` to promote it, or \`--force\` to skip this
   check. Refusing to proceed to avoid silent data loss."*
 
@@ -455,7 +455,7 @@ kit half-cut-over. Reframed as milestones, where the cutover is atomic.
 - **Slug derivation (M1, highest risk — the drift-killer).** Exhaustive
   cases, all asserting the *same slug*: git main tree; git worktree (both
   must match); path-separator variants (`/` vs `\`); case variants
-  (`E:/` vs `e:/`, `Storytellers` vs `storytellers`); trailing slash; relative
+  (`E:/` vs `e:/`, `MyProject` vs `myproject`); trailing slash; relative
   common-dir; symlinked repo path. Plus a negative case: two different repos
   produce different slugs.
 - **Migration (M4).** Seed a temp target with a `.dirf/` and assert: state
@@ -483,7 +483,7 @@ kit half-cut-over. Reframed as milestones, where the cutover is atomic.
 ## 11. Success criteria
 
 - From inside *any* worktree of a registered project, `dirf state read-handoff`
-  returns the same content as from the main tree. **The storytellers drift is
+  returns the same content as from the main tree. **The myproject drift is
   structurally impossible.**
 - Slug derivation is stable across path-separator, case, trailing-slash, and
   symlink variants for the same repo (the normalization contract holds).

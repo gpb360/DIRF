@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Move DIRF coordination state out of per-checkout `.dirf/` into a central store at `~/.dirf/projects/<slug>/`, so all agents and git worktrees read and write through one source of truth — killing the worktree drift that bit storytellers/m026.
+**Goal:** Move DIRF coordination state out of per-checkout `.dirf/` into a central store at `~/.dirf/projects/<slug>/`, so all agents and git worktrees read and write through one source of truth — killing the worktree drift that bit myproject/m026.
 
 **Architecture:** One new module (`src/state.js`) owns all canonical-state read/write. Project identity is derived from `git rev-parse --git-common-dir` (normalized deterministically) so every worktree of a repo collapses to the same store entry. The existing `dirf` commands are rewired to resolve a slug then read/write through `state.js`. A new `dirf state` command group and an optional stdio JSON-RPC MCP server are thin shells over the same core.
 
@@ -199,8 +199,8 @@ function gitInit(cwd) {
 }
 
 test("normalizeIdentityKey: forward + back slashes, trailing slash, case all collapse", () => {
-  const a = normalizeIdentityKey("E:\\\\s7s-projects\\\\Storytellers\\\\.git");
-  const b = normalizeIdentityKey("e:/s7s-projects/storytellers/.git/");
+  const a = normalizeIdentityKey("E:\\\\code\\\\MyProject\\\\.git");
+  const b = normalizeIdentityKey("c:/code/myproject/.git/");
   assert.equal(a, b, "Windows case + separator variants must produce the same key");
 });
 
@@ -222,7 +222,7 @@ test("identityKeyForPath: git common-dir for main tree", () => {
 });
 
 test("deriveSlug: basename + 8-hex, stable across worktrees", () => {
-  const main = mkdtempSync(join(tmpdir(), "storytellers-"));
+  const main = mkdtempSync(join(tmpdir(), "myproject-"));
   gitInit(main);
   writeFileSync(join(main, "file.txt"), "x");
   execFileSync("git", ["-C", main, "add", "."], { timeout: TIMEOUT, windowsHide: true });
@@ -234,7 +234,7 @@ test("deriveSlug: basename + 8-hex, stable across worktrees", () => {
   const slugMain = deriveSlug(main);
   const slugWt = deriveSlug(wt);
   assert.equal(slugMain, slugWt, "main tree and worktree must produce the SAME slug");
-  assert.match(slugMain, /^storytellers-[0-9a-f]{8}$/, "format: basename-<8 hex>");
+  assert.match(slugMain, /^myproject-[0-9a-f]{8}$/, "format: basename-<8 hex>");
 });
 
 test("deriveSlug: non-git folder uses normalized path", () => {

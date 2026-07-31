@@ -39,8 +39,8 @@ test("listProjects reads an existing registry without mutating it", async () => 
 });
 
 test("normalizeIdentityKey: forward + back slashes, trailing slash, case all collapse", () => {
-  const a = normalizeIdentityKey("E:\\\\s7s-projects\\\\Storytellers\\\\.git");
-  const b = normalizeIdentityKey("e:/s7s-projects/storytellers/.git/");
+  const a = normalizeIdentityKey("C:\\\\code\\\\MyProject\\\\.git");
+  const b = normalizeIdentityKey("c:/code/myproject/.git/");
   assert.equal(a, b, "Windows case + separator variants must produce the same key");
 });
 
@@ -62,7 +62,7 @@ test("identityKeyForPath: git common-dir for main tree", () => {
 });
 
 test("deriveSlug: basename + 8-hex, stable across worktrees", () => {
-  const main = mkdtempSync(join(tmpdir(), "storytellers-"));
+  const main = mkdtempSync(join(tmpdir(), "myproject-"));
   gitInit(main);
   writeFileSync(join(main, "file.txt"), "x");
   execFileSync("git", ["-C", main, "add", "."], { timeout: TIMEOUT, windowsHide: true });
@@ -75,7 +75,7 @@ test("deriveSlug: basename + 8-hex, stable across worktrees", () => {
   const slugWt = deriveSlug(wt);
   assert.equal(slugMain, slugWt, "main tree and worktree must produce the SAME slug");
   // mkdtemp appends a random suffix to the basename; the byte-stable tail is the 8-hex hash.
-  assert.match(slugMain, /^storytellers-[a-z0-9]+-[0-9a-f]{8}$/, "format: basename-<8 hex>");
+  assert.match(slugMain, /^myproject-[a-z0-9]+-[0-9a-f]{8}$/, "format: basename-<8 hex>");
 });
 
 test("deriveSlug: non-git folder uses normalized path", () => {

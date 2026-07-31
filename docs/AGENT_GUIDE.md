@@ -25,7 +25,7 @@ If `dirf state which` works, you're set up. If not, the host hasn't installed
 the alias — fall back to the full path:
 
 ```bash
-node E:/s7s-projects/amf-dirf/src/cli.js state which
+node /path/to/amf-dirf/src/cli.js state which
 ```
 
 (Adjust the path to wherever amf-dirf lives on this machine.)
