@@ -20,7 +20,10 @@ for f in $(git diff --cached --name-only --diff-filter=ACM); do
 	case "$f" in
 	.githooks/*) continue ;;
 	esac
-	if git show ":$f" 2>/dev/null | grep -q '<claude-mem-context>'; then
+	# Anchored at line start: the injected block always opens at column 0,
+	# while prose that merely mentions the marker (README, this hook) has it
+	# inline. Without the anchor, documenting the guard trips the guard.
+	if git show ":$f" 2>/dev/null | grep -q '^<claude-mem-context>'; then
 		echo "pre-commit: $f contains a <claude-mem-context> block." >&2
 		echo "  This is generated per-machine content and must not be tracked." >&2
 		echo "  Remove the block, or point the tool at a gitignored file." >&2

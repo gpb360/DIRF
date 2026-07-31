@@ -361,6 +361,21 @@ no dependencies, no test runner to add. Prefer raw Node? `node --test`,
 `node scripts/smoke.js`, and `node src/cli.js validate` do the same thing.
 No CI — everything runs locally.
 
+## Commit hooks
+
+This repo ships a pre-commit guard in `.githooks/`. It keeps generated,
+machine-local content out of tracked files — chiefly the `<claude-mem-context>`
+blocks that memory tooling injects into `AGENTS.md`, which are noise for anyone
+without that tooling and have a habit of collecting unrelated session data.
+
+Git does not enable it automatically. Once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Bypass a specific commit with `git commit --no-verify`.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
