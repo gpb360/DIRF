@@ -73,12 +73,3 @@ Design and implementation history for the canonical-state work:
 
 - `docs/superpowers/specs/2026-07-25-dirf-canonical-state-design.md`
 - `docs/superpowers/plans/2026-07-25-dirf-canonical-state.md`
-
-
-<claude-mem-context>
-# Memory Context
-
-# [amf-dirf] recent context, 2026-07-23 11:23pm EDT
-
-No previous sessions found.
-</claude-mem-context>

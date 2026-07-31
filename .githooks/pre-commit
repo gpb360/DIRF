@@ -1,0 +1,49 @@
+#!/bin/sh
+# Reject generated, machine-local content in tracked files.
+#
+# AGENTS.md is the one file every agent host reads on entering this repo.
+# Tooling (claude-mem and friends) injects per-machine session context into
+# it, which is noise for anyone without that tooling and has previously
+# carried personal data toward a public repo. Generated blocks belong in
+# gitignored files, not tracked ones.
+#
+# Enable: git config core.hooksPath .githooks
+
+fail=0
+
+# 1. Generated memory-context blocks.
+#
+# Scans staged CONTENT, not the diff. The marker line usually already exists
+# in HEAD and only the block's contents get rewritten, so a diff-based check
+# sees the marker as unchanged context and misses it entirely.
+for f in $(git diff --cached --name-only --diff-filter=ACM); do
+	case "$f" in
+	.githooks/*) continue ;;
+	esac
+	if git show ":$f" 2>/dev/null | grep -q '<claude-mem-context>'; then
+		echo "pre-commit: $f contains a <claude-mem-context> block." >&2
+		echo "  This is generated per-machine content and must not be tracked." >&2
+		echo "  Remove the block, or point the tool at a gitignored file." >&2
+		fail=1
+	fi
+done
+
+# 2. Absolute paths that leak this machine's filesystem layout.
+#
+# Diff-based on purpose: the test suite has deliberate path fixtures
+# (C:/Users/example/..., /home/skills/...) that must not trip this. Matches
+# the actual leak signature only. This directory is excluded because the
+# rule's own pattern would otherwise match it.
+if git diff --cached -U0 --diff-filter=ACM -- . ':(exclude).githooks/' | grep -qiE '^\+.*s7s-projects'; then
+	echo "pre-commit: staged change adds an 's7s-projects' path." >&2
+	echo "  Use a placeholder (/path/to/...) instead of a machine-specific path." >&2
+	fail=1
+fi
+
+if [ "$fail" -ne 0 ]; then
+	echo "" >&2
+	echo "  Override with: git commit --no-verify" >&2
+	exit 1
+fi
+
+exit 0
