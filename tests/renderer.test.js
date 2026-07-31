@@ -57,8 +57,8 @@ test("kickoff prompt is embedded in both renders and stays host-agnostic", () =>
   assert.ok(prompt.includes('"demo" DIRF workflow'));
   assert.ok(prompt.includes("review a pull request"));
   assert.ok(prompt.includes("Repository: not recorded — ask which repository"), "prompt must tell outside models to ask for the repo");
-  const withRepo = kickoffPrompt({ ...workflow, repository: { name: "storytellers", remote: "https://example.test/org/storytellers.git" } });
-  assert.ok(withRepo.includes("Repository: https://example.test/org/storytellers.git (storytellers)"));
+  const withRepo = kickoffPrompt({ ...workflow, repository: { name: "myproject", remote: "https://example.test/org/myproject.git" } });
+  assert.ok(withRepo.includes("Repository: https://example.test/org/myproject.git (myproject)"));
   assert.ok(withRepo.includes("Clone or open it before starting"));
   assert.ok(prompt.includes("frontend-developer"));
   assert.ok(prompt.includes("Begin with phase 1: a"));
