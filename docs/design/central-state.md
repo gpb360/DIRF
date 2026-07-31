@@ -12,10 +12,14 @@
 >   nothing. Resolution recomputes the slug from `git rev-parse --git-common-dir`
 >   on every call instead of caching it in the checkout. Same guarantee, one
 >   fewer file to keep in sync — the design's pointer is arguably YAGNI.
-> - **Checkouts can still carry a vestigial `.dirf/`.** Post-migration it holds a
->   `schema_version: 1` `config.json` and an empty `attempts/`. Nothing reads it:
->   `loadProjectConfig` resolves to the store and rejects any schema other than
->   2. It is residue, not state. `dirf state migrate-cleanup` clears it.
+> - **Checkouts can still carry a leftover `.dirf/`.** Post-migration it holds a
+>   `schema_version: 1` `config.json` and an empty `attempts/`, neither of which
+>   is read — `loadProjectConfig` resolves to the store and rejects any schema
+>   other than 2. Note that `.dirf/` is *not* fully dead: `src/skills.js:314`
+>   still reads a per-project `.dirf/trusted-sources.json`, so the directory has
+>   a live role beyond this design. Removing the stale `config.json` and empty
+>   `attempts/` is manual; `dirf state migrate-cleanup` does **not** do it — that
+>   command only deletes `.dirf.migrating.<ts>/` backups left by migration.
 
 ## Problem
 
