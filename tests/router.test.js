@@ -57,9 +57,16 @@ test("redesign routes to ui-ux-review", () => {
   assert.equal(recommend("redesign the dashboard").playbook, "ui-ux-review");
 });
 
-test("visual mock comparison cannot route to landing-page", () => {
+test("visual mock comparison routes to end-to-end conformance", () => {
   const task = "Audit every screen and button against the design mock; record missing screens and CTAs without implementing fixes";
-  assert.equal(recommend(task).playbook, "ui-ux-review");
+  assert.equal(recommend(task).playbook, "visual-conformance");
+});
+
+test("visual conformance with fixes carries implementation and recapture phases", () => {
+  const workflow = recommend("Compare every screen to the design mock, restore missing screens and buttons, and fix every verified mismatch").workflow;
+  assert.ok(workflow.phases.includes("implement dependency-ordered issue-owned fixes"));
+  assert.ok(workflow.phases.includes("independently recapture and verify the complete matrix"));
+  assert.match(workflow.output, /implemented fixes/);
 });
 
 test("generic refactor routes to impeccable-polish", () => {
