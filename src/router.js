@@ -39,7 +39,7 @@ function contentTokens(pb) {
 }
 const IMPLEMENTATION_INTENT = /\b(add|build|create|fix|implement)\b/;
 const EXPLICIT_SECURITY_AUDIT = /\bsecurity audit\b/;
-const EXPLICIT_UI_REVIEW = /\b(ui\s*(?:\/|\s)\s*ux|visual acceptance|visual regression|frontend design|design(?: |-)?system review)\b/;
+const EXPLICIT_UI_REVIEW = /\b(ui\s*(?:\/|\s)\s*ux|visual acceptance|visual regression|visual comparison|design mock|missing screens?|frontend design|design(?: |-)?system review)\b/;
 
 export function collectRoutingFacts(projectRoot) {
   if (!projectRoot) return [];

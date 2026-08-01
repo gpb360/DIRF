@@ -114,7 +114,7 @@ test("buildFlow assembles an existing Selection without classifying again", () =
     label: "build a feature",
     steps: [{
       stage: "build", capability: "testing", skill: "tdd", type: "skill", reason: "Drive one behavior",
-      output: "", status: "installed", provider: "project", selection_reason: "best installed match (105) for testing", rejected_candidates: [],
+      output: "", status: "installed", provider: "project", path: "skills/tdd", selection_reason: "best installed match (105) for testing", rejected_candidates: [],
     }],
     gaps: [],
     branches: [],

@@ -57,6 +57,11 @@ test("redesign routes to ui-ux-review", () => {
   assert.equal(recommend("redesign the dashboard").playbook, "ui-ux-review");
 });
 
+test("visual mock comparison cannot route to landing-page", () => {
+  const task = "Audit every screen and button against the design mock; record missing screens and CTAs without implementing fixes";
+  assert.equal(recommend(task).playbook, "ui-ux-review");
+});
+
 test("generic refactor routes to impeccable-polish", () => {
   assert.equal(recommend("refactor the parser for clarity").playbook, "impeccable-polish");
 });
