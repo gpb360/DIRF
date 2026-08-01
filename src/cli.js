@@ -12,7 +12,7 @@
 //   dirf validate                                        validate registries + workflows
 //   dirf skills scan [--path DIR]                        scan host, print installed skills + resolved refs
 //   dirf validate|graph|run|render <folder>               operate an Eve-style folder DAG
-import { writeFileSync, readFileSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, statSync } from "node:fs";
 import { dirname, join, isAbsolute, resolve } from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import * as readline from "node:readline";
@@ -101,6 +101,7 @@ function castAgents(agents, hostAgents) {
 
 function buildPlan(name, task, path, reservePercent = 5, compaction = null, focusedOutput = true, routing = {}) {
   const { selection, skillFlow, discovered, hostAgents, facts } = assembleTaskRouting(task, path, routing);
+  skillFlow.steps = skillFlow.steps.map((step) => ({ ...step, instructions: readSkillInstructions(step.path) }));
   const agents = castAgents(enrichAgents(selection.agents), hostAgents).map((agent) => ({
     ...agent,
     skills: resolveAgentSkills(agent.name, agent.skills, [], discovered).filter((skill) => skill.status === "installed"),
@@ -120,6 +121,7 @@ function buildPlan(name, task, path, reservePercent = 5, compaction = null, focu
     matched_keywords: selection.matched_keywords,
     alternates: selection.alternates,
     repository: repositoryIdentity(path),
+    repository_context: repositoryContext(path),
     workflow: selection.workflow,
     routing_facts: facts,
     skill_flow: skillFlow,
@@ -141,6 +143,26 @@ function buildPlan(name, task, path, reservePercent = 5, compaction = null, focu
     compaction,
     focused_output: focusedOutput,
   };
+}
+
+function readSkillInstructions(path) {
+  if (!path) return "";
+  try {
+    if (statSync(path).isFile()) return readFileSync(path, "utf8");
+    for (const name of ["SKILL.md", "README.md", "skill.json"]) {
+      const candidate = join(path, name);
+      if (existsSync(candidate)) return readFileSync(candidate, "utf8");
+    }
+  } catch { /* unavailable skill source stays capability-only */ }
+  return "";
+}
+
+function repositoryContext(root) {
+  const candidates = [
+    "AGENTS.md", "CONTEXT.md", "docs/CONTEXT.md", "docs/context.md",
+    "docs/agents/domain/CONTEXT.md", ".gsd/STATE.md", ".planning/STATE.md",
+  ];
+  return candidates.filter((relative) => existsSync(join(root, relative)));
 }
 
 function portableReference(value) {

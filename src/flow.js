@@ -124,6 +124,7 @@ function selectCapability(requirement, selection, context, skillIndex) {
     output: requirement.output || "",
     status: "installed",
     provider: chosen.item.provider || "project",
+    path: chosen.item.path,
     selection_reason: `best installed match (${chosen.score}) for ${requirement.capability || requirement.stage}`,
     rejected_candidates: ranked.slice(1, 4).map(({ name, score }) => ({ name, score })),
   };

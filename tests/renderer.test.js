@@ -206,6 +206,30 @@ test("per-step output contract renders as a checkpoint", () => {
   assert.match(skillReadme, /outputs: \["a green test with the touched surface building clean"\]/);
 });
 
+test("rendered workflow preserves repository context and full skill instructions", () => {
+  const outDir = mkdtempSync(join(tmpdir(), "dirf-context-"));
+  const workflow = {
+    name: "audit", task: "compare screens", playbook: "ui-ux-review",
+    repository_context: ["AGENTS.md", ".gsd/STATE.md"],
+    workflow: { phases: ["audit"], output: "ledger", validation: "evidence", recovery: "stop" },
+    agents: [], baseline_skills: [], schema_version: 5,
+    skill_flow: { label: "audit", steps: [{
+      stage: "review", skill: "graphify", reason: "Map the repo", status: "installed",
+      instructions: "# Graphify\n\nRun the graph query before source browsing.\n",
+    }] },
+  };
+
+  buildInstructions(workflow, outDir);
+  const readme = readFileSync(join(outDir, "README.md"), "utf8");
+  const skillReadme = readFileSync(join(outDir, "skills", "01-graphify", "README.md"), "utf8");
+  const source = readFileSync(join(outDir, "skills", "01-graphify", "SOURCE.md"), "utf8");
+  assert.match(readme, /Repository context preflight/);
+  assert.match(readme, /`AGENTS\.md`/);
+  assert.match(skillReadme, /details: \["SOURCE\.md"\]/);
+  assert.match(skillReadme, /Read \[SOURCE\.md\]/);
+  assert.match(source, /Run the graph query before source browsing/);
+});
+
 test("buildHtml is self-contained and collapsible", () => {
   const workflow = {
     name: "demo", task: "build a landing page",
