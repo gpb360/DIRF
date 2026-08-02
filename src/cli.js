@@ -260,7 +260,7 @@ function cmdBuild(args) {
   const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction, args.focusedOutput !== false);
   const attempt = createAttempt(target, args.name);
   const planPath = savePlan(plan, attempt);
-  console.log(`Attempt saved: ${attempt.id}`);
+  if (!args.json) console.log(`Attempt saved: ${attempt.id}`);
   renderPlan(planPath, args.open, args.json);
   if (args.json) console.log(JSON.stringify({ attempt: publicAttemptForSlug(resolveProject(target).slug, attempt), workflow: planPath }, null, 2));
 }
