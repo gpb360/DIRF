@@ -23,6 +23,19 @@ test("dirf state list is empty for a fresh home", () => {
   assert.match(out, /no projects registered|^\s*$/i);
 });
 
+test("state and build JSON output is machine-readable", () => {
+  const home = freshHome();
+  const main = mkdtempSync(join(tmpdir(), "jsonproj-"));
+  execFileSync("git", ["init", "-q"], { cwd: main, timeout: TIMEOUT });
+  run(["setup", main], { DIRF_HOME: home }, main);
+  const projects = JSON.parse(run(["state", "list", "--json"], { DIRF_HOME: home }, main));
+  assert.equal(projects.length, 1);
+  const built = JSON.parse(run(["build", "json-contract", "test JSON output", "--path", main, "--json"], { DIRF_HOME: home }, main));
+  assert.equal(built.attempt.status, "planned");
+  const attempts = JSON.parse(run(["state", "list-attempts", "--path", main, "--json"], { DIRF_HOME: home }, main));
+  assert.equal(attempts[0].id, built.attempt.id);
+});
+
 test("dirf state which resolves a registered project from a worktree", () => {
   const home = freshHome();
   const main = mkdtempSync(join(tmpdir(), "whichproj-"));
