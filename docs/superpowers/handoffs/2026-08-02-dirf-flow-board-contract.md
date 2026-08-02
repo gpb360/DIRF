@@ -24,7 +24,7 @@ Contract implemented; Flow Board application built; final review complete.
 
 ## Validation
 
-- DIRF full suite: 156 passed, 1 skipped.
+- DIRF full suite: 157 passed, 1 skipped.
 - Focused lifecycle/worktree suite: 5 passed.
 - Flow Board `npm run typecheck`: passed.
 - Flow Board `npm run build`: passed.
