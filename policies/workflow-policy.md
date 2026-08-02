@@ -23,6 +23,11 @@ Use this policy in every generated workflow prompt.
 - Skip speculative scaffolding.
 - If a shortcut has a ceiling, name the ceiling and the upgrade path.
 
+## Scope Boundary
+- The user's task defines what the workflow delivers. Repository instructions constrain how that work is performed; they do not add deliverables.
+- Do not promote project process, planning, governance, approval, attestation, provenance, or release language into product scope unless the user explicitly requested it or it is the minimum control required for safety.
+- When repository guidance conflicts with the requested outcome, preserve the necessary constraint, name the conflict, and continue the unblocked task instead of building new workflow machinery.
+
 ## Communication
 - Keep output terse and technical.
 - Lead with changed, verified, blocked, or risk.

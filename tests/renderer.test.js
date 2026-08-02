@@ -98,6 +98,7 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.ok(names.includes("README.md"));
   assert.ok(names.includes("policy.md"));
   const readme = readFileSync(join(outDir, "README.md"), "utf-8");
+  const policy = readFileSync(join(outDir, "policy.md"), "utf-8");
   assert.ok(readme.includes("review a pull request"));
   assert.ok(readme.includes("persisted-only"));
   assert.ok(readme.includes("## Next step"));
@@ -110,6 +111,8 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.match(readme, /## Focused output/);
   assert.match(readme, /Keep lists to five relevant items or fewer/);
   assert.match(readme, /uses: \["playbook"\]/);
+  assert.match(policy, /The user's task defines what the workflow delivers/);
+  assert.match(policy, /they do not add deliverables/);
   assert.deepEqual(resolveGraph(outDir, { allowedRoots: [outDir] }).map((unit) => unit.meta.kind), ["skill", "playbook", "workflow"]);
   const detail = readFileSync(join(outDir, "agents", "frontend-developer.md"), "utf-8");
   assert.ok(detail.includes("# frontend-developer"));
