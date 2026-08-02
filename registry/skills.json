@@ -439,6 +439,21 @@
       "capabilities": [
         "remotion migration"
       ]
+    },
+    {
+      "name": "electron",
+      "category": "desktop",
+      "applies_to": [
+        "frontend-developer",
+        "backend-architect",
+        "rapid-prototyper"
+      ],
+      "summary": "Electron main, renderer, preload, IPC, BrowserWindow, packaging, and security practices",
+      "capabilities": [
+        "electron desktop",
+        "electron ipc",
+        "electron security"
+      ]
     }
   ]
 }

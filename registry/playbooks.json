@@ -218,14 +218,46 @@
       "label": "idea → ship (build a feature)",
       "steps": [
         {
-          "stage": "sharpen",
-          "reason": "Resolve the decision tree before building.",
-          "capability": "plan interview"
+          "stage": "discover",
+          "reason": "Resolve load-bearing decisions before planning.",
+          "capability": "stateful discovery",
+          "output": "every open question either has a recorded answer or is explicitly deferred with the blocker named"
+        },
+        {
+          "stage": "model",
+          "reason": "Make domain and governance terminology explicit.",
+          "branch": "multi-session",
+          "capability": "domain modeling"
+        },
+        {
+          "stage": "research",
+          "reason": "Investigate decisions that require primary-source evidence.",
+          "branch": "research",
+          "capability": "primary source research"
+        },
+        {
+          "stage": "specify",
+          "reason": "Synthesize approved decisions for a multi-session build.",
+          "branch": "multi-session",
+          "capability": "specification synthesis"
+        },
+        {
+          "stage": "slice",
+          "reason": "Create dependency-aware tracer-bullet tickets for a multi-session build.",
+          "branch": "multi-session",
+          "capability": "dependency ticketing"
+        },
+        {
+          "stage": "handoff",
+          "reason": "Preserve the approved plan for fresh execution sessions.",
+          "branch": "multi-session",
+          "capability": "session handoff"
         },
         {
           "stage": "plan",
           "reason": "Reuse existing patterns and choose the smallest correct slice.",
-          "capability": "minimalism"
+          "capability": "minimalism",
+          "output": "one chosen slice that reuses existing code and names the single verification check"
         },
         {
           "stage": "design",
@@ -236,7 +268,8 @@
         {
           "stage": "build",
           "reason": "Drive each behavior through a red-green slice.",
-          "capability": "testing"
+          "capability": "testing",
+          "output": "a failing test made green by the smallest implementation, with the touched surface building clean"
         },
         {
           "stage": "build",
@@ -246,13 +279,14 @@
         },
         {
           "stage": "quality",
-          "reason": "Apply the product-quality gate.",
+          "reason": "Apply the final product-quality gate.",
           "capability": "product quality"
         },
         {
           "stage": "review",
-          "reason": "Review Standards and Spec before committing.",
-          "capability": "code review"
+          "reason": "Review standards and specification before committing.",
+          "capability": "code review",
+          "output": "review notes citing file:line for each finding, or an explicit all-clear with the standards checked"
         }
       ]
     }
@@ -340,6 +374,63 @@
       ]
     }
   },
+  "electron-app": {
+    "description": "Build, debug, or review a cross-platform Electron desktop application.",
+    "keywords": [
+      "electron",
+      "desktop app",
+      "browserwindow",
+      "ipc",
+      "preload",
+      "main process",
+      "renderer process"
+    ],
+    "agents": [
+      "rapid-prototyper",
+      "frontend-developer",
+      "backend-architect",
+      "test-engineer"
+    ],
+    "workflow": {
+      "phases": [
+        "map Electron boundaries",
+        "implement the smallest vertical slice",
+        "verify runtime behavior"
+      ],
+      "output": "working Electron change with process-boundary and runtime verification",
+      "validation": "run the narrowest typecheck, build, and runtime smoke check for the Electron surface",
+      "recovery": "if the process boundary or IPC contract is unclear, document the missing contract before editing"
+    },
+    "questions": [
+      "Which Electron surface is changing: main, preload, renderer, IPC, or packaging?",
+      "What user-visible behavior must work in the packaged or development app?"
+    ],
+    "skill_flow": {
+      "label": "Electron idea → working desktop slice",
+      "steps": [
+        {
+          "stage": "map",
+          "reason": "Ground the change in Electron's main, renderer, preload, and IPC boundaries.",
+          "capability": "electron desktop"
+        },
+        {
+          "stage": "build",
+          "reason": "Use safe context isolation and explicit IPC contracts.",
+          "capability": "electron ipc"
+        },
+        {
+          "stage": "security",
+          "reason": "Keep node integration disabled and review Electron trust boundaries.",
+          "capability": "electron security"
+        },
+        {
+          "stage": "verify",
+          "reason": "Prove the app builds and the changed runtime path works.",
+          "capability": "testing"
+        }
+      ]
+    }
+  },
   "research": {
     "description": "Research a topic, competitor, technology, or market and synthesize recommendations.",
     "keywords": [
@@ -376,13 +467,15 @@
       "steps": [
         {
           "stage": "research",
-          "reason": "Define the decision the research must support.",
-          "capability": "plan interview"
+          "reason": "Investigate the decision against primary sources and preserve citations.",
+          "capability": "primary source research",
+          "output": "one cited markdown note whose claims each trace to a primary source"
         },
         {
           "stage": "synthesize",
           "reason": "Stop at the smallest evidence-backed recommendation.",
-          "capability": "minimalism"
+          "capability": "minimalism",
+          "output": "a single recommendation with the smallest sufficient evidence, and an explicit stop reason"
         }
       ]
     }
