@@ -27,7 +27,7 @@ import { inspect } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation } from "./state.js";
+import { resolveProject, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, readSettings, writeSettings, linkAttemptWorktree, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree } from "./state.js";
 
 const LIFECYCLE = {
   clarify: "Use the best installed interview capability before implementation.",
@@ -234,14 +234,14 @@ function savePlan(plan, attempt) {
   return path;
 }
 
-function renderPlan(planPath, openBrowser = false) {
+function renderPlan(planPath, openBrowser = false, quiet = false) {
   const plan = JSON.parse(readFileSync(planPath, "utf-8"));
   const outDir = dirname(planPath);
   const written = buildInstructions(plan, outDir);
   const htmlPath = join(outDir, "instructions.html");
   writeFileSync(htmlPath, buildHtml(plan), "utf-8");
   written.push(htmlPath);
-  console.log(`Spec kit rendered: ${htmlPath}`);
+  if (!quiet) console.log(`Spec kit rendered: ${htmlPath}`);
   if (openBrowser) openBrowserAt(htmlPath);
   return htmlPath;
 }
@@ -261,7 +261,8 @@ function cmdBuild(args) {
   const attempt = createAttempt(target, args.name);
   const planPath = savePlan(plan, attempt);
   console.log(`Attempt saved: ${attempt.id}`);
-  renderPlan(planPath, args.open);
+  renderPlan(planPath, args.open, args.json);
+  if (args.json) console.log(JSON.stringify({ attempt: publicAttemptForSlug(resolveProject(target).slug, attempt), workflow: planPath }, null, 2));
 }
 
 function cmdPlan(args) {
@@ -310,8 +311,27 @@ function cmdRender(args) {
   renderPlan(planPath, args.open);
 }
 
+function publicAttemptForSlug(slug, attempt) {
+  return {
+    id: attempt.id,
+    name: attempt.name,
+    created_at: attempt.created_at,
+    updated_at: attempt.updated_at || attempt.created_at,
+    status: attempt.status || "historical",
+    tracked: Boolean(attempt.tracked),
+    current_phase: attempt.current_phase || null,
+    phases: attemptPhases(slug, attempt.id),
+    worker: attempt.worker || null,
+    blocker: attempt.blocker || null,
+    worktree_path: attempt.worktree_path || null,
+    next_action: attemptNextAction(slug, attempt.id),
+  };
+}
+
 function cmdList(args) {
   const attempts = listAttempts(projectRoot(args.path));
+  const slug = resolveProject(projectRoot(args.path)).slug;
+  if (args.json) { console.log(JSON.stringify(attempts.map((attempt) => publicAttemptForSlug(slug, attempt)), null, 2)); return; }
   if (!attempts.length) { console.log("(no attempts saved)"); return; }
   console.log("Saved attempts:");
   for (const attempt of attempts) console.log(`  - ${attempt.id}  ${attempt.name}`);
@@ -353,10 +373,16 @@ function cmdStatus(args) {
 
 function cmdResume(args) {
   const attempt = findAttempt(projectRoot(args.path), args.name);
+  const project = resolveProject(projectRoot(args.path));
   const readme = join(attempt.folder, "README.md");
   const workflow = existsSync(readme) ? readme : join(attempt.folder, "workflow.json");
   const handoff = join(attempt.folder, "HANDOFF.md");
   if (!existsSync(handoff)) throw new Error(`Attempt ${attempt.id} has no HANDOFF.md; rebuild it before resuming.`);
+  if (args.json) {
+    const prompt = `Resume DIRF attempt "${attempt.id}" for "${project?.slug || "project"}" at "${args.path || projectRoot(args.path)}".\nFirst load the canonical project handoff, then load this attempt's workflow and handoff.\nCanonical project state takes precedence if they conflict.\nContinue from the exact next action; do not restart completed work.`;
+    console.log(JSON.stringify({ attempt: publicAttemptForSlug(project.slug, attempt), workflow_path: workflow, attempt_handoff: readFileSync(handoff, "utf8"), project_handoff: readHandoff(project.slug), resume_prompt: prompt }, null, 2));
+    return;
+  }
   console.log(`Resume attempt: ${attempt.id}`);
   console.log(`Load workflow: ${workflow}`);
   console.log(`Load handoff: ${handoff}\n`);
@@ -469,8 +495,9 @@ function cmdStateWhich(args) {
   console.log(`${resolved.slug}  ->  ${storeProjectDir(resolved.slug)}`);
 }
 
-function cmdStateList() {
+function cmdStateList(args = {}) {
   const projects = listProjects();
+  if (args.json) { console.log(JSON.stringify(projects, null, 2)); return; }
   if (!projects.length) { console.log("(no projects registered)"); return; }
   console.log("Registered projects:");
   for (const p of projects) console.log(`  ${p.slug}   last_seen ${p.last_seen}   ${p.name}`);
@@ -508,6 +535,7 @@ function cmdStateWriteHandoff(args) {
 function cmdStateListAttempts(args) {
   const slug = resolveStateSlug(args);
   const attempts = listAttemptsState(slug);
+  if (args.json) { console.log(JSON.stringify(attempts.map((attempt) => publicAttemptForSlug(slug, attempt)), null, 2)); return; }
   if (!attempts.length) { console.log("(no attempts saved)"); return; }
   console.log("Saved attempts:");
   for (const a of attempts) console.log(`  - ${a.id}  ${a.name}`);
@@ -518,10 +546,46 @@ function cmdStateGetAttempt(args) {
   const id = args._[0];
   if (!id) { console.error("usage: dirf state get-attempt <id> [--path DIR|--slug S]"); process.exitCode = 2; return; }
   const a = getAttemptState(slug, id);
+  if (args.json) { console.log(JSON.stringify(publicAttemptForSlug(slug, a), null, 2)); return; }
   console.log(`id: ${a.id}`);
   console.log(`name: ${a.name}`);
   console.log(`created_at: ${a.created_at}`);
   console.log(`folder: ${a.folder}`);
+}
+
+function cmdAttempt(args) {
+  const slug = resolveStateSlug(args);
+  const action = args._[0];
+  const id = args._[1];
+  if (!action || !id) throw new Error("usage: dirf attempt <start-tracking|start|assign|advance|block|reopen|complete|link> <id> [options]");
+  let result;
+  if (action === "start-tracking") result = startTrackingAttempt(slug, id);
+  else if (action === "link") result = linkAttemptWorktree(slug, id, args.worktree);
+  else result = updateAttemptLifecycle(slug, id, action, { worker: args.worker, reason: args.reason || args._[2], confirm: args.confirm });
+  console.log(args.json ? JSON.stringify(publicAttemptForSlug(slug, result), null, 2) : `Updated ${result.id}: ${result.status}`);
+}
+
+function cmdSettings(args) {
+  if (args._[0] === "get") { console.log(JSON.stringify(readSettings(), null, 2)); return; }
+  if (args._[0] !== "set") throw new Error("usage: dirf settings <get|set> [options]");
+  const patch = {};
+  if (args.staleDays !== undefined) patch.stale_worktree_days = args.staleDays;
+  if (args.archiveReminderDays !== undefined) patch.archive_reminder_days = args.archiveReminderDays;
+  if (args.dirfCliPath !== undefined) patch.dirf_cli_path = args.dirfCliPath;
+  console.log(JSON.stringify(writeSettings(patch), null, 2));
+}
+
+function cmdWorktree(args) {
+  const slug = resolveStateSlug(args);
+  const action = args._[0];
+  const path = args.worktree || args._[1];
+  let result;
+  if (action === "list") result = inspectProjectWorktrees(slug);
+  else if (action === "archive") result = archiveWorktree(slug, path);
+  else if (action === "remind") result = remindArchivedWorktree(slug, path);
+  else if (action === "remove") result = removeArchivedWorktree(slug, path, { approved: args.approved });
+  else throw new Error("usage: dirf worktree <list|archive|remind|remove> [path]");
+  console.log(JSON.stringify(result, null, 2));
 }
 
 function cmdStateImportHandoff(args) {
@@ -613,6 +677,15 @@ function parse(argv) {
     if (a === "--project") { out.project = true; continue; }
     if (a === "--slug") { out.slug = rest[++i]; continue; }
     if (a === "--attempt") { out.attempt = rest[++i]; continue; }
+    if (a === "--worker") { out.worker = rest[++i]; continue; }
+    if (a === "--reason") { out.reason = rest[++i]; continue; }
+    if (a === "--worktree") { out.worktree = rest[++i]; continue; }
+    if (a === "--stale-days") { out.staleDays = Number(rest[++i]); continue; }
+    if (a === "--archive-reminder-days") { out.archiveReminderDays = Number(rest[++i]); continue; }
+    if (a === "--dirf-cli") { out.dirfCliPath = rest[++i]; continue; }
+    if (a === "--confirm") { out.confirm = true; continue; }
+    if (a === "--approved") { out.approved = true; continue; }
+    if (a === "--json") { out.json = true; continue; }
     if (a === "--research") { out.research = true; continue; }
     if (a === "--no-focused-output") { out.focusedOutput = false; continue; }
     if (a === "--help" || a === "-h") { out.help = true; continue; }
@@ -635,6 +708,9 @@ Usage:
   dirf list [--path DIR]                               list saved attempts
   dirf status [--path DIR]                             show project and repository state
   dirf resume <name-or-id> [--path DIR]                load the workflow handoff
+  dirf attempt <action> <id> [--path DIR]              update lifecycle state
+  dirf worktree <list|archive|remind|remove> [path]   inspect or clean worktrees
+  dirf settings <get|set>                              read or update cleanup settings
   dirf migrate [<name>]                                remove runtime paths from saved snapshots
   dirf validate                                        validate registries
   dirf skills scan [--path DIR]                        show installed skills
@@ -782,7 +858,7 @@ function main() {
     const sub = args._[0];
     const subArgs = { ...args, _: args._.slice(1) };
     if (sub === "which") cmdStateWhich(subArgs);
-    else if (sub === "list") cmdStateList();
+    else if (sub === "list") cmdStateList(subArgs);
     else if (sub === "register") cmdStateRegister(subArgs);
     else if (sub === "read-handoff") cmdStateReadHandoff(subArgs);
     else if (sub === "write-handoff") cmdStateWriteHandoff(subArgs);
@@ -811,6 +887,9 @@ function main() {
       cmdNoticeAppend(args, text);
     }
   }
+  else if (cmd === "attempt") cmdAttempt(args);
+  else if (cmd === "settings") cmdSettings(args);
+  else if (cmd === "worktree") cmdWorktree(args);
   else { console.error(`unknown command: ${cmd}\n\n${HELP}`); process.exit(2); }
 }
 

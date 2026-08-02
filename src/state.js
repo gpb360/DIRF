@@ -226,7 +226,20 @@ export function createAttemptInStore(slug, name, now = new Date()) {
     catch (error) { if (error.code !== "EEXIST") throw error; }
   }
   const relativePath = portable(join("attempts", id));
-  const attempt = { schema_version: 1, id, name, relativePath, created_at: now.toISOString() };
+  const timestamp = now.toISOString();
+  const attempt = {
+    schema_version: 2,
+    id,
+    name,
+    relativePath,
+    created_at: timestamp,
+    status: "planned",
+    current_phase: null,
+    worker: null,
+    blocker: null,
+    updated_at: timestamp,
+    worktree_path: null,
+  };
   atomicWrite(join(folder, "attempt.json"), JSON.stringify(attempt, null, 2) + "\n");
   return { ...attempt, folder };
 }
@@ -238,7 +251,8 @@ export function listAttempts(slug) {
     const folder = join(base, entry.name);
     const metadata = join(folder, "attempt.json");
     if (!existsSync(metadata)) return [];
-    return [{ ...JSON.parse(readFileSync(metadata, "utf8")), folder }];
+    const attempt = JSON.parse(readFileSync(metadata, "utf8"));
+    return [{ ...attempt, tracked: attempt.schema_version >= 2 && Boolean(attempt.status), status: attempt.status || "historical", folder }];
   });
 }
 
@@ -250,6 +264,236 @@ export function getAttempt(slug, idOrName) {
   const matches = attempts.filter((a) => slugifyName(a.name) === wanted);
   if (!matches.length) throw new Error(`No DIRF attempt named ${JSON.stringify(idOrName)} for project ${slug}`);
   return matches.at(-1);
+}
+
+function attemptMetadataPath(slug, id) {
+  return join(storeAttemptDir(slug, id), "attempt.json");
+}
+
+function writeAttempt(slug, attempt) {
+  const stored = { ...attempt };
+  delete stored.folder;
+  delete stored.tracked;
+  atomicWrite(attemptMetadataPath(slug, stored.id), JSON.stringify(stored, null, 2) + "\n");
+  return getAttempt(slug, stored.id);
+}
+
+export function attemptPhases(slug, idOrName) {
+  const attempt = getAttempt(slug, idOrName);
+  const workflowPath = join(attempt.folder, "workflow.json");
+  if (!existsSync(workflowPath)) return [];
+  const workflow = JSON.parse(readFileSync(workflowPath, "utf8"));
+  return Array.isArray(workflow.workflow?.phases) ? workflow.workflow.phases.filter((phase) => typeof phase === "string" && phase) : [];
+}
+
+export function readAttemptHandoff(slug, idOrName) {
+  const attempt = getAttempt(slug, idOrName);
+  const path = join(attempt.folder, "HANDOFF.md");
+  return existsSync(path) ? readFileSync(path, "utf8") : null;
+}
+
+export function attemptNextAction(slug, idOrName) {
+  const handoff = readAttemptHandoff(slug, idOrName);
+  if (!handoff) return null;
+  const match = handoff.match(/^## Exact next action\s*\r?\n+([\s\S]*?)(?=^## |\s*$)/m);
+  const value = match?.[1]?.trim();
+  return value && !/^_\(.*\)_$/.test(value) ? value : null;
+}
+
+export function startTrackingAttempt(slug, idOrName, now = new Date()) {
+  const attempt = getAttempt(slug, idOrName);
+  if (attempt.tracked) return attempt;
+  return writeAttempt(slug, {
+    ...attempt,
+    schema_version: 2,
+    status: "planned",
+    current_phase: null,
+    worker: null,
+    blocker: null,
+    updated_at: now.toISOString(),
+    worktree_path: null,
+  });
+}
+
+export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now = new Date()) {
+  let attempt = getAttempt(slug, idOrName);
+  if (!attempt.tracked) throw new Error(`Attempt ${attempt.id} is historical. Start tracking it first.`);
+  const phases = attemptPhases(slug, attempt.id);
+  const timestamp = now.toISOString();
+
+  if (action === "start") {
+    if (attempt.status !== "planned") throw new Error("Only a planned attempt can start");
+    if (!phases.length) throw new Error("Attempt workflow has no phases");
+    attempt = { ...attempt, status: "in_progress", current_phase: phases[0], blocker: null };
+  } else if (action === "assign") {
+    const worker = String(options.worker || "").trim();
+    if (!worker) throw new Error("worker is required");
+    attempt = { ...attempt, worker };
+  } else if (action === "advance") {
+    if (attempt.status !== "in_progress") throw new Error("Only an in-progress attempt can advance");
+    const index = phases.indexOf(attempt.current_phase);
+    if (index < 0 || index >= phases.length - 1) throw new Error("Attempt is already at its final phase");
+    attempt = { ...attempt, current_phase: phases[index + 1] };
+  } else if (action === "block") {
+    const blocker = String(options.reason || "").trim();
+    if (!blocker) throw new Error("blocker reason is required");
+    if (!new Set(["planned", "in_progress"]).has(attempt.status)) throw new Error("Only planned or in-progress attempts can be blocked");
+    attempt = { ...attempt, status: "blocked", blocker };
+  } else if (action === "reopen") {
+    if (!new Set(["blocked", "done"]).has(attempt.status)) throw new Error("Only blocked or done attempts can reopen");
+    attempt = { ...attempt, status: "in_progress", current_phase: attempt.current_phase || phases[0] || null, blocker: null, completed_at: null };
+  } else if (action === "complete") {
+    if (attempt.status !== "in_progress") throw new Error("Only an in-progress attempt can complete");
+    if (!phases.length || attempt.current_phase !== phases.at(-1)) throw new Error("Attempt must reach its final phase before completion");
+    if (options.confirm !== true) throw new Error("Confirm the final done-when checks before completion");
+    attempt = { ...attempt, status: "done", blocker: null, completed_at: timestamp };
+  } else {
+    throw new Error(`Unknown attempt lifecycle action ${JSON.stringify(action)}`);
+  }
+
+  if (options.worker && action === "start") attempt.worker = String(options.worker).trim() || null;
+  return writeAttempt(slug, { ...attempt, updated_at: timestamp });
+}
+
+export function linkAttemptWorktree(slug, idOrName, worktreePath, now = new Date()) {
+  const attempt = getAttempt(slug, idOrName);
+  if (!attempt.tracked) throw new Error(`Attempt ${attempt.id} is historical. Start tracking it first.`);
+  const resolvedPath = resolve(String(worktreePath || ""));
+  const match = inspectProjectWorktrees(slug, now).find((entry) => normalizeIdentityKey(entry.path) === normalizeIdentityKey(resolvedPath));
+  if (!match) throw new Error("worktree must belong to the attempt's registered project");
+  return writeAttempt(slug, { ...attempt, worktree_path: portable(resolvedPath), updated_at: now.toISOString() });
+}
+
+const DEFAULT_SETTINGS = Object.freeze({ schema_version: 1, dirf_cli_path: null, stale_worktree_days: 14, archive_reminder_days: 30 });
+
+export function readSettings() {
+  const path = join(storeHome(), "settings.json");
+  if (!existsSync(path)) return { ...DEFAULT_SETTINGS };
+  const settings = { ...DEFAULT_SETTINGS, ...JSON.parse(readFileSync(path, "utf8")) };
+  if (settings.schema_version !== 1) throw new Error(`Unsupported DIRF settings schema ${settings.schema_version}`);
+  return settings;
+}
+
+export function writeSettings(patch) {
+  const settings = { ...readSettings(), ...patch, schema_version: 1 };
+  for (const key of ["stale_worktree_days", "archive_reminder_days"]) {
+    if (!Number.isInteger(settings[key]) || settings[key] < 1) throw new Error(`${key} must be a positive integer`);
+  }
+  if (settings.dirf_cli_path !== null && (typeof settings.dirf_cli_path !== "string" || !settings.dirf_cli_path.trim())) {
+    throw new Error("dirf_cli_path must be null or a non-empty string");
+  }
+  atomicWrite(join(storeHome(), "settings.json"), JSON.stringify(settings, null, 2) + "\n");
+  return settings;
+}
+
+function readWorktreeArchive(slug) {
+  const path = join(storeProjectDir(slug), "worktrees.json");
+  if (!existsSync(path)) return { schema_version: 1, archived: [] };
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
+function writeWorktreeArchive(slug, state) {
+  atomicWrite(join(storeProjectDir(slug), "worktrees.json"), JSON.stringify(state, null, 2) + "\n");
+}
+
+function git(target, args, { allowFailure = false } = {}) {
+  try {
+    return execFileSync("git", ["-C", target, ...args], { encoding: "utf8", timeout: GIT_TIMEOUT, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }).trim();
+  } catch (error) {
+    if (allowFailure) return "";
+    throw new Error(error.stderr?.trim() || error.message);
+  }
+}
+
+function parseWorktreeList(output) {
+  const entries = [];
+  let current = null;
+  for (const line of output.split(/\r?\n/)) {
+    if (line.startsWith("worktree ")) {
+      if (current) entries.push(current);
+      current = { path: line.slice(9) };
+    } else if (current && line.startsWith("HEAD ")) current.head = line.slice(5);
+    else if (current && line.startsWith("branch ")) current.branch = line.slice(7).replace(/^refs\/heads\//, "");
+    else if (current && line === "bare") current.bare = true;
+    else if (current && line === "detached") current.detached = true;
+  }
+  if (current) entries.push(current);
+  return entries.filter((entry) => !entry.bare);
+}
+
+export function inspectProjectWorktrees(slug, now = new Date()) {
+  const project = getProject(slug);
+  if (!project) throw new Error(`Unknown DIRF project ${slug}`);
+  const settings = readSettings();
+  const attempts = listAttempts(slug);
+  const archives = readWorktreeArchive(slug).archived || [];
+  const mainKey = normalizeIdentityKey(project.main_path);
+  return parseWorktreeList(git(project.main_path, ["worktree", "list", "--porcelain"])).map((entry) => {
+    const path = resolve(entry.path);
+    const key = normalizeIdentityKey(path);
+    const attempt = attempts.find((item) => item.worktree_path && normalizeIdentityKey(item.worktree_path) === key) || null;
+    const porcelain = git(path, ["status", "--porcelain"], { allowFailure: true });
+    const dirty = Boolean(porcelain);
+    const conflicted = porcelain.split(/\r?\n/).some((line) => /^(DD|AU|UD|UA|DU|AA|UU)/.test(line));
+    const lastCommitRaw = git(path, ["log", "-1", "--format=%cI"], { allowFailure: true });
+    const lastCommitAt = lastCommitRaw || null;
+    const activity = Math.max(Date.parse(attempt?.updated_at || attempt?.created_at || 0) || 0, Date.parse(lastCommitAt || 0) || 0);
+    const stale = !attempt?.status || attempt.status !== "done" ? now.getTime() - activity >= settings.stale_worktree_days * 86_400_000 : false;
+    const archived = archives.find((item) => normalizeIdentityKey(item.path) === key) || null;
+    const archiveDue = archived ? now.getTime() >= Date.parse(archived.next_prompt_at) : false;
+    let cleanup_state = "active";
+    if (dirty || conflicted) cleanup_state = "needs_attention";
+    else if (archived && archiveDue) cleanup_state = "archive_due";
+    else if (archived) cleanup_state = "archived";
+    else if (!attempt) cleanup_state = "unlinked";
+    else if (attempt.status === "done") cleanup_state = "completed";
+    else if (stale) cleanup_state = "stale";
+    return {
+      path: portable(path), branch: entry.branch || null, head: entry.head || null,
+      is_main: key === mainKey, dirty, conflicted, last_commit_at: lastCommitAt,
+      attempt_id: attempt?.id || null, attempt_status: attempt?.status || null,
+      stale, archived, archive_due: archiveDue, cleanup_state,
+    };
+  });
+}
+
+export function archiveWorktree(slug, worktreePath, now = new Date()) {
+  const item = inspectProjectWorktrees(slug, now).find((entry) => normalizeIdentityKey(entry.path) === normalizeIdentityKey(worktreePath));
+  if (!item) throw new Error("worktree was not found");
+  if (item.is_main) throw new Error("the main project checkout cannot be archived");
+  if (item.dirty || item.conflicted) throw new Error("dirty or conflicted worktrees cannot be archived");
+  const settings = readSettings();
+  const archivedAt = now.toISOString();
+  const record = { path: item.path, attempt_id: item.attempt_id, branch: item.branch, head: item.head, archived_at: archivedAt, next_prompt_at: new Date(now.getTime() + settings.archive_reminder_days * 86_400_000).toISOString() };
+  const state = readWorktreeArchive(slug);
+  state.archived = [...(state.archived || []).filter((entry) => normalizeIdentityKey(entry.path) !== normalizeIdentityKey(item.path)), record];
+  writeWorktreeArchive(slug, state);
+  return record;
+}
+
+export function remindArchivedWorktree(slug, worktreePath, now = new Date()) {
+  const state = readWorktreeArchive(slug);
+  const record = state.archived?.find((entry) => normalizeIdentityKey(entry.path) === normalizeIdentityKey(worktreePath));
+  if (!record) throw new Error("worktree is not archived");
+  record.next_prompt_at = new Date(now.getTime() + readSettings().archive_reminder_days * 86_400_000).toISOString();
+  writeWorktreeArchive(slug, state);
+  return record;
+}
+
+export function removeArchivedWorktree(slug, worktreePath, { approved = false } = {}, now = new Date()) {
+  if (!approved) throw new Error("explicit approval is required to remove a worktree");
+  const item = inspectProjectWorktrees(slug, now).find((entry) => normalizeIdentityKey(entry.path) === normalizeIdentityKey(worktreePath));
+  if (!item?.archived) throw new Error("worktree is not archived");
+  if (!item.archive_due) throw new Error("worktree archive reminder is not due");
+  if (item.is_main || item.dirty || item.conflicted) throw new Error("worktree is not safe to remove");
+  if (item.head !== item.archived.head) throw new Error("worktree HEAD changed after archive");
+  const project = getProject(slug);
+  git(project.main_path, ["worktree", "remove", item.path]);
+  git(project.main_path, ["worktree", "prune"]);
+  const state = readWorktreeArchive(slug);
+  state.archived = (state.archived || []).filter((entry) => normalizeIdentityKey(entry.path) !== normalizeIdentityKey(item.path));
+  writeWorktreeArchive(slug, state);
+  return { removed: item.path, branch_preserved: item.branch };
 }
 
 export function readHandoff(slug) {
