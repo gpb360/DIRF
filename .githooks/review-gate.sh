@@ -13,8 +13,12 @@
 #
 # Tune: git config dirf.reviewThreshold 9
 #
-# Sourced by pre-merge-commit (clean merges) and pre-commit (merges that had
+# Called by pre-merge-commit (clean merges) and pre-commit (merges that had
 # conflicts). Exits nonzero if any incoming head is unreviewed or below bar.
+#
+# Scope: this certifies the incoming head only. It says nothing about a
+# conflict resolution, which is written after that commit exists. See the
+# limits list in pre-merge-commit for the paths not covered at all.
 
 # Ignore SIGPIPE. If our diagnostics are piped somewhere that stops reading
 # (`git merge 2>&1 | head`), a write to the closed pipe would otherwise kill
@@ -27,20 +31,12 @@ threshold=$(git config --int dirf.reviewThreshold 2>/dev/null) || threshold=""
 [ -n "$threshold" ] || threshold=9
 
 fail=0
-
-# No arguments means the caller could not work out what is being merged. That
-# is a broken gate, not an approved merge, and it must not fall through to the
-# exit 0 below. Guarded here rather than at each call site so every caller
-# inherits it.
-if [ "$#" -eq 0 ]; then
-	echo "review-gate: called with no commits to check; refusing." >&2
-	echo "  The caller could not determine the incoming head. This is a bug" >&2
-	echo "  in the hook, not in your merge." >&2
-	exit 1
-fi
+checked=0
 
 for head in "$@"; do
 	[ -n "$head" ] || continue
+
+	checked=$((checked + 1))
 
 	# An unresolvable head is an error, not an approval. Skipping it silently
 	# would treat a missing object (shallow clone, stale MERGE_HEAD line,
@@ -89,6 +85,18 @@ for head in "$@"; do
 
 	echo "review-gate: $short reviewed at $score/$threshold+. ok"
 done
+
+# Nothing was actually examined. Counted rather than testing "$#", because an
+# argument list of one empty string is $#=1 and would skip the loop body and
+# fall through to exit 0 -- a caller that quotes its expansion ("$heads")
+# would silently inherit an approval. Verdict is based on what was checked,
+# not on what was passed.
+if [ "$checked" -eq 0 ]; then
+	echo "review-gate: no commits to check; refusing." >&2
+	echo "  The caller could not determine the incoming head. This is a bug" >&2
+	echo "  in the hook, not in your merge." >&2
+	exit 1
+fi
 
 if [ "$fail" -ne 0 ]; then
 	echo "" >&2

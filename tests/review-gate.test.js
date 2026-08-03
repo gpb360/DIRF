@@ -173,6 +173,15 @@ test("the checker refuses when called with no commits", () => {
   assert.match(out, /no commits to check/);
 });
 
+// A guard on "$#" alone would pass here: one empty string is $#=1, skips the
+// loop body, and falls through to exit 0. Any caller that quoted its expansion
+// would inherit a silent approval.
+test("the checker refuses an argument list of empty strings", () => {
+  const { code, out } = checker(gated(), "", "");
+  assert.notEqual(code, 0, "nothing was examined, so nothing was approved");
+  assert.match(out, /no commits to check/);
+});
+
 // Regression: an unresolvable head used to be skipped via `|| continue`,
 // which treated a missing object as reviewed.
 test("the checker refuses a head it cannot resolve", () => {
@@ -188,15 +197,30 @@ test("an empty MERGE_HEAD refuses instead of committing silently", () => {
   git(root, "add", "a.txt");
   truncateSync(join(root, ".git", "MERGE_HEAD"), 0);
 
-  const { code } = tryGit(root, "commit", "-m", "merge");
+  const { code, out } = tryGit(root, "commit", "-m", "merge");
   assert.notEqual(code, 0, "a gate that cannot see the head must refuse");
+  // Asserting the reason, not just the exit code: any unrelated git-level
+  // failure would keep this green while the gate was dead.
+  assert.match(out, /no commits to check/);
 });
 
-test("the pre-existing pre-commit rules still fire alongside the gate", () => {
+test("pre-commit rule 1 (generated memory blocks) still fires alongside the gate", () => {
   const root = gated();
   writeFileSync(join(root, "AGENTS.md"), "<claude-mem-context>\nsession junk\n");
   git(root, "add", "AGENTS.md");
   const { code, out } = tryGit(root, "commit", "-m", "add agents");
   assert.notEqual(code, 0);
   assert.match(out, /claude-mem-context/);
+});
+
+test("pre-commit rule 2 (machine-specific paths) still fires alongside the gate", () => {
+  const root = gated();
+  // Assembled at runtime: writing the marker as a literal would make this
+  // file trip the very rule it is testing.
+  const marker = ["s7s", "projects"].join("-");
+  writeFileSync(join(root, "notes.md"), `see E:/${marker}/amf-dirf/src\n`);
+  git(root, "add", "notes.md");
+  const { code, out } = tryGit(root, "commit", "-m", "add notes");
+  assert.notEqual(code, 0);
+  assert.ok(out.includes(marker), "rule 2 must name the offending path");
 });

@@ -17,6 +17,13 @@
 #     commits onto the branch without ever creating a merge commit. Worth
 #     stating loudly, because requiring merge.ff=false above makes rebase the
 #     obvious friction-free way around this gate.
+#   * `git commit --amend` on an already-gated merge commit does not re-run
+#     the gate: pre-commit runs, but MERGE_HEAD is gone by then, so the review
+#     branch is skipped. The rewritten merge keeps both parents and the note
+#     that certified the tree before the amend.
+#   * A review certifies the incoming HEAD, not the merge result. Conflict
+#     resolutions are written after the reviewed commit exists and are never
+#     covered -- the gate checks what you merged, not what you resolved it to.
 #   * `--no-verify` bypasses it. This is a local guard, not an enforcement
 #     boundary; for something unbypassable the check belongs in CI.
 #   * Notes are not fetched by default. To see reviews recorded elsewhere:
