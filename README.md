@@ -393,10 +393,20 @@ fast-forward, so there is no hook to run and the gate is skipped entirely —
 the merge lands unreviewed and silently. The setting forces a real merge
 commit so the gate has something to refuse.
 
-Two other paths it does not cover: `git merge --squash` lands as an ordinary
-commit with no recorded parent to attribute a review to, and `--no-verify`
-bypasses everything. This is a local guard, not an enforcement boundary — for
-something unbypassable the check belongs in CI.
+Paths it does not cover, stated in full because a gate you believe is on is
+worse than none:
+
+- **`git rebase` and `git cherry-pick`** replay commits onto the branch without
+  creating a merge commit, so no hook runs and nothing is checked. Since
+  `merge.ff false` above adds friction to merging, rebase is the obvious way
+  around the gate — deliberately or by habit.
+- **`git merge --squash`** lands as an ordinary commit with no recorded parent
+  to attribute a review to.
+- **`--no-verify`** bypasses everything.
+
+This is a local guard, not an enforcement boundary. For something unbypassable
+the check belongs in CI, where the branch's own commits can be checked rather
+than just the merge parent.
 
 Notes are not fetched by default. To see reviews recorded on another machine:
 

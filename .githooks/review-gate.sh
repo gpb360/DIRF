@@ -28,10 +28,29 @@ threshold=$(git config --int dirf.reviewThreshold 2>/dev/null) || threshold=""
 
 fail=0
 
+# No arguments means the caller could not work out what is being merged. That
+# is a broken gate, not an approved merge, and it must not fall through to the
+# exit 0 below. Guarded here rather than at each call site so every caller
+# inherits it.
+if [ "$#" -eq 0 ]; then
+	echo "review-gate: called with no commits to check; refusing." >&2
+	echo "  The caller could not determine the incoming head. This is a bug" >&2
+	echo "  in the hook, not in your merge." >&2
+	exit 1
+fi
+
 for head in "$@"; do
 	[ -n "$head" ] || continue
 
-	sha=$(git rev-parse --verify --quiet "$head^{commit}") || continue
+	# An unresolvable head is an error, not an approval. Skipping it silently
+	# would treat a missing object (shallow clone, stale MERGE_HEAD line,
+	# spoofed GITHEAD_* entry) as reviewed.
+	if ! sha=$(git rev-parse --verify --quiet "$head^{commit}"); then
+		echo "review-gate: cannot resolve '$head' to a commit; refusing." >&2
+		fail=1
+		continue
+	fi
+
 	subject=$(git log -1 --format=%s "$sha")
 	short=$(git rev-parse --short "$sha")
 

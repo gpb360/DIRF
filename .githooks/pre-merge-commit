@@ -13,6 +13,10 @@
 #     straight past this check.
 #   * Nor on `git merge --squash`, which lands as an ordinary commit with no
 #     recorded parent to attribute a review to.
+#   * `git rebase` and `git cherry-pick` are entirely ungated: they replay
+#     commits onto the branch without ever creating a merge commit. Worth
+#     stating loudly, because requiring merge.ff=false above makes rebase the
+#     obvious friction-free way around this gate.
 #   * `--no-verify` bypasses it. This is a local guard, not an enforcement
 #     boundary; for something unbypassable the check belongs in CI.
 #   * Notes are not fetched by default. To see reviews recorded elsewhere:
