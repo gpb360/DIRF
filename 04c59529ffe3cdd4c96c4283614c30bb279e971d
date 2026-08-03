@@ -1,0 +1,12 @@
+score: 9/10
+
+PR Confidence Reviewer, round 3 of 3 (7 -> 7 -> 9).
+No S0/S1, no S2. Fixes verified by running the pre-fix script directly and
+probing for new fail-opens: flag-like args, whitespace args, corrupt notes
+ref, non-numeric threshold, spoofed GITHEAD_*, missing checker, and
+git merge --continue all fail closed.
+
+Remaining S3s, not blocking: the note is unauthenticated and self-writable
+(cheapest bypass, undocumented); a negative reviewThreshold bypasses like 0;
+a corrupt notes ref reports "no review recorded"; duplicated override hint on
+the conflicted path.
