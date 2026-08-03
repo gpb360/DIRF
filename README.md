@@ -368,10 +368,40 @@ machine-local content out of tracked files — chiefly the `<claude-mem-context>
 blocks that memory tooling injects into `AGENTS.md`, which are noise for anyone
 without that tooling and have a habit of collecting unrelated session data.
 
-Git does not enable it automatically. Once per clone:
+It also ships a review gate, which refuses to merge a branch unless the
+incoming tip carries a recorded review score of 9 or better. The score lives
+in a git note on the `reviews` ref, so it travels with the commit and needs
+no tracked file:
+
+```bash
+git notes --ref=reviews add -m 'score: 9' <sha>
+```
+
+Only the first `score:` line is read; everything after it is free-form
+rationale for whoever reads the note later. Change the bar with
+`git config dirf.reviewThreshold N`.
+
+Git does not enable any of this automatically. Once per clone:
 
 ```bash
 git config core.hooksPath .githooks
+git config merge.ff false      # required — see below
+```
+
+`merge.ff false` is not optional. Git creates no merge commit for a
+fast-forward, so there is no hook to run and the gate is skipped entirely —
+the merge lands unreviewed and silently. The setting forces a real merge
+commit so the gate has something to refuse.
+
+Two other paths it does not cover: `git merge --squash` lands as an ordinary
+commit with no recorded parent to attribute a review to, and `--no-verify`
+bypasses everything. This is a local guard, not an enforcement boundary — for
+something unbypassable the check belongs in CI.
+
+Notes are not fetched by default. To see reviews recorded on another machine:
+
+```bash
+git fetch origin 'refs/notes/reviews:refs/notes/reviews'
 ```
 
 Bypass a specific commit with `git commit --no-verify`.

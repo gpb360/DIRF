@@ -9,7 +9,24 @@
 #
 # Enable: git config core.hooksPath .githooks
 
+# Ignore SIGPIPE: a signal-killed hook reads to git as a pass, so output
+# landing in a closed pipe must not decide the verdict. See review-gate.sh.
+trap '' PIPE
+
 fail=0
+
+# 0. Review gate, for merges that git did NOT auto-commit.
+#
+# A merge with conflicts (or --no-commit) skips pre-merge-commit entirely and
+# is finished by `git commit`, which lands here. Without this branch the gate
+# has a hole exactly where review matters most: the merges someone had to
+# resolve by hand.
+merge_head="$(git rev-parse --git-dir)/MERGE_HEAD"
+if [ -f "$merge_head" ]; then
+	# Unquoted on purpose: newline-separated list splitting into arguments.
+	# shellcheck disable=SC2046
+	"$(dirname "$0")/review-gate.sh" $(cut -d' ' -f1 "$merge_head") || fail=1
+fi
 
 # 1. Generated memory-context blocks.
 #

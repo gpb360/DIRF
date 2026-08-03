@@ -1,0 +1,46 @@
+#!/bin/sh
+# Refuse a clean merge unless every incoming head carries a review score >= 9.
+# See .githooks/review-gate.sh for the record format and how to write one.
+#
+# Enable: git config core.hooksPath .githooks
+#
+# LIMITS, stated plainly because a gate you think is on is worse than none:
+#
+#   * Git does not run this hook on a fast-forward merge -- no merge commit is
+#     created, so there is nothing to hook. Pair it with:
+#         git config merge.ff false
+#     or merge with --no-ff. Without that, `git merge` onto an ancestor walks
+#     straight past this check.
+#   * Nor on `git merge --squash`, which lands as an ordinary commit with no
+#     recorded parent to attribute a review to.
+#   * `--no-verify` bypasses it. This is a local guard, not an enforcement
+#     boundary; for something unbypassable the check belongs in CI.
+#   * Notes are not fetched by default. To see reviews recorded elsewhere:
+#         git fetch origin 'refs/notes/reviews:refs/notes/reviews'
+
+# Ignore SIGPIPE: a signal-killed hook reads to git as a pass, so output
+# landing in a closed pipe must not decide the verdict. See review-gate.sh.
+trap '' PIPE
+
+dir=$(dirname "$0")
+
+# On a clean auto-merge git has NOT written MERGE_HEAD yet -- it exports one
+# GITHEAD_<sha>=<ref> per merged tip instead. (MERGE_HEAD only exists on the
+# conflicted path, where this hook never runs and pre-commit gates instead.)
+# Read both so the hook is correct whichever way git got here.
+heads=$(env | sed -n 's/^GITHEAD_\([0-9a-f]\{7,\}\)=.*/\1/p')
+
+merge_head="$(git rev-parse --git-dir)/MERGE_HEAD"
+if [ -z "$heads" ] && [ -f "$merge_head" ]; then
+	heads=$(cut -d' ' -f1 "$merge_head")
+fi
+
+if [ -z "$heads" ]; then
+	echo "pre-merge-commit: could not determine the incoming head; refusing." >&2
+	echo "  This is a bug in the hook, not in your merge. Override with --no-verify." >&2
+	exit 1
+fi
+
+# Unquoted on purpose: newline-separated list splitting into arguments.
+# shellcheck disable=SC2086
+exec "$dir/review-gate.sh" $heads
