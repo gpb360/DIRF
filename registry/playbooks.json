@@ -978,6 +978,111 @@
       ]
     }
   },
+  "visual-conformance": {
+    "description": "Compare a complete product surface against approved design references, restore missing UI, fix verified mismatches, and prove final parity.",
+    "keywords": [
+      "visual comparison",
+      "design mock",
+      "design reference",
+      "design conformance",
+      "screen parity",
+      "missing screen",
+      "missing button",
+      "missing cta",
+      "ui mismatch",
+      "visual mismatch",
+      "pixel perfect"
+    ],
+    "agents": [
+      "ui-designer",
+      "ux-researcher",
+      "frontend-developer",
+      "test-engineer",
+      "performance-benchmarker"
+    ],
+    "workflow": {
+      "phases": [
+        "derive the complete source-reachable screen, state, action, and viewport inventory",
+        "bind every inventory row to an exact approved reference or explicit reference blocker",
+        "capture and classify the first complete visual comparison",
+        "create durable issues and dependency-order every verified mismatch or missing surface",
+        "implement dependency-ordered issue-owned fixes",
+        "independently recapture and verify the complete matrix"
+      ],
+      "output": "complete visual evidence ledger, dependency-ordered issues, implemented fixes, and independently verified final design parity",
+      "validation": "prove inventory completeness, exact reference identity, desktop and mobile evidence, keyboard and assistive behavior, focused tests, production build, and a complete post-fix recapture",
+      "recovery": "if a reference, authenticated state, fixture, or environment is unavailable, mark the exact row blocked instead of guessing; continue every unblocked row and do not claim full parity"
+    },
+    "questions": [
+      "Where is the approved design source of truth?",
+      "Which live or local environment should provide runtime evidence?"
+    ],
+    "skill_flow": {
+      "label": "full visual conformance",
+      "steps": [
+        {
+          "stage": "discover",
+          "reason": "Map routes, owners, states, actions, and design references before browsing.",
+          "capability": "knowledge graph",
+          "output": "a source-derived inventory with no known route, nested surface, state, or action omitted"
+        },
+        {
+          "stage": "inspect",
+          "reason": "Capture deterministic desktop and mobile runtime evidence for every inventory row.",
+          "capability": "browser automation",
+          "output": "first-pass screenshot and DOM evidence for every unblocked row"
+        },
+        {
+          "stage": "review",
+          "reason": "Compare hierarchy, typography, spacing, composition, and interaction against exact references.",
+          "capability": "user experience design",
+          "output": "each row classified with concrete mismatch evidence"
+        },
+        {
+          "stage": "review",
+          "reason": "Verify semantics, focus, keyboard, touch targets, contrast, and assistive states.",
+          "capability": "accessibility",
+          "output": "accessibility findings included in the same issue-owned ledger"
+        },
+        {
+          "stage": "plan",
+          "reason": "Turn verified findings into non-overlapping dependency-ordered work.",
+          "capability": "dependency ticketing",
+          "output": "every fix traces to evidence and has acceptance criteria"
+        },
+        {
+          "stage": "build",
+          "reason": "Implement the approved issue-owned frontend fixes using existing project patterns.",
+          "capability": "frontend design",
+          "output": "all unblocked issue-owned visual fixes implemented"
+        },
+        {
+          "stage": "build",
+          "reason": "Keep each fix at the shared source-of-truth boundary with the smallest correct diff.",
+          "capability": "minimalism",
+          "output": "no duplicate or speculative UI architecture introduced"
+        },
+        {
+          "stage": "verify",
+          "reason": "Lock changed behavior and visual contracts with focused regression checks.",
+          "capability": "testing",
+          "output": "focused tests and production build pass"
+        },
+        {
+          "stage": "review",
+          "reason": "Review implementation independently for regressions and scope drift.",
+          "capability": "code review",
+          "output": "no actionable review finding remains"
+        },
+        {
+          "stage": "verify",
+          "reason": "Recapture every row and verify responsive runtime quality after all fixes land.",
+          "capability": "web quality",
+          "output": "complete post-fix matrix proves parity or names exact remaining blockers"
+        }
+      ]
+    }
+  },
   "impeccable-polish": {
     "description": "Final product-quality pass for professional fit, finish, consistency, and obvious rough edges.",
     "keywords": [

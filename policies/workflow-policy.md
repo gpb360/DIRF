@@ -10,7 +10,7 @@ Use this policy in every generated workflow prompt.
 - Keep Markdown authoritative, HTML regenerable, and execution evidence tied to the resolved folder graph.
 
 ## Runtime Portability
-- Operating instructions are host-neutral. The current host may be Claude, Codex, another agent, or a person.
+- Operating instructions are host-neutral. The current host may be Claude, Codex, Cursor, Zcode, T3Code, another agent, or a person.
 - Resolve repository, skill, and tool paths at runtime. Never persist absolute host paths as workflow identity.
 - DIRF coordination state is canonical and central (~/.dirf/projects/<slug>/). Worktrees resolve to the same store entry automatically via git-common-dir, so no per-worktree setup is needed and state cannot drift between checkouts. Scratch isolation stays local to the current execution.
 - Select scratch space inside the active workspace. Never silently fall back to another drive or the operating-system temp directory.
@@ -22,6 +22,11 @@ Use this policy in every generated workflow prompt.
 - Do not add dependencies unless the task clearly needs them.
 - Skip speculative scaffolding.
 - If a shortcut has a ceiling, name the ceiling and the upgrade path.
+
+## Scope Boundary
+- The user's task defines what the workflow delivers. Repository instructions constrain how that work is performed; they do not add deliverables.
+- Do not promote project process, planning, governance, approval, attestation, provenance, or release language into product scope unless the user explicitly requested it or it is the minimum control required for safety.
+- When repository guidance conflicts with the requested outcome, preserve the necessary constraint, name the conflict, and continue the unblocked task instead of building new workflow machinery.
 
 ## Communication
 - Keep output terse and technical.

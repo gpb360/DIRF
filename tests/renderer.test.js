@@ -98,6 +98,7 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.ok(names.includes("README.md"));
   assert.ok(names.includes("policy.md"));
   const readme = readFileSync(join(outDir, "README.md"), "utf-8");
+  const policy = readFileSync(join(outDir, "policy.md"), "utf-8");
   assert.ok(readme.includes("review a pull request"));
   assert.ok(readme.includes("persisted-only"));
   assert.ok(readme.includes("## Next step"));
@@ -110,6 +111,8 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.match(readme, /## Focused output/);
   assert.match(readme, /Keep lists to five relevant items or fewer/);
   assert.match(readme, /uses: \["playbook"\]/);
+  assert.match(policy, /The user's task defines what the workflow delivers/);
+  assert.match(policy, /they do not add deliverables/);
   assert.deepEqual(resolveGraph(outDir, { allowedRoots: [outDir] }).map((unit) => unit.meta.kind), ["skill", "playbook", "workflow"]);
   const detail = readFileSync(join(outDir, "agents", "frontend-developer.md"), "utf-8");
   assert.ok(detail.includes("# frontend-developer"));
@@ -204,6 +207,30 @@ test("per-step output contract renders as a checkpoint", () => {
   // Per-skill README surfaces output in its outputs frontmatter.
   const skillReadme = readFileSync(join(outDir, "skills", "01-tdd", "README.md"), "utf-8");
   assert.match(skillReadme, /outputs: \["a green test with the touched surface building clean"\]/);
+});
+
+test("rendered workflow preserves repository context and full skill instructions", () => {
+  const outDir = mkdtempSync(join(tmpdir(), "dirf-context-"));
+  const workflow = {
+    name: "audit", task: "compare screens", playbook: "ui-ux-review",
+    repository_context: ["AGENTS.md", ".gsd/STATE.md"],
+    workflow: { phases: ["audit"], output: "ledger", validation: "evidence", recovery: "stop" },
+    agents: [], baseline_skills: [], schema_version: 5,
+    skill_flow: { label: "audit", steps: [{
+      stage: "review", skill: "graphify", reason: "Map the repo", status: "installed",
+      instructions: "# Graphify\n\nRun the graph query before source browsing.\n",
+    }] },
+  };
+
+  buildInstructions(workflow, outDir);
+  const readme = readFileSync(join(outDir, "README.md"), "utf8");
+  const skillReadme = readFileSync(join(outDir, "skills", "01-graphify", "README.md"), "utf8");
+  const source = readFileSync(join(outDir, "skills", "01-graphify", "SOURCE.md"), "utf8");
+  assert.match(readme, /Repository context preflight/);
+  assert.match(readme, /`AGENTS\.md`/);
+  assert.match(skillReadme, /details: \["SOURCE\.md"\]/);
+  assert.match(skillReadme, /Read \[SOURCE\.md\]/);
+  assert.match(source, /Run the graph query before source browsing/);
 });
 
 test("buildHtml is self-contained and collapsible", () => {

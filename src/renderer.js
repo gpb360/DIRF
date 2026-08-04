@@ -286,6 +286,11 @@ export function buildInstructions(workflow, outDir) {
     wf.output || "_(no output contract declared)_",
     "",
   );
+  if (workflow.repository_context?.length) {
+    lines.push("## Repository context preflight", "", "Read these target-repository files before phase 1:", "");
+    for (const path of workflow.repository_context) lines.push(`- \`${path}\``);
+    lines.push("");
+  }
   if (wf.requirements?.length) {
     lines.push("## Required acceptance contract", "");
     for (const requirement of wf.requirements) lines.push(`- ${requirement}`);
@@ -378,14 +383,21 @@ export function buildInstructions(workflow, outDir) {
     const skillDir = join(outDir, "skills", step.folder);
     mkdirSync(skillDir, { recursive: true });
     const skillReadme = join(skillDir, "README.md");
+    const sourceName = step.instructions ? "SOURCE.md" : null;
     writeFileSync(skillReadme, [
       "---", `name: ${JSON.stringify(step.skill)}`, "kind: skill", `description: ${JSON.stringify(step.reason)}`,
-      "uses: []", "details: []", `inputs: ${JSON.stringify([step.stage])}`,
+      "uses: []", `details: ${JSON.stringify(sourceName ? [sourceName] : [])}`, `inputs: ${JSON.stringify([step.stage])}`,
       `outputs: ${JSON.stringify(step.output ? [step.output] : ["stage result"])}`,
       `capabilities: ${JSON.stringify(step.capability ? [step.capability] : [])}`, "---", "",
       `# ${step.skill}`, "", step.reason,
+      ...(sourceName ? ["", `Read [${sourceName}](${sourceName}) completely before using this skill.`] : []),
     ].join("\n"), "utf-8");
     written.push(skillReadme);
+    if (sourceName) {
+      const sourcePath = join(skillDir, sourceName);
+      writeFileSync(sourcePath, step.instructions, "utf-8");
+      written.push(sourcePath);
+    }
   }
 
   const policySrc = resolve(ROOT, workflow.policy || "policies/workflow-policy.md");

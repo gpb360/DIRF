@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // Regression for the flow-vs-create routing divergence.
 // `dirf flow` (no --path) called assembleTaskRouting(task, null) while
@@ -18,7 +19,7 @@ import { join } from "node:path";
 // and asserts flow-no-path agrees with flow---path. It does NOT assert which
 // playbook is chosen — only agreement — so it's robust to router changes.
 
-const CLI = join(process.cwd(), "src", "cli.js");
+const CLI = join(resolve(dirname(fileURLToPath(import.meta.url)), ".."), "src", "cli.js");
 const TIMEOUT = 30_000;
 
 function run(args, env, cwd) {
