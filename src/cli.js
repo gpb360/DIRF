@@ -23,7 +23,7 @@ import { collectRoutingFacts, loadPlaybooks, recommend } from "./router.js";
 import { discover, discoverAgents, enrichDiscovered, loadRegistry, loadTrustedSources, providerForPath, resolveAgentSkills } from "./skills.js";
 import { FOCUSED_OUTPUT_RULES, buildInstructions, buildHtml } from "./renderer.js";
 import { main as validateMain } from "./validate.js";
-import { inspect } from "./inspect.js";
+import { inspect, detectStackProfile } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
@@ -177,7 +177,13 @@ function assembleTaskRouting(task, path, options = {}) {
   if (errors.length) throw new Error(`Task Routing reconciliation failed:\n${errors.map((error) => `  - ${error}`).join("\n")}`);
   const targetRoot = path ? (isAbsolute(path) ? path : resolve(process.cwd(), path)) : null;
   const facts = collectRoutingFacts(targetRoot);
-  let selection = recommend(task, facts, playbooks);
+  // Profile the target's stack so the router can prefer playbooks that build
+  // software for the kind of app that's actually installed (web vs Electron vs
+  // node). Null targetRoot or a non-Node repo yields an "unknown" profile and
+  // routing degrades to today's keyword+facts behavior. Mirrors the
+  // collectRoutingFacts null-guard above.
+  const stack = detectStackProfile(targetRoot);
+  let selection = recommend(task, facts, playbooks, stack);
   if (options.playbook) {
     const playbook = playbooks[options.playbook];
     if (!playbook) throw new Error(`Unknown playbook ${options.playbook}`);
