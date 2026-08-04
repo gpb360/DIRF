@@ -28,6 +28,7 @@ import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
 import { resolveProject, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, readSettings, writeSettings, linkAttemptWorktree, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree } from "./state.js";
+import { updateProgressSection } from "./handoff-update.js";
 
 const LIFECYCLE = {
   clarify: "Use the best installed interview capability before implementation.",
@@ -668,6 +669,49 @@ function cmdNoticePromote(args, entryN) {
   console.log(`  ${text}`);
 }
 
+function cmdRecordProgress(args) {
+  const message = args._.join(" ") || "Progress made";
+  const target = projectRoot(args.path);
+
+  try {
+    const project = resolveProject(target);
+    if (!project) {
+      throw new Error(`DIRF is not configured for ${target}. Run: dirf setup "${target}"`);
+    }
+
+    // Read current handoff
+    const currentHandoff = readHandoff(project.slug);
+    if (currentHandoff === null) {
+      console.log("Note: No existing handoff - creating initial handoff with progress");
+    }
+
+    // Build update
+    const timestamp = args.timestamp || new Date().toISOString();
+    const updateData = {
+      message,
+      timestamp,
+      phase: args.phase || null,
+      next: args.next || "Continue work",
+      files: args.files ? args.files.split(",") : []
+    };
+
+    // Apply update
+    const updatedHandoff = updateProgressSection(currentHandoff || "# DIRF Handoff\n\n## Objective\n\n(Work in progress)\n", updateData);
+
+    // Write back atomically
+    writeHandoff(project.slug, updatedHandoff);
+
+    console.log("✅ Progress recorded:");
+    console.log(`   ${message}`);
+    if (updateData.phase) console.log(`   Phase: ${updateData.phase}`);
+    console.log(`   Next: ${updateData.next}`);
+
+  } catch (error) {
+    console.error(`Failed to record progress: ${error.message}`);
+    process.exitCode = 1;
+  }
+}
+
 function parse(argv) {
   const [cmd, ...rest] = argv;
   const out = { _: [] };
@@ -694,6 +738,10 @@ function parse(argv) {
     if (a === "--json") { out.json = true; continue; }
     if (a === "--research") { out.research = true; continue; }
     if (a === "--no-focused-output") { out.focusedOutput = false; continue; }
+    if (a === "--phase") { out.phase = rest[++i]; continue; }
+    if (a === "--next") { out.next = rest[++i]; continue; }
+    if (a === "--files") { out.files = rest[++i]; continue; }
+    if (a === "--timestamp") { out.timestamp = rest[++i]; continue; }
     if (a === "--help" || a === "-h") { out.help = true; continue; }
     out._.push(a);
   }
@@ -714,6 +762,8 @@ Usage:
   dirf list [--path DIR]                               list saved attempts
   dirf status [--path DIR]                             show project and repository state
   dirf resume <name-or-id> [--path DIR]                load the workflow handoff
+  dirf record-progress "<message>" [--path DIR] [--phase PHASE] [--next ACTION] [--files FILES]
+                                                      record workflow progress and update HANDOFF.md
   dirf attempt <action> <id> [--path DIR]              update lifecycle state
   dirf worktree <list|archive|remind|remove> [path]   inspect or clean worktrees
   dirf settings <get|set>                              read or update cleanup settings
@@ -848,6 +898,7 @@ function main() {
   else if (cmd === "list") cmdList(args);
   else if (cmd === "status") cmdStatus(args);
   else if (cmd === "resume") { args.name = args._[0]; cmdResume(args); }
+  else if (cmd === "record-progress") { cmdRecordProgress(args); }
   else if (cmd === "migrate") cmdMigrate(args._[0], args.path);
   else if (cmd === "validate") args._[0] ? cmdFolderValidate(args._[0]) : cmdValidate();
   else if (cmd === "graph") cmdGraph(args._[0]);
