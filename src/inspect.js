@@ -29,7 +29,16 @@ function readJson(path) {
 // Detection rules — each returns a list of findings: { category, item, path, detail? }
 // --------------------------------------------------------------------------- //
 
-function detectStack(root) {
+// Item names that mark a target as a web/frontend app (used to derive appKind
+// for stack-aware routing). Kept as a set of the human-readable signal names so
+// the profile derivation stays in one place.
+const WEB_SIGNALS = new Set([
+  "React", "Vue", "Next.js", "Angular", "Svelte", "Vite",
+  "Tailwind CSS", "TanStack Query", "Zustand", "Framer Motion",
+  "Clerk Auth", "Payload CMS",
+]);
+
+export function detectStack(root) {
   // Framework / tech stack from package.json (+ pnpm workspace recursion).
   const out = [];
   const collect = (pkgPath, label) => {
@@ -45,6 +54,12 @@ function detectStack(root) {
       ["zustand", "Zustand"], ["@clerk/clerk-react", "Clerk Auth"],
       ["@playwright/test", "Playwright"], ["playwright", "Playwright"],
       ["@payloadcms/db-postgres", "Payload CMS"],
+      // Electron runtime + its two common packagers. A desktop Electron app
+      // sets `electron` as a real (often dev) dependency; the builder/forge
+      // keys catch a hoisted-monorepo install where `electron` lives in a
+      // parent package. These are app-kind signals, not optimization advice.
+      ["electron", "Electron"], ["electron-builder", "Electron"],
+      ["electron-forge", "Electron"],
     ];
     for (const [key, name] of signals) {
       if (key in deps) out.push({ category: "stack", item: name, path: pkgPath, detail: deps[key] });
@@ -60,7 +75,34 @@ function detectStack(root) {
       if (isFile(pkgPath)) collect(pkgPath, sub);
     }
   }
+  // Conventional Electron app folder. A dir check is the in-module idiom (the
+  // sibling detect* helpers all work this way) and disambiguates the rare case
+  // where deps are hoisted out of the root package. Recorded as a finding only
+  // when no dependency signal already named Electron, so we never double-count.
+  if (isDir(join(root, "electron")) && !out.some((f) => f.item === "Electron")) {
+    out.push({ category: "stack", item: "Electron", path: "electron/" });
+  }
   return out;
+}
+
+// A flat stack profile for routing: which framework signals were detected, and
+// the derived "app kind" — electron > web > node > unknown. This is the shape
+// the router consumes; detectStack() above remains the raw findings source that
+// `dirf inspect` renders. Pure derivation, no new filesystem reads beyond the
+// detectStack it calls. Null/missing root => empty profile (routing degrades to
+// today's keyword-only behavior).
+export function detectStackProfile(root) {
+  if (!root || !isDir(root)) return { frameworks: [], appKind: "unknown" };
+  const findings = detectStack(root);
+  // de-dup item names (pnpm workspace recursion can repeat React/Vite across
+  // packages) while keeping the order of first detection for stable output.
+  const frameworks = [...new Set(findings.map((f) => f.item))];
+  const has = (name) => frameworks.includes(name);
+  let appKind = "unknown";
+  if (has("Electron")) appKind = "electron";
+  else if (frameworks.some((name) => WEB_SIGNALS.has(name))) appKind = "web";
+  else if (frameworks.length) appKind = "node"; // express/fastify/supabase/payload — backend runtime, not browser UI
+  return { frameworks, appKind };
 }
 
 function detectMemory(root) {

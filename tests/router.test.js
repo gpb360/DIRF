@@ -227,3 +227,70 @@ test("folderHash tracks authoritative README content", () => {
   writeFileSync(join(root, "demo", "README.md"), "second\n");
   assert.notEqual(folderHash(root), first);
 });
+
+// ─── Stack-aware routing ───────────────────────────────────────────────────
+// The regression that motivated this: a React/Vite web app task that mentions
+// "video" as a MODULE NAME was routed to video-campaign. "video" is a medium
+// noun here, not a production request. The detected stack + code-structure
+// intent must steer it to a software playbook instead.
+
+const WEB_STACK = { frameworks: ["React", "Vite", "Tailwind CSS", "TanStack Query", "Zustand", "Supabase"], appKind: "web" };
+const ELECTRON_STACK = { frameworks: ["Electron", "React"], appKind: "electron" };
+const NODE_STACK = { frameworks: ["Express"], appKind: "node" };
+
+test("the bug: a React web app task naming 'video' as a module routes to fullstack-feature, not video-campaign", () => {
+  // The exact shape of the reported misroute: gate/predicate/route/module intent
+  // + "video" as a module label, against a detected web stack.
+  const task = "Gate modules on content instead of route position so empty Video Audio Edit and Export are unreachable, shared predicate for the desktop rail";
+  const r = recommend(task, [], undefined, WEB_STACK);
+  assert.equal(r.playbook, "fullstack-feature", `expected fullstack-feature, got ${r.playbook}`);
+  assert.notEqual(r.playbook, "video-campaign");
+});
+
+test("medium-noun demotion is stack-agnostic: even with no stack profile, 'video' as a module name does not win video-campaign", () => {
+  // The demotion guard (Part 3b) fires without a stack too, so the fix holds
+  // for non-Node repos DIRF cannot profile.
+  const r = recommend("gate the video module behind a content predicate and route guard");
+  assert.notEqual(r.playbook, "video-campaign");
+});
+
+test("explicit video-production intent still wins video-campaign even in a detected web repo", () => {
+  // Regression guard against over-correction: a genuine campaign-video request
+  // must still route to video-campaign in a React repo, because multiple
+  // production keywords match AND the task has no code-structure intent.
+  const r = recommend("produce a launch campaign video with motion design and b-roll for youtube shorts", [], undefined, WEB_STACK);
+  assert.equal(r.playbook, "video-campaign");
+});
+
+test("electron-app requires an electron stack — a 'desktop rail' task in a web repo is NOT misrouted to electron-app", () => {
+  // The original workflow.json also listed electron-app as an alternate on the
+  // strength of "desktop". With a web stack detected, electron-app is not the
+  // software affinity winner.
+  const r = recommend("rework the desktop rail navigation for the workspace", [], undefined, WEB_STACK);
+  assert.notEqual(r.playbook, "electron-app");
+});
+
+test("electron task in an electron repo routes to electron-app", () => {
+  const r = recommend("fix the IPC handler in the main process that crashes the BrowserWindow on cold start", [], undefined, ELECTRON_STACK);
+  assert.equal(r.playbook, "electron-app");
+});
+
+test("no stack (null/undefined) leaves existing keyword routing intact", () => {
+  // Backward compatibility: callers that pass no stack get pre-change behavior.
+  assert.equal(recommend("build a landing page").playbook, "landing-page");
+  assert.equal(recommend("build a landing page", [], undefined, null).playbook, "landing-page");
+  assert.equal(recommend("build a landing page", [], undefined, undefined).playbook, "landing-page");
+  // A real video production request with no stack still routes correctly.
+  assert.equal(recommend("render a campaign video for youtube shorts").playbook, "video-campaign");
+});
+
+test("node stack boosts software playbooks for backend intent", () => {
+  const r = recommend("add a login endpoint with database persistence and tests", [], undefined, NODE_STACK);
+  assert.equal(r.playbook, "fullstack-feature");
+});
+
+test("audio as a module name does not win video-campaign for a code task", () => {
+  // Sibling medium noun: same shape of false match.
+  const r = recommend("extract the audio module reducer into its own hook with a typed store", [], undefined, WEB_STACK);
+  assert.notEqual(r.playbook, "video-campaign");
+});
