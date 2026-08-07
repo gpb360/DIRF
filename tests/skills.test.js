@@ -144,6 +144,18 @@ test("discover hides README.md fallback itself from disclosures", () => {
   assert.equal(idx["readme-skill"].invocation, "model");
 });
 
+test("discover indexes backticked /skill references from bodies", () => {
+  const root = makeRoot();
+  write(join(root, "skills", "grill-me"), "SKILL.md",
+    "---\nname: grill-me\ndescription: d\ndisable-model-invocation: true\n---\nRun a `/grilling` session, and mention `/domain-modeling` and `/grilling` again.\nCheck /tmp not a ref. https://x.test/a not a ref.");
+  write(join(root, "skills", "grilling"), "SKILL.md", "---\nname: grilling\ndescription: d\n---\nbody");
+  const idx = skills.discover(root);
+  // de-duplicated, sorted, backticked slash-commands only
+  assert.deepEqual(idx["grill-me"].references, ["domain-modeling", "grilling"]);
+  // no references in its own body → field absent entirely
+  assert.equal(idx["grilling"].references, undefined);
+});
+
 test("discoverAgents indexes project agent files but never the kit's bundled agents/", () => {
   const root = mkdtempSync(join(tmpdir(), "dirf-agents-"));
   mkdirSync(join(root, ".claude", "agents"), { recursive: true });

@@ -95,25 +95,38 @@ function parseFrontmatter(text) {
 }
 
 function readSkillFile(path) {
-  // Read a skill definition file. Returns [name, fieldsObj, lineCount].
+  // Read a skill definition file. Returns [name, fieldsObj, lineCount, body].
   let text;
   try {
     text = readFileSync(path, "utf-8");
   } catch {
-    return ["", {}, 0];
+    return ["", {}, 0, ""];
   }
   const lines = text.split(/\r?\n/).length;
   if (path.endsWith(".json")) {
     try {
       const data = JSON.parse(text);
-      if (data && typeof data === "object") return [String(data.name || basenameDir(path)), data, lines];
+      if (data && typeof data === "object") return [String(data.name || basenameDir(path)), data, lines, ""];
     } catch {
       /* fall through */
     }
-    return ["", {}, 0];
+    return ["", {}, 0, ""];
   }
   const fm = parseFrontmatter(text);
-  return [fm.name || basenameDir(path), fm, lines];
+  return [fm.name || basenameDir(path), fm, lines, text];
+}
+
+// Backticked /skill references are the ecosystem's de-facto dependency
+// mechanism ("Run a `/grilling` session."). Precise by construction: only
+// backtick-wrapped slash-commands count, so paths and prose never do. The
+// index records them so `skills scan` can resolve referenced-but-absent
+// skills — DIRF's agnostic promise extended from registries to bodies.
+function backtickSkillRefs(body) {
+  const refs = [];
+  const re = /`\/([a-z0-9][a-z0-9-]*)`/g;
+  let m;
+  while ((m = re.exec(body || ""))) refs.push(m[1]);
+  return [...new Set(refs)].sort();
 }
 
 // Tolerant boolean for frontmatter flags (yes/no/on/off/1/0/true/false — the
@@ -248,7 +261,7 @@ function walkFiles(dir, out = []) {
 }
 
 function indexOne(path, index) {
-  const [name, fm, lineCount] = readSkillFile(path);
+  const [name, fm, lineCount, body] = readSkillFile(path);
   if (!name) return;
   const desc = typeof fm === "object" ? fm.description || "" : "";
   // First found wins (SKILL.md priority order), but keep richer descriptions.
@@ -263,6 +276,7 @@ function indexOne(path, index) {
   // Absent flag ⇒ model-invoked (the default). DIRF only reads the skill's
   // own declaration; it never imposes one.
   const invocation = parseBool(typeof fm === "object" ? fm["disable-model-invocation"] : undefined) === true ? "user" : "model";
+  const references = backtickSkillRefs(body);
   index[name] = {
     name,
     path: folder,
@@ -272,6 +286,8 @@ function indexOne(path, index) {
     invocation,
     disclosures: collectDisclosures(folder, file),
     body_lines: lineCount,
+    // Only emitted when present — plain skills keep their historical shape.
+    ...(references.length ? { references } : {}),
   };
 }
 

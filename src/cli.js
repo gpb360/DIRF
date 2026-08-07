@@ -549,6 +549,14 @@ function cmdSkillsScan(args) {
   const discoveredList = Object.values(idx);
   const userInvoked = discoveredList.filter((skill) => skill.invocation === "user").length;
   console.log(`\nInvocation: ${discoveredList.length - userInvoked} model-invoked (agent-routable), ${userInvoked} user-invoked (human-only).`);
+  const referrers = discoveredList.filter((skill) => skill.references?.length);
+  if (referrers.length) {
+    console.log("\nSkill-to-skill references (backticked /commands in bodies):");
+    for (const skill of referrers) {
+      const resolved = skill.references.map((ref) => `${ref} (${idx[ref] ? "installed" : "referenced, not installed"})`).join(", ");
+      console.log(`  ${skill.name} → ${resolved}`);
+    }
+  }
 }
 
 function cmdExportPlaybooks() {
