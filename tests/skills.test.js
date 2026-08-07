@@ -106,6 +106,44 @@ test("bundledSkills exposes kit units with declared capabilities", () => {
   assert.equal(bundled["minimal-implementation"].provider, "dirf");
 });
 
+test("discover indexes invocation class from disable-model-invocation", () => {
+  const root = makeRoot();
+  write(join(root, "skills", "user-skill"), "SKILL.md",
+    "---\nname: user-skill\ndescription: A one-line summary for a person.\ndisable-model-invocation: true\n---\nRun a session.");
+  write(join(root, "skills", "model-skill"), "SKILL.md",
+    "---\nname: model-skill\ndescription: Use when the user mentions X or Y.\n---\nbody");
+  write(join(root, "skills", "yes-skill"), "SKILL.md",
+    "---\nname: yes-skill\ndescription: d\nuser-invocable: false\ndisable-model-invocation: yes\n---\nbody");
+  const idx = skills.discover(root);
+  assert.equal(idx["user-skill"].invocation, "user");
+  assert.equal(idx["model-skill"].invocation, "model");
+  // tolerant boolean: "yes" counts as true
+  assert.equal(idx["yes-skill"].invocation, "user");
+});
+
+test("discover indexes progressive-disclosure files and body size", () => {
+  const root = makeRoot();
+  write(join(root, "skills", "docs-skill"), "SKILL.md",
+    "---\nname: docs-skill\ndescription: d\n---\nbody");
+  write(join(root, "skills", "docs-skill"), "tests.md", "good tests\nbad tests");
+  write(join(root, "skills", "docs-skill"), "mocking.md", "mocking guidance");
+  mkdirSync(join(root, "skills", "docs-skill", "scripts"), { recursive: true });
+  writeFileSync(join(root, "skills", "docs-skill", "scripts", "run.sh"), "#!/bin/sh\n", "utf-8");
+  const idx = skills.discover(root);
+  assert.deepEqual(idx["docs-skill"].disclosures, ["mocking.md", "scripts/", "tests.md"]);
+  assert.ok(idx["docs-skill"].body_lines > 0);
+});
+
+test("discover hides README.md fallback itself from disclosures", () => {
+  const root = makeRoot();
+  write(join(root, "skills", "readme-skill"), "README.md",
+    "---\nname: readme-skill\ndescription: readme skill\n---\nbody");
+  write(join(root, "skills", "readme-skill"), "notes.md", "extra");
+  const idx = skills.discover(root);
+  assert.deepEqual(idx["readme-skill"].disclosures, ["notes.md"]);
+  assert.equal(idx["readme-skill"].invocation, "model");
+});
+
 test("discoverAgents indexes project agent files but never the kit's bundled agents/", () => {
   const root = mkdtempSync(join(tmpdir(), "dirf-agents-"));
   mkdirSync(join(root, ".claude", "agents"), { recursive: true });

@@ -543,8 +543,12 @@ function cmdSkillsScan(args) {
     const hit = idx[ref.name];
     const status = hit ? "installed" : "recommended (not installed)";
     const loc = hit ? ` -> ${hit.path}` : "";
-    console.log(`  ${ref.name.padEnd(24)} ${status}${loc}`);
+    const invocation = hit ? (hit.invocation === "user" ? " [user-invoked — human-only]" : " [model-invoked]") : "";
+    console.log(`  ${ref.name.padEnd(24)} ${status}${loc}${invocation}`);
   }
+  const discoveredList = Object.values(idx);
+  const userInvoked = discoveredList.filter((skill) => skill.invocation === "user").length;
+  console.log(`\nInvocation: ${discoveredList.length - userInvoked} model-invoked (agent-routable), ${userInvoked} user-invoked (human-only).`);
 }
 
 function cmdExportPlaybooks() {

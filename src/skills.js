@@ -95,24 +95,52 @@ function parseFrontmatter(text) {
 }
 
 function readSkillFile(path) {
-  // Read a skill definition file. Returns [name, fieldsObj].
+  // Read a skill definition file. Returns [name, fieldsObj, lineCount].
   let text;
   try {
     text = readFileSync(path, "utf-8");
   } catch {
-    return ["", {}];
+    return ["", {}, 0];
   }
+  const lines = text.split(/\r?\n/).length;
   if (path.endsWith(".json")) {
     try {
       const data = JSON.parse(text);
-      if (data && typeof data === "object") return [String(data.name || basenameDir(path)), data];
+      if (data && typeof data === "object") return [String(data.name || basenameDir(path)), data, lines];
     } catch {
       /* fall through */
     }
-    return ["", {}];
+    return ["", {}, 0];
   }
   const fm = parseFrontmatter(text);
-  return [fm.name || basenameDir(path), fm];
+  return [fm.name || basenameDir(path), fm, lines];
+}
+
+// Tolerant boolean for frontmatter flags (yes/no/on/off/1/0/true/false — the
+// Claude Code convention). Returns undefined when absent or unparseable.
+function parseBool(value) {
+  if (value === undefined || value === null) return undefined;
+  const v = String(value).trim().toLowerCase();
+  if (["yes", "on", "1", "true"].includes(v)) return true;
+  if (["no", "off", "0", "false"].includes(v)) return false;
+  return undefined;
+}
+
+function collectDisclosures(folder, indexFile) {
+  // Progressive disclosure: co-located files one level deep next to a skill's
+  // index file (tests.md, mocking.md, scripts/, templates/) are loaded on
+  // demand. Index them so rendered sets can point at them lazily — unread
+  // files cost zero tokens. Excludes the index file itself.
+  let entries;
+  try {
+    entries = readdirSync(folder, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((entry) => entry.name !== indexFile)
+    .map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name))
+    .sort();
 }
 
 function basenameDir(path) {
@@ -220,15 +248,31 @@ function walkFiles(dir, out = []) {
 }
 
 function indexOne(path, index) {
-  const [name, fm] = readSkillFile(path);
+  const [name, fm, lineCount] = readSkillFile(path);
   if (!name) return;
   const desc = typeof fm === "object" ? fm.description || "" : "";
   // First found wins (SKILL.md priority order), but keep richer descriptions.
   const existing = index[name];
   if (existing && !desc) return;
   const normalized = path.replace(/\\/g, "/");
-  const provider = providerForPath(normalized);
-  index[name] = { name, path: normalized.replace(/\/[^/]+$/, ""), file: normalized.split("/").pop(), description: desc, provider };
+  const folder = normalized.replace(/\/[^/]+$/, "");
+  const file = normalized.split("/").pop();
+  // Invocation class (the ecosystem's master routing attribute). A skill that
+  // declares `disable-model-invocation` is user-invoked: its description is
+  // written for a person, NOT a routing hint — flow.js must not score it.
+  // Absent flag ⇒ model-invoked (the default). DIRF only reads the skill's
+  // own declaration; it never imposes one.
+  const invocation = parseBool(typeof fm === "object" ? fm["disable-model-invocation"] : undefined) === true ? "user" : "model";
+  index[name] = {
+    name,
+    path: folder,
+    file,
+    description: desc,
+    provider: providerForPath(normalized),
+    invocation,
+    disclosures: collectDisclosures(folder, file),
+    body_lines: lineCount,
+  };
 }
 
 export function discoverAgents(projectRoot) {

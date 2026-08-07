@@ -358,6 +358,9 @@ export function buildInstructions(workflow, outDir) {
     const mark = s.status === "installed" ? "✅" : "⚠️";
     lines.push(`- ${mark} \`${s.skill}\` — ${s.reason}`);
     if (s.output) lines.push(`  - **Done at this step when:** ${s.output}`);
+    // Progressive disclosure: the selected skill's co-located reference files
+    // are loaded on demand, never eagerly (unread files cost zero tokens).
+    if (s.disclosures?.length) lines.push(`  - 📄 Reference files (in the skill's folder — load on demand): ${s.disclosures.join(", ")}`);
   }
   if (flow.gaps?.length) {
     lines.push("", "## Capability gaps", "");

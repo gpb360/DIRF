@@ -120,6 +120,20 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.ok(detail.includes("global skill"), "agent should be told it can use global skill discovery");
 });
 
+test("skill steps render progressive-disclosure pointers", () => {
+  const outDir = mkdtempSync(join(tmpdir(), "dirf-instr-disclose-"));
+  const workflow = {
+    name: "disclose", task: "write tests", playbook: "tdd",
+    workflow: { phases: ["a"], output: "tests", validation: "v", recovery: "r" },
+    agents: [], baseline_skills: [], questions: [],
+    skill_flow: { label: "persisted", branches: [], steps: [{ stage: "build", skill: "tdd", reason: "Drive one behavior", status: "installed", disclosures: ["tests.md", "mocking.md"] }] },
+    policy: "policies/workflow-policy.md", schema_version: 2, context_reserve_percent: 5,
+  };
+  buildInstructions(workflow, outDir);
+  const readme = readFileSync(join(outDir, "README.md"), "utf-8");
+  assert.match(readme, /Reference files \(in the skill's folder — load on demand\): tests\.md, mocking\.md/);
+});
+
 test("focused output can be disabled without changing task instructions", () => {
   const workflow = {
     name: "demo", task: "write a story", playbook: "content",
