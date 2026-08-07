@@ -48,12 +48,22 @@ Use this policy in every generated workflow prompt.
 - Include the verification command and result.
 - Leave open risks or blockers explicit.
 
+## Verification Contract
+- Name each phase's verification command before work starts; a phase is done only with that command's output attached to the evidence.
+- Do not assume a skill, tool, or integration is available unless the resolved workflow, registry, or this policy lists it.
+- When a named verification cannot run, say so and mark the claim unverified rather than reporting success.
+
 ## Governance Boundary
 - Agents advise, implement, review, and produce evidence; they do not grant their own execution authority.
 - State-changing actions require a mandate, bounded scope, evidence, and named authority.
 - Missing authority, conflicting scope, or under-specified risk means stop or require human approval.
 - Keep credentials out of prompts, saved workflows, registry files, and agent Markdown.
 - If a future gateway is present, route writes, deploys, merges, API calls, database mutations, and external messages through it.
+
+## Decision Ownership
+- Draft freely, decide jointly: agents propose options and draft artifacts; product and design decisions belong to the user unless the task explicitly mandates them.
+- Research describes the current state; design describes the desired state; implementation follows the latest accepted artifact. Facts are corrected before they become design assumptions.
+- A playbook may mark a decision gate: a phase whose output must be accepted before the next phase starts. A marked gate is not complete until the decision is recorded.
 
 ## Cost-Aware Planning
 - Use the cheapest agent/model that can answer the question safely.
@@ -68,6 +78,10 @@ Use this policy in every generated workflow prompt.
 - If usage telemetry is unavailable, checkpoint after every completed workflow phase.
 - Record the objective, current phase, completed work, decisions, changed files, validation, blockers, and exact next action.
 - Side observations go to `OBSERVATIONS.md` via `dirf notice`, not the handoff.
+
+## Handoff-Before-Switch
+- Write decisions, completed work, and the exact next action into HANDOFF.md before switching sessions, agents, or worktrees — not only when the context reserve is reached.
+- The handoff is written first; the switch happens after. Switching without a written handoff is a drift event, not a shortcut.
 
 ## Compaction
 - Under context pressure, prefer dropping lines by selection over rewriting or summarizing.
