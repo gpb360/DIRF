@@ -27,6 +27,32 @@ export function validateSnapshot(data, label = "workflow") {
   }
   if (![2, 3, 4, 5].includes(data.schema_version)) errors.push(`${label}: unsupported schema_version`);
 
+  // Optional per-phase gates on the persisted workflow (playbook
+  // config.workflow.gates flattened at selection time). Absent is fine — old
+  // snapshots stay gate-free. Present but malformed is an error so a stale
+  // snapshot never silently misleads a host about its gates.
+  if (data.workflow && data.workflow.gates !== undefined) {
+    const gates = data.workflow.gates;
+    if (!gates || typeof gates !== "object" || Array.isArray(gates)) {
+      errors.push(`${label}: workflow.gates must be an object`);
+    } else {
+      const phases = Array.isArray(data.workflow.phases) ? data.workflow.phases : [];
+      for (const [phase, spec] of Object.entries(gates)) {
+        if (!phases.includes(phase)) errors.push(`${label}: workflow.gates references unknown phase ${phase}`);
+        if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
+          errors.push(`${label}: workflow.gates.${phase} must be an object`);
+          continue;
+        }
+        if (!["verify", "decision", "soft"].includes(spec.kind)) {
+          errors.push(`${label}: workflow.gates.${phase}.kind must be verify, decision, or soft`);
+        }
+        if (spec.verify !== undefined && (typeof spec.verify !== "string" || !spec.verify.trim())) {
+          errors.push(`${label}: workflow.gates.${phase}.verify must be a non-empty string`);
+        }
+      }
+    }
+  }
+
   const resolvedSkillError = (skill, where, nameKey = "name") => {
     if (!skill || typeof skill !== "object" || typeof skill[nameKey] !== "string" || !skill[nameKey]) {
       errors.push(`${label}: ${where} must be a resolved skill object`);

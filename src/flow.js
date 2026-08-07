@@ -26,6 +26,30 @@ export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
           errors.push(`playbook ${name}: workflow.${field} must be a non-empty string`);
         }
       }
+      // Optional per-phase gates (config.workflow.gates): each key must name a
+      // declared phase, with kind verify|decision|soft and an optional verify
+      // command. Flattened into the persisted workflow at selection time.
+      if (playbook.workflow.gates !== undefined) {
+        const gates = playbook.workflow.gates;
+        if (!gates || typeof gates !== "object" || Array.isArray(gates)) {
+          errors.push(`playbook ${name}: workflow.gates must be an object`);
+        } else {
+          const phases = Array.isArray(playbook.workflow.phases) ? playbook.workflow.phases : [];
+          for (const [phase, spec] of Object.entries(gates)) {
+            if (!phases.includes(phase)) errors.push(`playbook ${name}: workflow.gates references unknown phase ${phase}`);
+            if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
+              errors.push(`playbook ${name}: workflow.gates.${phase} must be an object`);
+              continue;
+            }
+            if (!["verify", "decision", "soft"].includes(spec.kind)) {
+              errors.push(`playbook ${name}: workflow.gates.${phase}.kind must be verify, decision, or soft`);
+            }
+            if (spec.verify !== undefined && (typeof spec.verify !== "string" || !spec.verify.trim())) {
+              errors.push(`playbook ${name}: workflow.gates.${phase}.verify must be a non-empty string`);
+            }
+          }
+        }
+      }
     }
     const flow = playbook.skill_flow;
     if (!flow) {

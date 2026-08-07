@@ -14,6 +14,7 @@
 //   dirf validate|graph|run|render <folder>               operate an Eve-style folder DAG
 import { writeFileSync, readFileSync, existsSync, statSync } from "node:fs";
 import { dirname, join, isAbsolute, resolve } from "node:path";
+import { homedir } from "node:os";
 import { execFileSync, spawn } from "node:child_process";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -27,7 +28,8 @@ import { inspect, detectStackProfile } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, readSettings, writeSettings, linkAttemptWorktree, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree } from "./state.js";
+import { resolveProject, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, getProject, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGates, pendingGates, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, syncLifecycleFromProgress } from "./state.js";
+import { exportGraphify, exportObsidian } from "./exports.js";
 import { updateProgressSection } from "./handoff-update.js";
 
 const LIFECYCLE = {
@@ -352,7 +354,11 @@ function publicAttemptForSlug(slug, attempt) {
     phases: attemptPhases(slug, attempt.id),
     worker: attempt.worker || null,
     blocker: attempt.blocker || null,
+    wait: attempt.wait || null,
     worktree_path: attempt.worktree_path || null,
+    gates: attemptGates(slug, attempt.id),
+    pending_gates: pendingGates(slug, attempt.id).map((gate) => gate.phase),
+    evidence: recordedEvidence(slug, attempt.id),
     next_action: attemptNextAction(slug, attempt.id),
   };
 }
@@ -401,20 +407,56 @@ function cmdStatus(args) {
 }
 
 function cmdResume(args) {
-  const attempt = findAttempt(projectRoot(args.path), args.name);
-  const project = resolveProject(projectRoot(args.path));
+  const target = projectRoot(args.path);
+  const attempt = findAttempt(target, args.name);
+  const project = resolveProject(target);
+  // Resume is the "work is starting" signal: a planned attempt auto-starts so
+  // the lifecycle can't drift (no phases in its workflow → stays planned).
+  let autoStarted = false;
+  const stored = getAttemptState(project.slug, attempt.id);
+  if (stored?.tracked && stored.status === "planned") {
+    try { updateAttemptLifecycle(project.slug, attempt.id, "start"); autoStarted = true; }
+    catch { /* attempt workflow has no phases — leave planned */ }
+  }
   const readme = join(attempt.folder, "README.md");
   const workflow = existsSync(readme) ? readme : join(attempt.folder, "workflow.json");
   const handoff = join(attempt.folder, "HANDOFF.md");
   if (!existsSync(handoff)) throw new Error(`Attempt ${attempt.id} has no HANDOFF.md; rebuild it before resuming.`);
   if (args.json) {
     const prompt = `Resume DIRF attempt "${attempt.id}" for "${project?.slug || "project"}" at "${args.path || projectRoot(args.path)}".\nFirst load the canonical project handoff, then load this attempt's workflow and handoff.\nCanonical project state takes precedence if they conflict.\nContinue from the exact next action; do not restart completed work.`;
-    console.log(JSON.stringify({ attempt: publicAttemptForSlug(project.slug, attempt), workflow_path: workflow, attempt_handoff: readFileSync(handoff, "utf8"), project_handoff: readHandoff(project.slug), resume_prompt: prompt }, null, 2));
+    // Re-read after auto-start so the emitted attempt reflects the store.
+    const current = autoStarted ? getAttemptState(project.slug, attempt.id) : attempt;
+    console.log(JSON.stringify({
+      attempt: publicAttemptForSlug(project.slug, current),
+      workflow_path: workflow,
+      attempt_handoff: readFileSync(handoff, "utf8"),
+      project_handoff: readHandoff(project.slug),
+      pending_gates: pendingGates(project.slug, attempt.id),
+      recorded_evidence: recordedEvidence(project.slug, attempt.id),
+      resume_prompt: prompt,
+      auto_started: autoStarted,
+    }, null, 2));
     return;
   }
   console.log(`Resume attempt: ${attempt.id}`);
+  if (autoStarted) console.log(`Lifecycle: auto-started (planned → in_progress)`);
   console.log(`Load workflow: ${workflow}`);
   console.log(`Load handoff: ${handoff}\n`);
+  // Reconciliation on resume: surface unresolved gates (the reconciler analog)
+  // and recorded evidence (replay completed phases — do not re-run them).
+  const gates = pendingGates(project.slug, attempt.id);
+  if (gates.length) {
+    console.log("Pending gates (reconcile before continuing):");
+    for (const gate of gates) console.log(`  - ${gate.phase} (${gate.kind}${gate.status === "denied" ? ", denied" : ""})${gate.comment ? ` — ${gate.comment}` : ""}`);
+    console.log("");
+  }
+  const evidence = recordedEvidence(project.slug, attempt.id);
+  const recorded = attemptPhases(project.slug, attempt.id).filter((phase) => evidence[phase]);
+  if (recorded.length) {
+    console.log("Recorded evidence (replay — do not re-run):");
+    for (const phase of recorded) console.log(`  - ${phase}: ${evidence[phase].command}${evidence[phase].output ? ` → ${evidence[phase].output}` : ""}`);
+    console.log("");
+  }
   console.log(readFileSync(handoff, "utf-8"));
 }
 
@@ -586,12 +628,55 @@ function cmdAttempt(args) {
   const slug = resolveStateSlug(args);
   const action = args._[0];
   const id = args._[1];
-  if (!action || !id) throw new Error("usage: dirf attempt <start-tracking|start|assign|advance|block|reopen|complete|link> <id> [options]");
+  if (!action) throw new Error("usage: dirf attempt <start-tracking|start|assign|advance|block|reopen|complete|link|gate|sync-from-handoff> <id> [options]");
+  if (action === "sync-from-handoff") {
+    // One attempt, or the whole project when no id is given. Backfills
+    // attempt.json status from completion evidence in HANDOFF.md.
+    const ids = id ? [id] : listAttemptsState(slug).map((attempt) => attempt.id);
+    const outcomes = ids.map((attemptId) => syncAttemptFromHandoff(slug, attemptId));
+    if (args.json) {
+      console.log(JSON.stringify(outcomes.map((o) => ({ id: o.id, name: o.name, status: o.status, changed: o.changed, reason: o.reason || null })), null, 2));
+      return;
+    }
+    for (const o of outcomes) {
+      console.log(o.changed ? `${o.id}: → done (completed ${o.completed_at})` : `${o.id}: unchanged (${o.reason})`);
+    }
+    console.log(`Backfilled ${outcomes.filter((o) => o.changed).length} of ${outcomes.length} attempt(s) from handoff evidence.`);
+    return;
+  }
+  if (!id) throw new Error("usage: dirf attempt <start-tracking|start|assign|advance|block|reopen|complete|link|gate|sync-from-handoff> <id> [options]");
   let result;
+  let extra = null;
   if (action === "start-tracking") result = startTrackingAttempt(slug, id);
   else if (action === "link") result = linkAttemptWorktree(slug, id, args.worktree);
-  else result = updateAttemptLifecycle(slug, id, action, { worker: args.worker, reason: args.reason || args._[2], confirm: args.confirm });
-  console.log(args.json ? JSON.stringify(publicAttemptForSlug(slug, result), null, 2) : `Updated ${result.id}: ${result.status}`);
+  else if (action === "gate") {
+    const phase = args._[2];
+    const decision = args._[3];
+    if (!phase || !decision) throw new Error('usage: dirf attempt gate <id> <phase> accept|deny [--comment "..."]');
+    result = updateAttemptLifecycle(slug, id, "gate", { phase, decision, comment: args.comment, worker: args.worker });
+  } else if (action === "advance" && args.auto) {
+    const outcome = autoAdvance(slug, id, { strict: args.strict });
+    result = outcome.attempt;
+    extra = { advanced: outcome.advanced, stopped_at_gate: outcome.stopped_at_gate };
+  } else {
+    result = updateAttemptLifecycle(slug, id, action, {
+      worker: args.worker,
+      reason: args.reason || args._[2],
+      confirm: args.confirm,
+      evidence: args.evidence ? { command: args.evidence, output: args.output } : undefined,
+      strict: args.strict,
+      wait: args.wait,
+    });
+  }
+  if (args.json) {
+    const publicResult = publicAttemptForSlug(slug, result);
+    console.log(JSON.stringify(extra ? { ...publicResult, ...extra } : publicResult, null, 2));
+    return;
+  }
+  let line = `Updated ${result.id}: ${result.status}`;
+  if (extra?.advanced) line += ` · auto-advanced ${extra.advanced} phase(s) → ${result.current_phase}`;
+  if (extra?.stopped_at_gate) line += ` · stopped at gate "${extra.stopped_at_gate}"`;
+  console.log(line);
 }
 
 function cmdSettings(args) {
@@ -599,6 +684,7 @@ function cmdSettings(args) {
   if (args._[0] !== "set") throw new Error("usage: dirf settings <get|set> [options]");
   const patch = {};
   if (args.staleDays !== undefined) patch.stale_worktree_days = args.staleDays;
+  if (args.staleProjectDays !== undefined) patch.stale_project_days = args.staleProjectDays;
   if (args.archiveReminderDays !== undefined) patch.archive_reminder_days = args.archiveReminderDays;
   if (args.dirfCliPath !== undefined) patch.dirf_cli_path = args.dirfCliPath;
   console.log(JSON.stringify(writeSettings(patch), null, 2));
@@ -643,6 +729,114 @@ function cmdStateMigrateCleanup(args) {
   const target = projectRoot(args.path || ".");
   const { removed } = migrateCleanup(target);
   console.log(removed ? `Removed ${removed} migration backup(s) under ${target}` : "No migration backups to remove.");
+}
+
+// ─── Portfolio (`dirf portfolio`, `dirf project`, `dirf export obsidian|graphify`) ──
+// Cross-project view of the central store. `dirf portfolio --json` is the
+// machine-readable backbone (also consumable by the flow-board app); the
+// exports render it into human-facing artifacts.
+
+function formatPortfolioSummary(snapshot) {
+  const parts = [];
+  for (const status of ["active", "completed", "stale", "archived", "empty"]) {
+    const n = snapshot.summary[status] || 0;
+    if (n) parts.push(`${n} ${status}`);
+  }
+  return parts.length ? parts.join(", ") : "no projects";
+}
+
+function cmdPortfolio(args) {
+  const snapshot = portfolioSnapshot();
+  if (args.json) { console.log(JSON.stringify(snapshot, null, 2)); return; }
+  console.log(`DIRF portfolio — ${snapshot.summary.projects} project(s), staleness threshold ${snapshot.stale_project_days}d`);
+  console.log("");
+  for (const project of snapshot.projects) {
+    const a = project.attempts;
+    const activity = project.days_since_activity === null ? "—" : `${project.days_since_activity}d`;
+    const explicit = project.explicit_status ? ` (${project.explicit_status})` : "";
+    console.log(`  ${project.status.padEnd(9)}${explicit.padEnd(11)} ${project.slug.padEnd(30)} ${project.name.padEnd(20)} attempts ${a.tracked}/${a.total}  last ${activity}`);
+  }
+  console.log("");
+  console.log(`Summary: ${formatPortfolioSummary(snapshot)}`);
+}
+
+function cmdProject(args) {
+  const action = args._[0];
+  if (!action) throw new Error("usage: dirf project <complete|reopen|archive|status> [--slug S|--path DIR]");
+  const slug = resolveStateSlug(args);
+  if (action === "status") {
+    const entry = portfolioSnapshot().projects.find((p) => p.slug === slug);
+    if (!entry) throw new Error(`Unknown DIRF project ${slug}`);
+    console.log(`status: ${entry.status}${entry.explicit_status ? ` (explicit ${entry.explicit_status})` : " (derived)"}`);
+    return;
+  }
+  if (action === "complete") { setProjectStatus(slug, "complete"); console.log(`Marked ${slug} complete (explicit).`); return; }
+  if (action === "archive") { setProjectStatus(slug, "archived"); console.log(`Archived ${slug} (explicit).`); return; }
+  if (action === "reopen") { setProjectStatus(slug, null); console.log(`Reopened ${slug} — status is derived again.`); return; }
+  throw new Error("usage: dirf project <complete|reopen|archive|status> [--slug S|--path DIR]");
+}
+
+// Locate the active Obsidian vault from its config registry (obsidian.json
+// lists all vaults; the one with "open": true is the live target). Returns
+// null when Obsidian isn't configured — callers then require --out.
+function defaultObsidianVault() {
+  const configs = [];
+  if (process.env.APPDATA) configs.push(join(process.env.APPDATA, "obsidian", "obsidian.json"));
+  configs.push(join(homedir(), ".config", "obsidian", "obsidian.json"));
+  for (const config of configs) {
+    if (!existsSync(config)) continue;
+    try {
+      const data = JSON.parse(readFileSync(config, "utf8"));
+      const vaults = Object.values(data.vaults || {});
+      const open = vaults.find((v) => v.open) || vaults[0];
+      if (open?.path && existsSync(open.path)) return open.path;
+    } catch { /* malformed config: keep probing */ }
+  }
+  return null;
+}
+
+function cmdExportObsidian(args) {
+  const outDir = args.out ? resolve(args.out) : defaultObsidianVault();
+  if (!outDir) throw new Error("No Obsidian vault found. Pass --out <folder> to export anywhere.");
+  const written = exportObsidian(portfolioSnapshot(), { outDir });
+  console.log(`Obsidian portfolio exported to ${join(outDir, "DIRF Portfolio")}`);
+  for (const file of written) console.log(`  ${file}`);
+}
+
+// The graphify CLI renders graph.json into an interactive HTML graph. Prefer
+// PATH resolution, then the common per-user install location (~/.local/bin).
+function graphifyCli() {
+  const candidates = ["graphify", join(homedir(), ".local", "bin", "graphify")];
+  for (const candidate of candidates) {
+    try {
+      execFileSync(candidate, ["--version"], { encoding: "utf8", windowsHide: true, stdio: "ignore" });
+      return candidate;
+    } catch { /* keep probing */ }
+  }
+  return null;
+}
+
+function cmdExportGraphify(args) {
+  const outDir = args.out ? resolve(args.out) : join(storeHome(), "export");
+  const result = exportGraphify(portfolioSnapshot(), { outDir });
+  console.log(`Graphify export: ${result.graphPath}`);
+  console.log(`  ${result.nodeCount} nodes, ${result.edgeCount} edges`);
+  if (args.skipRender) { console.log("Skipped HTML render (--skip-render)."); return; }
+  const cli = graphifyCli();
+  if (!cli) {
+    console.log(`No graphify CLI found on PATH. Render manually:\n  graphify cluster-only ${result.graphDir} --no-label`);
+    return;
+  }
+  try {
+    // cluster-only re-clusters graph.json deterministically (Louvain) and writes
+    // graph.html + GRAPH_REPORT.md; --no-label keeps community naming LLM-free.
+    execFileSync(cli, ["cluster-only", result.graphDir, "--graph", result.graphPath, "--no-label"], { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    console.log(`Rendered: ${join(result.graphDir, "graph.html")}`);
+    console.log(`Report: ${join(result.graphDir, "GRAPH_REPORT.md")}`);
+  } catch (error) {
+    console.log(`graphify render failed: ${error.stderr?.trim() || error.message}`);
+    console.log(`Graph data is ready at ${result.graphPath}; render manually with:\n  graphify cluster-only ${result.graphDir} --no-label`);
+  }
 }
 
 // `dirf notice` — a non-derailing side-observation channel. Park anything NOT
@@ -723,6 +917,11 @@ function cmdRecordProgress(args) {
     // Write back atomically
     writeHandoff(project.slug, updatedHandoff);
 
+    // Keep the attempt lifecycle honest: planned → start, in_progress →
+    // advance to the reported phase (conservative — unknown phases are no-ops).
+    const synced = syncLifecycleFromProgress(project.slug, updateData.phase);
+    if (synced) console.log(`   Lifecycle: ${synced.status}${synced.current_phase ? ` · phase: ${synced.current_phase}` : ""}`);
+
     console.log("✅ Progress recorded:");
     console.log(`   ${message}`);
     if (updateData.phase) console.log(`   Phase: ${updateData.phase}`);
@@ -753,8 +952,11 @@ function parse(argv) {
     if (a === "--reason") { out.reason = rest[++i]; continue; }
     if (a === "--worktree") { out.worktree = rest[++i]; continue; }
     if (a === "--stale-days") { out.staleDays = Number(rest[++i]); continue; }
+    if (a === "--stale-project-days") { out.staleProjectDays = Number(rest[++i]); continue; }
     if (a === "--archive-reminder-days") { out.archiveReminderDays = Number(rest[++i]); continue; }
     if (a === "--dirf-cli") { out.dirfCliPath = rest[++i]; continue; }
+    if (a === "--out") { out.out = rest[++i]; continue; }
+    if (a === "--skip-render") { out.skipRender = true; continue; }
     if (a === "--confirm") { out.confirm = true; continue; }
     if (a === "--approved") { out.approved = true; continue; }
     if (a === "--json") { out.json = true; continue; }
@@ -764,6 +966,12 @@ function parse(argv) {
     if (a === "--next") { out.next = rest[++i]; continue; }
     if (a === "--files") { out.files = rest[++i]; continue; }
     if (a === "--timestamp") { out.timestamp = rest[++i]; continue; }
+    if (a === "--evidence") { out.evidence = rest[++i]; continue; }
+    if (a === "--output") { out.output = rest[++i]; continue; }
+    if (a === "--strict") { out.strict = true; continue; }
+    if (a === "--auto") { out.auto = true; continue; }
+    if (a === "--wait") { out.wait = rest[++i]; continue; }
+    if (a === "--comment") { out.comment = rest[++i]; continue; }
     if (a === "--help" || a === "-h") { out.help = true; continue; }
     out._.push(a);
   }
@@ -785,14 +993,21 @@ Usage:
   dirf status [--path DIR]                             show project and repository state
   dirf resume <name-or-id> [--path DIR]                load the workflow handoff
   dirf record-progress "<message>" [--path DIR] [--phase PHASE] [--next ACTION] [--files FILES]
-                                                      record workflow progress and update HANDOFF.md
+                                                      record progress, update HANDOFF.md and sync the attempt lifecycle
   dirf attempt <action> <id> [--path DIR]              update lifecycle state
+                                                      (advance: [--evidence "CMD" [--output F]] [--strict] [--auto])
+                                                      (gate <phase> accept|deny [--comment "..."]; block [--wait input|blocker])
+                                                      (sync-from-handoff: backfill done from handoff evidence; no id = all)
   dirf worktree <list|archive|remind|remove> [path]   inspect or clean worktrees
   dirf settings <get|set>                              read or update cleanup settings
   dirf migrate [<name>]                                remove runtime paths from saved snapshots
   dirf validate                                        validate registries
   dirf skills scan [--path DIR]                        show installed skills
+  dirf portfolio [--json]                             cross-project status view (active/stale/completed/...)
+  dirf project <complete|reopen|archive|status> [...] explicit project status override
   dirf export playbooks                                regenerate legacy playbooks JSON
+  dirf export obsidian [--out DIR]                     export portfolio into an Obsidian vault (notes + canvas)
+  dirf export graphify [--out DIR] [--skip-render]    export portfolio as a graphify graph (+ HTML render)
   dirf inspect [<path>]                                detect a project's optimization stack + suggest gaps
   dirf flow "<task>" [--path DIR]                      show the ordered skill flow for a task (ask-matt style)
   dirf state which [--path DIR]                       what project am I in? (slug + store path)
@@ -815,6 +1030,7 @@ Side observations (park non-task notes without derailing):
 Plain language (natural-English aliases for the same commands):
   dirf where am i                                     → state which
   dirf show me the projects                           → state list
+  dirf show me the portfolio                          → portfolio
   dirf show me the handoff                            → state read-handoff
   dirf show me the attempts                           → state list-attempts
   dirf save the handoff --file FILE                   → state write-handoff --file FILE
@@ -886,6 +1102,7 @@ function translatePlainLanguage(argv) {
   // Order longest-first where prefixes could overlap.
   if (joined.startsWith("where am i")) return ["state", "which", ...argv.slice(3)];
   if (joined.startsWith("show me the projects")) return ["state", "list", ...argv.slice(4)];
+  if (joined.startsWith("show me the portfolio")) return ["portfolio", ...argv.slice(4)];
   if (joined.startsWith("show me the handoff")) return ["state", "read-handoff", ...argv.slice(4)];
   if (joined.startsWith("show me the attempts")) return ["state", "list-attempts", ...argv.slice(4)];
   if (joined.startsWith("save the handoff")) return ["state", "write-handoff", ...argv.slice(3)];
@@ -931,6 +1148,10 @@ function main() {
     else { console.log("usage: dirf skills scan [--path DIR]"); process.exit(2); }
   }
   else if (cmd === "export" && args._[0] === "playbooks") cmdExportPlaybooks();
+  else if (cmd === "export" && args._[0] === "obsidian") cmdExportObsidian(args);
+  else if (cmd === "export" && args._[0] === "graphify") cmdExportGraphify(args);
+  else if (cmd === "portfolio") cmdPortfolio(args);
+  else if (cmd === "project") cmdProject(args);
   else if (cmd === "inspect") { args._ = args._.length ? args._ : [args.path]; cmdInspect(args); }
   else if (cmd === "flow") { cmdFlow(args); }
   else if (cmd === "state") {

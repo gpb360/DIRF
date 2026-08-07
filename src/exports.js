@@ -1,0 +1,316 @@
+// src/exports.js — generated portfolio views (Obsidian vault + graphify graph).
+// Pure writers over a portfolioSnapshot(); they never read/write canonical
+// state directly (state.js owns that). Output is regenerable: re-running an
+// export rewrites the whole target folder, so the views can never drift from
+// the store.
+
+import { createHash } from "node:crypto";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { attemptNextAction, effectiveAttemptStatus, listAttempts } from "./state.js";
+
+const STATUS_LABEL = { active: "Active", completed: "Completed", stale: "Stale", archived: "Archived", empty: "Empty" };
+const STATUS_ICON = { active: "🚀", completed: "✅", stale: "🕰️", archived: "📦", empty: "📭" };
+const STATUS_ORDER = ["active", "completed", "stale", "archived", "empty"];
+const STATUS_COLOR = { active: "5", completed: "4", stale: "2", archived: "6", empty: "1" };
+const ATTEMPT_COLOR = { planned: "3", in_progress: "5", blocked: "1", done: "4", historical: "6" };
+
+function canvasId(value) {
+  // JSON Canvas spec: ids are unique 16-char lowercase hex strings.
+  return createHash("sha1").update(String(value)).digest("hex").slice(0, 16);
+}
+
+// ─── Obsidian export ─────────────────────────────────────────────────────────
+// <out>/DIRF Portfolio/
+//   README.md                 index with status summary + wikilinks
+//   projects/<slug>.md        one note per project (frontmatter + attempt table)
+//   attempts/<id>.md          one note per TRACKED attempt
+//   DIRF Portfolio.canvas     JSON Canvas dashboard: groups per status,
+//                             project nodes, project→attempt edges
+
+export function exportObsidian(snapshot, { outDir }) {
+  const root = join(outDir, "DIRF Portfolio");
+  rmSync(root, { recursive: true, force: true });
+  mkdirSync(join(root, "projects"), { recursive: true });
+  mkdirSync(join(root, "attempts"), { recursive: true });
+
+  const written = [];
+  for (const project of snapshot.projects) {
+    const projectFile = join(root, "projects", `${project.slug}.md`);
+    writeFileSync(projectFile, projectNote(project), "utf8");
+    written.push(projectFile);
+    for (const attempt of listAttempts(project.slug).filter((a) => a.tracked)) {
+      const attemptFile = join(root, "attempts", `${attempt.id}.md`);
+      writeFileSync(attemptFile, attemptNote(project, attempt, effectiveAttemptStatus(project.slug, attempt)), "utf8");
+      written.push(attemptFile);
+    }  }
+  const canvasFile = join(root, "DIRF Portfolio.canvas");
+  writeFileSync(canvasFile, canvasJson(snapshot), "utf8");
+  written.push(canvasFile);
+  const readmeFile = join(root, "README.md");
+  writeFileSync(readmeFile, readmeMd(snapshot), "utf8");
+  written.push(readmeFile);
+  return written;
+}
+
+function statusCallout(status, explicit) {
+  const source = explicit ? `explicit (${explicit})` : "derived";
+  return `> [!${status === "completed" ? "success" : "info"}] ${STATUS_ICON[status] || ""} **${STATUS_LABEL[status]}** — ${source}`;
+}
+
+function projectNote(project) {
+  const a = project.attempts;
+  const activity = project.days_since_activity === null ? "n/a" : `${project.days_since_activity}d ago`;
+  const latest = project.latest;
+  const lines = [
+    "---",
+    `slug: ${project.slug}`,
+    `name: ${project.name}`,
+    `status: ${project.status}`,
+    ...(project.explicit_status ? [`explicit_status: ${project.explicit_status}`] : []),
+    `created_at: ${project.created_at}`,
+    `last_seen: ${project.last_seen}`,
+    `last_activity: ${project.last_activity || ""}`,
+    `attempts_total: ${a.total}`,
+    `attempts_tracked: ${a.tracked}`,
+    `planned: ${a.planned}`,
+    `in_progress: ${a.in_progress}`,
+    `blocked: ${a.blocked}`,
+    `done: ${a.done}`,
+    `historical: ${a.historical}`,
+    "tags: [dirf, project]",
+    "---",
+    "",
+    `# ${project.name}`,
+    "",
+    statusCallout(project.status, project.explicit_status),
+    "",
+    `Slug: \`${project.slug}\``,
+    `Last activity: ${activity}`,
+    `Canonical handoff: ${project.handoff ? "yes" : "no"}`,
+    "",
+    "## Attempts",
+    "",
+    "| status | count |",
+    "| --- | --- |",
+    `| planned | ${a.planned} |`,
+    `| in_progress | ${a.in_progress} |`,
+    `| blocked | ${a.blocked} |`,
+    `| done | ${a.done} |`,
+    `| done (handoff evidence) | ${a.evidence_done || 0} |`,
+    `| historical | ${a.historical} |`,
+    "",
+    "## Latest attempt",
+    "",
+  ];
+  if (latest) {
+    lines.push(`[[attempts/${latest.id}|${latest.name}]] — ${latest.status}${latest.current_phase ? ` (phase: ${latest.current_phase})` : ""}`, "");
+    lines.push(`Updated: ${latest.updated_at}`, "");
+    if (latest.next_action) lines.push("Next action:", "", latest.next_action, "");
+    else lines.push("_No exact next action recorded._", "");
+  } else {
+    lines.push("_No attempts saved._", "");
+  }
+  lines.push("---", "", `_Generated by \`dirf export obsidian\` — regenerable, do not edit by hand._`, "");
+  return lines.join("\n");
+}
+
+function attemptNote(project, attempt, effective = { status: attempt.status, status_source: "lifecycle" }) {
+  const { status, status_source: source } = effective;
+  const evidenceNote = source === "handoff" ? " (from handoff evidence)" : "";
+  const lines = [
+    "---",
+    `slug: ${project.slug}`,
+    `attempt_id: ${attempt.id}`,
+    `name: ${attempt.name}`,
+    `status: ${status}`,
+    `status_source: ${source}`,
+    `current_phase: ${attempt.current_phase || ""}`,
+    `created_at: ${attempt.created_at}`,
+    `updated_at: ${attempt.updated_at}`,
+    ...(attempt.completed_at ? [`completed_at: ${attempt.completed_at}`] : []),
+    ...(attempt.worker ? [`worker: ${attempt.worker}`] : []),
+    ...(attempt.blocker ? [`blocker: ${attempt.blocker}`] : []),
+    "tags: [dirf, attempt]",
+    "---",
+    "",
+    `# ${attempt.name}`,
+    "",
+    `Project: [[projects/${project.slug}|${project.name}]]`,
+    "",
+    `Status: **${status}**${evidenceNote}${attempt.current_phase ? ` · phase: ${attempt.current_phase}` : ""}`,
+    ...(attempt.blocker ? [`Blocked: ${attempt.blocker}`, ""] : []),
+    "",
+    "## Next action",
+    "",
+  ];
+  const next = attemptNextAction(project.slug, attempt.id);
+  lines.push(next || "_No exact next action recorded._", "", "---", "", `_Generated by \`dirf export obsidian\` — regenerable, do not edit by hand._`, "");
+  return lines.join("\n");
+}
+
+function canvasJson(snapshot) {
+  const nodes = [];
+  const edges = [];
+  const groups = STATUS_ORDER.filter((status) => snapshot.projects.some((p) => p.status === status));
+  const COL_W = 400;
+  const ROW_H = 96;
+  let y = 60;
+  const groupNodeIds = {};
+
+  for (const status of groups) {
+    const members = snapshot.projects.filter((p) => p.status === status);
+    const rows = members.reduce((n, p) => n + 1 + p.attempts.tracked, 0);
+    const height = Math.max(120, rows * ROW_H + 30);
+    const id = canvasId(`group-${status}`);
+    groupNodeIds[status] = id;
+    nodes.push({ id, type: "group", label: `${STATUS_LABEL[status]} (${members.length})`, x: 40, y, width: COL_W, height, color: STATUS_COLOR[status] });
+    let cursor = y + 30;
+    for (const project of members) {
+      const projectId = canvasId(`project-${project.slug}`);
+      nodes.push({
+        id: projectId,
+        type: "text",
+        x: 460, y: cursor, width: 360, height: 90,
+        color: STATUS_COLOR[project.status],
+        text: projectCanvasText(project),
+      });
+      edges.push({ id: canvasId(`group-edge-${project.slug}`), fromNode: id, toNode: projectId, toEnd: "none" });
+      cursor += ROW_H;
+      for (const attempt of listAttempts(project.slug).filter((a) => a.tracked)) {
+        const attemptId = canvasId(`attempt-${attempt.id}`);
+        const { status: attemptStatus } = effectiveAttemptStatus(project.slug, attempt);
+        nodes.push({
+          id: attemptId,
+          type: "file",
+          file: `attempts/${attempt.id}.md`,
+          x: 860, y: cursor, width: 340, height: 90,
+          color: ATTEMPT_COLOR[attemptStatus] || "6",
+        });
+        edges.push({ id: canvasId(`project-edge-${project.slug}-${attempt.id}`), fromNode: projectId, toNode: attemptId });
+        cursor += ROW_H;
+      }
+    }
+    y += height + 60;
+  }
+
+  return JSON.stringify({ nodes, edges }, null, 2) + "\n";
+}
+
+function projectCanvasText(project) {
+  const a = project.attempts;
+  const activity = project.days_since_activity === null ? "n/a" : `${project.days_since_activity}d ago`;
+  return [
+    `**${project.name}**  (${project.status})`,
+    `attempts: ${a.tracked} tracked / ${a.total} total`,
+    a.in_progress ? `🚧 in progress: ${a.in_progress}` : null,
+    a.blocked ? `⛔ blocked: ${a.blocked}` : null,
+    a.done ? `✅ done: ${a.done}` : null,
+    `last activity: ${activity}`,
+  ].filter(Boolean).join("\n");
+}
+
+function readmeMd(snapshot) {
+  const lines = [
+    "# DIRF Portfolio",
+    "",
+    `> Generated by \`dirf export obsidian\` at ${snapshot.generated_at}. Regenerable — re-run the export to refresh; do not edit by hand.`,
+    "",
+    `**${snapshot.summary.projects} projects** · staleness threshold ${snapshot.stale_project_days}d`,
+    "",
+    "## Projects",
+    "",
+  ];
+  for (const project of snapshot.projects) {
+    const latest = project.latest ? ` · latest: [[attempts/${project.latest.id}|${project.latest.name}]] (${project.latest.status})` : "";
+    lines.push(`- ${STATUS_ICON[project.status] || ""} [[projects/${project.slug}|${project.name}]] — ${project.status}${latest}`);
+  }
+  lines.push("", "## Canvas", "", "Open `DIRF Portfolio.canvas` for the visual dashboard: projects grouped by status, edges to their tracked attempts.", "");
+  return lines.join("\n");
+}
+
+// ─── graphify export ─────────────────────────────────────────────────────────
+// <out>/graphify-out/graph.json — a graph in graphify's own schema (document
+// nodes + typed edges), built deterministically from the snapshot so no LLM or
+// API key is needed. Render the HTML with the installed CLI:
+//   graphify export html <out>/graphify-out
+// The `source_file` fields point into the same graphify-out/ folder so graphify
+// treats them as real documents.
+
+export function exportGraphify(snapshot, { outDir }) {
+  const graphDir = join(outDir, "graphify-out");
+  mkdirSync(graphDir, { recursive: true });
+  const nodes = [];
+  const edges = [];
+
+  for (const project of snapshot.projects) {
+    const projectId = `project:${project.slug}`;
+    nodes.push({
+      id: projectId,
+      label: project.name,
+      file_type: "document",
+      source_file: `projects/${project.slug}.md`,
+      attributes: {
+        kind: "project",
+        slug: project.slug,
+        status: project.status,
+        attempts_total: project.attempts.total,
+        attempts_tracked: project.attempts.tracked,
+        last_activity: project.last_activity,
+      },
+    });
+    const attempts = listAttempts(project.slug).filter((a) => a.tracked);
+    for (let i = 0; i < attempts.length; i += 1) {
+      const attempt = attempts[i];
+      const attemptId = `attempt:${project.slug}/${attempt.id}`;
+      const { status: attemptStatus, status_source: attemptSource } = effectiveAttemptStatus(project.slug, attempt);
+      nodes.push({
+        id: attemptId,
+        label: attempt.name,
+        file_type: "document",
+        source_file: `attempts/${project.slug}/${attempt.id}.md`,
+        attributes: {
+          kind: "attempt",
+          status: attemptStatus,
+          status_source: attemptSource,
+          current_phase: attempt.current_phase || null,
+          created_at: attempt.created_at,
+          updated_at: attempt.updated_at,
+        },
+      });
+      edges.push({
+        source: projectId,
+        target: attemptId,
+        relation: "references",
+        confidence: "EXTRACTED",
+        confidence_score: 1.0,
+        weight: 1.0,
+        source_file: `projects/${project.slug}.md`,
+      });
+      const next = attempts[i + 1];
+      if (next) {
+        edges.push({
+          source: attemptId,
+          target: `attempt:${project.slug}/${next.id}`,
+          relation: "conceptually_related_to",
+          confidence: "INFERRED",
+          confidence_score: 0.5,
+          weight: 0.5,
+          source_file: `attempts/${project.slug}/${attempt.id}.md`,
+        });
+      }
+    }
+  }
+
+  const graph = {
+    schema_version: 1,
+    generated_at: snapshot.generated_at,
+    nodes,
+    edges,
+    hyperedges: [],
+    communities: [],
+  };
+  const graphPath = join(graphDir, "graph.json");
+  writeFileSync(graphPath, JSON.stringify(graph, null, 2) + "\n", "utf8");
+  return { graphDir, graphPath, nodeCount: nodes.length, edgeCount: edges.length };
+}

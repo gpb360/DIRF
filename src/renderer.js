@@ -297,10 +297,19 @@ export function buildInstructions(workflow, outDir) {
     lines.push("");
   }
   lines.push("## Phases", "");
+  const gateLabel = { verify: "verify gate", decision: "decision gate", soft: "soft check" };
   let i = 0;
   for (const phase of wf.phases || []) {
     i += 1;
-    lines.push(`${i}. ${phase}`);
+    const gate = wf.gates?.[phase];
+    lines.push(`${i}. ${phase}${gate ? ` (${gateLabel[gate.kind] || "gate"})` : ""}`);
+  }
+  const verifyGates = Object.entries(wf.gates || {}).filter(([, gate]) => gate?.kind === "verify" && gate.verify);
+  if (verifyGates.length) {
+    lines.push("", ...verifyGates.map(([phase, gate]) => `> Verify ${phase}: \`${gate.verify}\``));
+  }
+  if (Object.keys(wf.gates || {}).length) {
+    lines.push("", "> Gate rules: advancing past a `verify` phase requires recorded evidence; past a `decision` phase, a recorded accept (user-owned); `soft` phases are tracked only.");
   }
   if (workflow.lifecycle) {
     lines.push("", "## Idea to ship", "");
