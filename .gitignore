@@ -7,6 +7,10 @@ node_modules/
 
 # Editor / agent session state (local only)
 .zcode/
+.claude/
+
+# Logs (machine output — never tracked)
+*.log
 
 # Legacy generated runs; new target-owned runs live under each target's .dirf/attempts/
 workflows/user/

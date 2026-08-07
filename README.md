@@ -175,6 +175,12 @@ dirf state get-attempt <id> [...]                    show one attempt
 dirf state import-handoff [--path DIR] [--force]     promote a local HANDOFF.md into the store
 dirf state migrate-cleanup [--path DIR]              remove migration backup(s) once the store works
 
+# portfolio (cross-project view — see "Portfolio" below)
+dirf portfolio [--json]                              classify every project: active/stale/completed/archived/empty
+dirf project <complete|reopen|archive|status> [...]  explicit project status override
+dirf export obsidian [--out DIR]                     export the portfolio into an Obsidian vault (notes + canvas)
+dirf export graphify [--out DIR] [--skip-render]     export the portfolio as a graphify graph (+ HTML render)
+
 # inspection + registries
 dirf skills scan [--path DIR]                        scan host, show installed skills + resolved refs
 dirf inspect [<path>]                                detect a project's optimization stack + suggest gaps
@@ -197,6 +203,7 @@ Prefer sentences to subcommands? These natural-English forms do the same thing
 dirf where am i                    # → state which
 dirf show me the handoff           # → state read-handoff
 dirf show me the attempts          # → state list-attempts
+dirf show me the portfolio         # → portfolio
 dirf start work on "fix the bug"   # → build <auto-name> "fix the bug"
 dirf save the handoff --file h.md  # → state write-handoff --file h.md
 dirf what can i do                 # → help
@@ -319,6 +326,75 @@ Existing per-target `.dirf/` directories migrate into the store when you run
 `.dirf.migrating.<ts>/` until you run `dirf state migrate-cleanup`. A local
 `HANDOFF.md` newer than the store's is never overwritten silently — run
 `dirf state import-handoff` to promote it (it backs up the canonical copy first).
+
+## Portfolio (cross-project overview)
+
+`dirf portfolio` is the at-a-glance view of **every registered project**, from
+anywhere on the machine. It derives a status for each project and its attempts:
+
+| Status | Meaning |
+|---|---|
+| `active` | open work (in-progress/blocked attempts) or activity within the staleness threshold |
+| `completed` | all tracked attempts done, or the handoff carries `## Status: Complete.` |
+| `stale` | nothing open and no activity past the threshold — likely abandoned |
+| `archived` | explicitly archived (`dirf project archive`) |
+| `empty` | registered but no attempts yet |
+
+Classification is **derived by default** (it can never drift from the store) and
+optionally overridden per project:
+
+```bash
+dirf portfolio                    # text table
+dirf portfolio --json             # full machine-readable snapshot (also feeds the flow-board app)
+dirf project status --slug S      # why is this project classified this way?
+dirf project complete --slug S    # explicit "done" override
+dirf project archive --slug S     # explicit "parked" override
+dirf project reopen --slug S      # clear the override, back to derived
+dirf settings set --stale-project-days 30
+```
+
+**Status is also evidence-aware.** Attempts whose HANDOFF.md carries a
+completion marker (`## Status: Complete.` or a filled-in `## Completed` section)
+are reported as `done` even if the lifecycle was never updated — the store's
+`attempt.json` is never modified by the view. When the lifecycle has genuinely
+drifted (work happened, status stayed `planned`), promote the evidence:
+
+```bash
+dirf attempt sync-from-handoff              # whole project: backfill done from handoff evidence
+dirf attempt sync-from-handoff <id>         # or one attempt
+```
+
+And to keep the lifecycle honest going forward: `dirf resume` auto-starts a
+planned attempt, and `dirf record-progress --phase X` advances the attempt to
+that phase (start → in_progress, in_progress → advance). Completion still
+requires the explicit `dirf attempt complete` gate.
+
+### Obsidian export
+
+```bash
+dirf export obsidian              # into your active Obsidian vault (auto-discovered)
+dirf export obsidian --out D      # or anywhere explicit
+```
+
+Writes `DIRF Portfolio/` into the target: one markdown note per project and per
+tracked attempt (frontmatter status + `[[wikilinks]]`), an index `README.md`,
+and `DIRF Portfolio.canvas` — a JSON Canvas dashboard with projects grouped by
+status, color-coded, with edges to their attempts. The Obsidian graph view
+connects everything through the wikilinks. Regenerable: re-run the export any
+time; the folder is rewritten from the store.
+
+### graphify export
+
+```bash
+dirf export graphify              # writes graphify-out/ and renders HTML
+dirf export graphify --skip-render
+```
+
+Writes `graphify-out/graph.json` in graphify's own schema — project and attempt
+nodes with typed edges (`references`, `conceptually_related_to`), built
+deterministically, no LLM or API key required. If the graphify CLI is
+installed, it re-clusters and renders `graph.html` + `GRAPH_REPORT.md`
+(`graphify cluster-only … --no-label`); otherwise the exact command is printed.
 
 ### Optional MCP server
 
