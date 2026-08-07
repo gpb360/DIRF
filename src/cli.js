@@ -28,7 +28,7 @@ import { inspect, detectStackProfile } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, getProject, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGates, pendingGates, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, syncLifecycleFromProgress } from "./state.js";
+import { resolveProject, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, getProject, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGateState, pendingGates, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, syncLifecycleFromProgress } from "./state.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 import { updateProgressSection } from "./handoff-update.js";
 
@@ -343,6 +343,9 @@ function cmdRender(args) {
 }
 
 function publicAttemptForSlug(slug, attempt) {
+  // One composed read: attemptGateState does a single workflow.json read for
+  // the already-loaded attempt (avoid re-looking-up per gate — see M2).
+  const { phases, gates } = attemptGateState(slug, attempt);
   return {
     id: attempt.id,
     name: attempt.name,
@@ -351,14 +354,14 @@ function publicAttemptForSlug(slug, attempt) {
     status: attempt.status || "historical",
     tracked: Boolean(attempt.tracked),
     current_phase: attempt.current_phase || null,
-    phases: attemptPhases(slug, attempt.id),
+    phases,
     worker: attempt.worker || null,
     blocker: attempt.blocker || null,
     wait: attempt.wait || null,
     worktree_path: attempt.worktree_path || null,
-    gates: attemptGates(slug, attempt.id),
-    pending_gates: pendingGates(slug, attempt.id).map((gate) => gate.phase),
-    evidence: recordedEvidence(slug, attempt.id),
+    gates,
+    pending_gates: gates.filter((gate) => gate.status !== "accepted" && gate.status !== "satisfied").map((gate) => gate.phase),
+    evidence: attempt.evidence || {},
     next_action: attemptNextAction(slug, attempt.id),
   };
 }
@@ -655,7 +658,10 @@ function cmdAttempt(args) {
     if (!phase || !decision) throw new Error('usage: dirf attempt gate <id> <phase> accept|deny [--comment "..."]');
     result = updateAttemptLifecycle(slug, id, "gate", { phase, decision, comment: args.comment, worker: args.worker });
   } else if (action === "advance" && args.auto) {
-    const outcome = autoAdvance(slug, id, { strict: args.strict });
+    const outcome = autoAdvance(slug, id, {
+      strict: args.strict,
+      evidence: args.evidence ? { command: args.evidence, output: args.output } : undefined,
+    });
     result = outcome.attempt;
     extra = { advanced: outcome.advanced, stopped_at_gate: outcome.stopped_at_gate };
   } else {

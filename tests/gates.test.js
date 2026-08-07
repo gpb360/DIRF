@@ -134,6 +134,71 @@ test("autoAdvance crosses covered phases and stops at the first unsatisfied gate
   assert.deepEqual([out.advanced, out.stopped_at_gate], [0, null]);
 });
 
+test("autoAdvance with --evidence records it for the first leaving phase and satisfies a verify gate", () => {
+  const { slug, attempt } = attemptFixture();
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  updateAttemptLifecycle(slug, attempt.id, "advance"); // → design
+  updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "design", decision: "accept", comment: "ok" });
+  updateAttemptLifecycle(slug, attempt.id, "advance"); // → build (verify gate ahead)
+  // at build: evidence satisfies the verify gate, then the soft gate passes
+  const out = autoAdvance(slug, attempt.id, { evidence: { command: "node --test", output: "tests.log" } });
+  assert.deepEqual([out.advanced, out.stopped_at_gate, out.attempt.current_phase], [2, null, "ship"]);
+  assert.equal(recordedEvidence(slug, attempt.id).build.command, "node --test");
+  assert.equal(recordedEvidence(slug, attempt.id).build.output, "tests.log");
+});
+
+test("autoAdvance with evidence stops at a decision gate and records nothing for it", () => {
+  const { slug, attempt } = attemptFixture();
+  updateAttemptLifecycle(slug, attempt.id, "start"); // define
+  // leaving define records evidence.define (non-gated), then the design
+  // decision gate stops the run without a record
+  const out = autoAdvance(slug, attempt.id, { evidence: { command: "node --test" } });
+  assert.deepEqual([out.advanced, out.stopped_at_gate, out.attempt.current_phase], [1, "design", "design"]);
+  const evidence = recordedEvidence(slug, attempt.id);
+  assert.equal(evidence.define.command, "node --test");
+  assert.equal(evidence.design, undefined);
+});
+
+test("autoAdvance rejects an empty evidence command", () => {
+  const { slug, attempt } = attemptFixture();
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  assert.throws(() => autoAdvance(slug, attempt.id, { evidence: { command: "  " } }), /evidence command must not be empty/);
+});
+
+test("dirf attempt advance --auto --evidence works end to end via the CLI", () => {
+  const { home, root, attempt } = attemptFixture();
+  const cli = (...args) => execFileSync(process.execPath, [join(process.cwd(), "src", "cli.js"), ...args], { cwd: root, encoding: "utf8", timeout: 30000, env: { ...process.env, DIRF_HOME: home } });
+  cli("attempt", "start", attempt.id, "--path", root);
+  cli("attempt", "gate", attempt.id, "design", "accept", "--comment", "ok", "--path", root);
+  cli("attempt", "advance", attempt.id, "--path", root); // → design
+  cli("attempt", "advance", attempt.id, "--path", root); // → build (verify gate)
+  const auto = JSON.parse(cli("attempt", "advance", attempt.id, "--auto", "--evidence", "node --test", "--output", "tests.log", "--path", root, "--json"));
+  assert.deepEqual([auto.current_phase, auto.advanced, auto.stopped_at_gate], ["ship", 2, null]);
+  assert.equal(auto.evidence.build.command, "node --test");
+  assert.equal(auto.evidence.build.output, "tests.log");
+});
+
+test("dirf attempt advance --strict enforces soft gates via the CLI", () => {
+  const { home, root, attempt } = attemptFixture();
+  const cli = (...args) => execFileSync(process.execPath, [join(process.cwd(), "src", "cli.js"), ...args], { cwd: root, encoding: "utf8", timeout: 30000, env: { ...process.env, DIRF_HOME: home } });
+  cli("attempt", "start", attempt.id, "--path", root);
+  cli("attempt", "gate", attempt.id, "design", "accept", "--comment", "ok", "--path", root);
+  cli("attempt", "advance", attempt.id, "--path", root);
+  cli("attempt", "advance", attempt.id, "--path", root);
+  cli("attempt", "advance", attempt.id, "--evidence", "node --test", "--path", root); // → verify (soft)
+  assert.throws(() => cli("attempt", "advance", attempt.id, "--strict", "--path", root), /soft gate/);
+});
+
+test("resume --json carries pending_gates and recorded_evidence", () => {
+  const { home, root, attempt } = attemptFixture();
+  const cli = (...args) => execFileSync(process.execPath, [join(process.cwd(), "src", "cli.js"), ...args], { cwd: root, encoding: "utf8", timeout: 30000, env: { ...process.env, DIRF_HOME: home } });
+  cli("attempt", "start", attempt.id, "--path", root);
+  const out = JSON.parse(cli("resume", attempt.id, "--path", root, "--json"));
+  assert.ok(Array.isArray(out.pending_gates));
+  assert.ok(out.pending_gates.some((g) => g.phase === "design" && g.kind === "decision"));
+  assert.deepEqual(out.recorded_evidence, {});
+});
+
 test("block records wait types; reopen clears them", () => {
   const { slug, attempt } = attemptFixture();
   updateAttemptLifecycle(slug, attempt.id, "start");

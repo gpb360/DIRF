@@ -278,12 +278,21 @@ function writeAttempt(slug, attempt) {
   return getAttempt(slug, stored.id);
 }
 
-export function attemptPhases(slug, idOrName) {
-  const attempt = getAttempt(slug, idOrName);
+// Single workflow.json read for an already-loaded attempt. Projections pass
+// the attempt they already hold so per-attempt work stays O(1) reads, not O(N)
+// (every getAttempt lists the whole attempts tree).
+export function attemptWorkflow(slug, attempt) {
   const workflowPath = join(attempt.folder, "workflow.json");
-  if (!existsSync(workflowPath)) return [];
+  if (!existsSync(workflowPath)) return { phases: [], gates: {} };
   const workflow = JSON.parse(readFileSync(workflowPath, "utf8"));
-  return Array.isArray(workflow.workflow?.phases) ? workflow.workflow.phases.filter((phase) => typeof phase === "string" && phase) : [];
+  return {
+    phases: Array.isArray(workflow.workflow?.phases) ? workflow.workflow.phases.filter((phase) => typeof phase === "string" && phase) : [],
+    gates: workflow.workflow?.gates && typeof workflow.workflow.gates === "object" && !Array.isArray(workflow.workflow.gates) ? workflow.workflow.gates : {},
+  };
+}
+
+export function attemptPhases(slug, idOrName) {
+  return attemptWorkflow(slug, getAttempt(slug, idOrName)).phases;
 }
 
 // ─── Gates and evidence ─────────────────────────────────────────────────────
@@ -301,12 +310,7 @@ export function attemptPhases(slug, idOrName) {
 // workflow.json) stay gate-free and behave exactly as before.
 
 export function workflowGates(slug, idOrName) {
-  const attempt = getAttempt(slug, idOrName);
-  const workflowPath = join(attempt.folder, "workflow.json");
-  if (!existsSync(workflowPath)) return {};
-  const workflow = JSON.parse(readFileSync(workflowPath, "utf8"));
-  const gates = workflow.workflow?.gates;
-  return gates && typeof gates === "object" && !Array.isArray(gates) ? gates : {};
+  return attemptWorkflow(slug, getAttempt(slug, idOrName)).gates;
 }
 
 // Why a phase may not be advanced past yet, or null when it can.
@@ -324,40 +328,47 @@ function gateRequirement(gates, records, evidence, phase, strict = false) {
   return { kind, reason: `Phase "${phase}" is a ${kind} gate — record its evidence first (dirf attempt advance --evidence "<command>")` };
 }
 
-// All gate declarations for an attempt with their current record status.
+// All gate declarations for an attempt with their current record status,
+// resolved from an already-loaded attempt (one workflow read — projections
+// must not re-lookup per gate).
 // decision gates: pending (no record) / accepted / denied.
 // verify & soft gates: pending (no evidence) / satisfied (evidence recorded) —
 // a recorded accept also satisfies them.
-export function attemptGates(slug, idOrName) {
-  const attempt = getAttempt(slug, idOrName);
-  const gates = workflowGates(slug, attempt.id);
+export function attemptGateState(slug, attempt) {
+  const { phases, gates } = attemptWorkflow(slug, attempt);
   const records = attempt.gates || {};
   const evidence = attempt.evidence || {};
-  return attemptPhases(slug, attempt.id).filter((phase) => gates[phase]).map((phase) => {
-    const record = records[phase] || null;
-    const kind = gates[phase].kind || "verify";
-    const satisfied = kind !== "decision" && Boolean(evidence[phase]);
-    return {
-      phase,
-      kind,
-      verify: gates[phase].verify || null,
-      status: record ? record.status : satisfied ? "satisfied" : "pending",
-      comment: record?.comment || null,
-      by: record?.by || null,
-      at: record?.at || null,
-    };
-  });
+  return {
+    phases,
+    gates: phases.filter((phase) => gates[phase]).map((phase) => {
+      const record = records[phase] || null;
+      const kind = gates[phase].kind || "verify";
+      const satisfied = kind !== "decision" && Boolean(evidence[phase]);
+      return {
+        phase,
+        kind,
+        verify: gates[phase].verify || null,
+        status: record ? record.status : satisfied ? "satisfied" : "pending",
+        comment: record?.comment || null,
+        by: record?.by || null,
+        at: record?.at || null,
+      };
+    }),
+  };
+}
+
+export function attemptGates(slug, idOrName) {
+  return attemptGateState(slug, getAttempt(slug, idOrName)).gates;
 }
 
 // Gates not yet satisfied — what a resume must reconcile before continuing.
 export function pendingGates(slug, idOrName) {
-  return attemptGates(slug, idOrName).filter((gate) => gate.status !== "accepted" && gate.status !== "satisfied");
+  return attemptGateState(slug, getAttempt(slug, idOrName)).gates.filter((gate) => gate.status !== "accepted" && gate.status !== "satisfied");
 }
 
 // Recorded verification evidence per phase (replay-don't-rerun).
 export function recordedEvidence(slug, idOrName) {
-  const attempt = getAttempt(slug, idOrName);
-  return attempt.evidence || {};
+  return getAttempt(slug, idOrName).evidence || {};
 }
 
 export function readAttemptHandoff(slug, idOrName) {
@@ -491,7 +502,10 @@ export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now
 // session; the user-owned handoffs always wait). Advances through non-gated
 // phases and stops AT any unsatisfied gate, reporting it. Never crosses a
 // gate — the loop runs the same single-fire enforcement as `advance`.
-export function autoAdvance(slug, idOrName, { strict = false, now = new Date() } = {}) {
+// `evidence` (from `advance --auto --evidence`) is recorded for the FIRST
+// leaving phase, so a verify gate is satisfiable in the same pass; a decision
+// gate still stops and nothing is recorded for it.
+export function autoAdvance(slug, idOrName, { strict = false, evidence, now = new Date() } = {}) {
   let attempt = getAttempt(slug, idOrName);
   if (!attempt.tracked) throw new Error(`Attempt ${attempt.id} is historical. Start tracking it first.`);
   const phases = attemptPhases(slug, attempt.id);
@@ -503,8 +517,12 @@ export function autoAdvance(slug, idOrName, { strict = false, now = new Date() }
     const index = phases.indexOf(attempt.current_phase);
     if (index < 0 || index >= phases.length - 1) break;
     const leaving = phases[index];
-    if (gateRequirement(gates, attempt.gates || {}, attempt.evidence || {}, leaving, strict)) { stoppedAt = leaving; break; }
-    attempt = updateAttemptLifecycle(slug, attempt.id, "advance", {}, now);
+    const stepEvidence = advanced === 0 && evidence ? evidence : undefined;
+    // The gate check must see the to-be-recorded evidence (M1), otherwise a
+    // verify gate blocks the very step that would satisfy it.
+    const view = stepEvidence ? { ...(attempt.evidence || {}), [leaving]: stepEvidence } : attempt.evidence || {};
+    if (gateRequirement(gates, attempt.gates || {}, view, leaving, strict)) { stoppedAt = leaving; break; }
+    attempt = updateAttemptLifecycle(slug, attempt.id, "advance", stepEvidence ? { evidence: stepEvidence } : {}, now);
     advanced += 1;
   }
   return { attempt, advanced, stopped_at_gate: stoppedAt };
