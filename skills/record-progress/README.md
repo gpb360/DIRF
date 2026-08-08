@@ -1,3 +1,14 @@
+---
+name: record-progress
+kind: skill
+description: "Record workflow progress after each step and keep HANDOFF.md current for session recovery"
+uses: []
+details: []
+inputs: ["progress message", "phase", "next action", "changed files"]
+outputs: ["updated HANDOFF.md"]
+capabilities: ["session recovery", "progress tracking"]
+---
+
 # Record Progress
 
 Automatically track workflow progress and keep HANDOFF.md current for session recovery.

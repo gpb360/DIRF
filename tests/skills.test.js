@@ -106,6 +106,88 @@ test("bundledSkills exposes kit units with declared capabilities", () => {
   assert.equal(bundled["minimal-implementation"].provider, "dirf");
 });
 
+test("discover indexes invocation class from disable-model-invocation", () => {
+  const root = makeRoot();
+  write(join(root, "skills", "user-skill"), "SKILL.md",
+    "---\nname: user-skill\ndescription: A one-line summary for a person.\ndisable-model-invocation: true\n---\nRun a session.");
+  write(join(root, "skills", "model-skill"), "SKILL.md",
+    "---\nname: model-skill\ndescription: Use when the user mentions X or Y.\n---\nbody");
+  write(join(root, "skills", "yes-skill"), "SKILL.md",
+    "---\nname: yes-skill\ndescription: d\nuser-invocable: false\ndisable-model-invocation: yes\n---\nbody");
+  const idx = skills.discover(root);
+  assert.equal(idx["user-skill"].invocation, "user");
+  assert.equal(idx["model-skill"].invocation, "model");
+  // tolerant boolean: "yes" counts as true
+  assert.equal(idx["yes-skill"].invocation, "user");
+});
+
+test("discover indexes progressive-disclosure files and body size", () => {
+  const root = makeRoot();
+  write(join(root, "skills", "docs-skill"), "SKILL.md",
+    "---\nname: docs-skill\ndescription: d\n---\nbody");
+  write(join(root, "skills", "docs-skill"), "tests.md", "good tests\nbad tests");
+  write(join(root, "skills", "docs-skill"), "mocking.md", "mocking guidance");
+  mkdirSync(join(root, "skills", "docs-skill", "scripts"), { recursive: true });
+  writeFileSync(join(root, "skills", "docs-skill", "scripts", "run.sh"), "#!/bin/sh\n", "utf-8");
+  const idx = skills.discover(root);
+  assert.deepEqual(idx["docs-skill"].disclosures, ["mocking.md", "scripts/", "tests.md"]);
+  assert.ok(idx["docs-skill"].body_lines > 0);
+});
+
+test("discover hides README.md fallback itself from disclosures", () => {
+  const root = makeRoot();
+  write(join(root, "skills", "readme-skill"), "README.md",
+    "---\nname: readme-skill\ndescription: readme skill\n---\nbody");
+  write(join(root, "skills", "readme-skill"), "notes.md", "extra");
+  const idx = skills.discover(root);
+  assert.deepEqual(idx["readme-skill"].disclosures, ["notes.md"]);
+  assert.equal(idx["readme-skill"].invocation, "model");
+});
+
+test("discover indexes backticked /skill references from bodies", () => {
+  const root = makeRoot();
+  write(join(root, "skills", "grill-me"), "SKILL.md",
+    "---\nname: grill-me\ndescription: d\ndisable-model-invocation: true\n---\nRun a `/grilling` session, and mention `/domain-modeling` and `/grilling` again.\nCheck /tmp not a ref. https://x.test/a not a ref.");
+  write(join(root, "skills", "grilling"), "SKILL.md", "---\nname: grilling\ndescription: d\n---\nbody");
+  const idx = skills.discover(root);
+  // de-duplicated, sorted, backticked slash-commands only
+  assert.deepEqual(idx["grill-me"].references, ["domain-modeling", "grilling"]);
+  // no references in its own body → field absent entirely
+  assert.equal(idx["grilling"].references, undefined);
+});
+
+test("lintSkillMetadata surfaces spec-level quality warnings, never false on clean skills", () => {
+  const clean = { name: "tdd", path: "/s/tdd", description: "Use when the user wants to build features test-first or mentions red-green-refactor", body_lines: 38 };
+  assert.deepEqual(skills.lintSkillMetadata(clean), []);
+  assert.ok(skills.lintSkillMetadata({ name: "x", path: "/s/x", description: "" }).some((w) => /missing description/.test(w)));
+  assert.ok(skills.lintSkillMetadata({ name: "a", path: "/s/b", description: "d" }).some((w) => /does not match parent directory/.test(w)));
+  assert.ok(skills.lintSkillMetadata({ name: "x", path: "/s/x", description: "I create things" }).some((w) => /first-person/.test(w)));
+  assert.ok(skills.lintSkillMetadata({ name: "x", path: "/s/x", description: `d${"x".repeat(1025)}` }).some((w) => /spec cap 1024/.test(w)));
+  assert.ok(skills.lintSkillMetadata({ name: "x", path: "/s/x", description: "d", body_lines: 501 }).some((w) => /keep under 500/.test(w)));
+  assert.ok(skills.lintSkillMetadata({ name: "x", path: "/s/x", description: "d <xml>tag</xml>" }).some((w) => /XML tags/.test(w)));
+});
+
+test("tokenBudget reports metadata vs eager-load economics", () => {
+  const budget = skills.tokenBudget({
+    a: { name: "a", description: "abcd", body_chars: 40 },
+    b: { name: "b", description: "efgh", body_chars: 40 },
+  });
+  assert.deepEqual(budget, { skills: 2, metadataTokens: 3, eagerTokens: 20, savings: 85 });
+  assert.deepEqual(skills.tokenBudget({}), { skills: 0, metadataTokens: 0, eagerTokens: 0, savings: 0 });
+});
+
+test("backticked references are precise: single-token commands only, self-refs dropped", () => {
+  const root = makeRoot();
+  write(join(root, "skills", "benchmark"), "SKILL.md",
+    "---\nname: benchmark\ndescription: d\n---\nRun `/benchmark` for the suite. Execute `/bin/bash` and `/tmp/x` — never `/scripts/setup.sh`.");
+  write(join(root, "skills", "grill-me"), "SKILL.md",
+    "---\nname: grill-me\ndescription: d\n---\nRun a `/grilling` session.");
+  const idx = skills.discover(root);
+  // multi-segment backticked paths never match; own-name reference dropped
+  assert.equal(idx["benchmark"].references, undefined);
+  assert.deepEqual(idx["grill-me"].references, ["grilling"]);
+});
+
 test("discoverAgents indexes project agent files but never the kit's bundled agents/", () => {
   const root = mkdtempSync(join(tmpdir(), "dirf-agents-"));
   mkdirSync(join(root, ".claude", "agents"), { recursive: true });

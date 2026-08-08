@@ -47,6 +47,16 @@ test("dirf state which resolves a registered project from a worktree", () => {
   assert.match(out, /whichproj-[a-z0-9]+-[0-9a-f]{8}/);
 });
 
+test("dirf state which reports the current branch", () => {
+  const home = freshHome();
+  const main = mkdtempSync(join(tmpdir(), "branchwhich-"));
+  execFileSync("git", ["init", "-q"], { cwd: main, timeout: TIMEOUT });
+  run(["setup", main], { DIRF_HOME: home });
+  execFileSync("git", ["-C", main, "checkout", "-q", "-b", "feature/x"], { timeout: TIMEOUT });
+  const out = run(["state", "which"], { DIRF_HOME: home }, main);
+  assert.match(out, /branch: feature\/x/);
+});
+
 test("dirf state write-handoff --file writes the canonical handoff", () => {
   const home = freshHome();
   const main = mkdtempSync(join(tmpdir(), "whproj2-"));

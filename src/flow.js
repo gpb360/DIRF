@@ -26,6 +26,30 @@ export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
           errors.push(`playbook ${name}: workflow.${field} must be a non-empty string`);
         }
       }
+      // Optional per-phase gates (config.workflow.gates): each key must name a
+      // declared phase, with kind verify|decision|soft and an optional verify
+      // command. Flattened into the persisted workflow at selection time.
+      if (playbook.workflow.gates !== undefined) {
+        const gates = playbook.workflow.gates;
+        if (!gates || typeof gates !== "object" || Array.isArray(gates)) {
+          errors.push(`playbook ${name}: workflow.gates must be an object`);
+        } else {
+          const phases = Array.isArray(playbook.workflow.phases) ? playbook.workflow.phases : [];
+          for (const [phase, spec] of Object.entries(gates)) {
+            if (!phases.includes(phase)) errors.push(`playbook ${name}: workflow.gates references unknown phase ${phase}`);
+            if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
+              errors.push(`playbook ${name}: workflow.gates.${phase} must be an object`);
+              continue;
+            }
+            if (!["verify", "decision", "soft"].includes(spec.kind)) {
+              errors.push(`playbook ${name}: workflow.gates.${phase}.kind must be verify, decision, or soft`);
+            }
+            if (spec.verify !== undefined && (typeof spec.verify !== "string" || !spec.verify.trim())) {
+              errors.push(`playbook ${name}: workflow.gates.${phase}.verify must be a non-empty string`);
+            }
+          }
+        }
+      }
     }
     const flow = playbook.skill_flow;
     if (!flow) {
@@ -94,7 +118,14 @@ function words(value) {
 
 function selectCapability(requirement, selection, context, skillIndex) {
   const capabilityWords = words(requirement.capability);
-  const ranked = Object.entries(skillIndex).map(([name, item]) => {
+  // User-invoked skills (`disable-model-invocation`) are human-only: their
+  // descriptions are written for a person, not for routing, so scoring them
+  // misroutes. They stay indexed and visible in `skills scan`, but are not
+  // candidates for autonomous selection. Fall back to the full set when every
+  // candidate is user-invoked — a host may route only by hand.
+  const entries = Object.entries(skillIndex);
+  const pool = entries.some(([, item]) => item.invocation !== "user") ? entries.filter(([, item]) => item.invocation !== "user") : entries;
+  const ranked = pool.map(([name, item]) => {
     const candidate = words([name, item.description, item.summary, item.category, ...(item.applies_to || []), ...(item.tags || [])].join(" "));
     const declared = Array.isArray(item.capabilities) ? item.capabilities : String(item.capabilities || "").split(",").map((value) => value.trim()).filter(Boolean);
     const normalizedName = name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -125,6 +156,11 @@ function selectCapability(requirement, selection, context, skillIndex) {
     status: "installed",
     provider: chosen.item.provider || "project",
     path: chosen.item.path,
+    // Emitted only when meaningful, so plain model-invoked steps keep their
+    // historical shape: a user-invoked pick (fallback routing) is labeled so
+    // consumers know it is human-only; disclosures are lazy-load pointers.
+    ...(chosen.item.invocation === "user" ? { invocation: "user" } : {}),
+    ...(chosen.item.disclosures?.length ? { disclosures: chosen.item.disclosures } : {}),
     selection_reason: `best installed match (${chosen.score}) for ${requirement.capability || requirement.stage}`,
     rejected_candidates: ranked.slice(1, 4).map(({ name, score }) => ({ name, score })),
   };

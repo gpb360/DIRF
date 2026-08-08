@@ -136,6 +136,36 @@ test("single-word capabilities resolve against local install descriptions", () =
   assert.deepEqual(flow.gaps, []);
 });
 
+test("user-invoked skills are not routing candidates when model-invoked ones exist", () => {
+  const selection = {
+    playbook: "demo", agents: [],
+    skill_flow: { label: "demo", steps: [{ stage: "write", capability: "copywriting", reason: "Write the copy" }] },
+  };
+  // The user-invoked skill is the strictly better match (declared capability)
+  // but its description is human-facing by design — it must not win routing.
+  const flow = buildFlow(selection, {}, {
+    "copywriter-coach": { path: "/u", description: "Professional copywriting coach with frameworks", capabilities: ["copywriting"], provider: "project", invocation: "user" },
+    "copywriter-model": { path: "/m", description: "Professional copywriting coach with frameworks", provider: "project" },
+  });
+  assert.equal(flow.steps.length, 1);
+  assert.equal(flow.steps[0].skill, "copywriter-model");
+  assert.equal(flow.steps[0].invocation, undefined);
+});
+
+test("user-invoked-only hosts fall back and label the pick", () => {
+  const selection = {
+    playbook: "demo", agents: [],
+    skill_flow: { label: "demo", steps: [{ stage: "write", capability: "copywriting", reason: "Write the copy" }] },
+  };
+  const flow = buildFlow(selection, {}, {
+    "copywriter-coach": { path: "/u", description: "Professional copywriting coach with frameworks", capabilities: ["copywriting"], provider: "project", invocation: "user", disclosures: ["mocking.md", "tests.md"] },
+  });
+  assert.equal(flow.steps[0].skill, "copywriter-coach");
+  assert.equal(flow.steps[0].invocation, "user");
+  // disclosures ride along when present
+  assert.deepEqual(flow.steps[0].disclosures, ["mocking.md", "tests.md"]);
+});
+
 test("multi-session feature activates spec, ticket, and handoff branches", () => {
   const selection = {
     playbook: "fullstack-feature",

@@ -278,18 +278,135 @@ function writeAttempt(slug, attempt) {
   return getAttempt(slug, stored.id);
 }
 
-export function attemptPhases(slug, idOrName) {
-  const attempt = getAttempt(slug, idOrName);
+// Single workflow.json read for an already-loaded attempt. Projections pass
+// the attempt they already hold so per-attempt work stays O(1) reads, not O(N)
+// (every getAttempt lists the whole attempts tree).
+export function attemptWorkflow(slug, attempt) {
   const workflowPath = join(attempt.folder, "workflow.json");
-  if (!existsSync(workflowPath)) return [];
+  if (!existsSync(workflowPath)) return { phases: [], gates: {} };
   const workflow = JSON.parse(readFileSync(workflowPath, "utf8"));
-  return Array.isArray(workflow.workflow?.phases) ? workflow.workflow.phases.filter((phase) => typeof phase === "string" && phase) : [];
+  return {
+    phases: Array.isArray(workflow.workflow?.phases) ? workflow.workflow.phases.filter((phase) => typeof phase === "string" && phase) : [],
+    gates: workflow.workflow?.gates && typeof workflow.workflow.gates === "object" && !Array.isArray(workflow.workflow.gates) ? workflow.workflow.gates : {},
+  };
+}
+
+export function attemptPhases(slug, idOrName) {
+  return attemptWorkflow(slug, getAttempt(slug, idOrName)).phases;
+}
+
+// ─── Gates and evidence ─────────────────────────────────────────────────────
+// Playbooks declare per-phase gates (config.workflow.gates), flattened into the
+// persisted workflow.json at selection time (same precedent as
+// conditional_contract). Gate kinds:
+//   verify   — the phase must be advanced past WITH a recorded evidence record
+//   decision — the phase must be advanced past WITH an accepted gate record
+//              (user-owned decision — see the Decision Ownership policy)
+//   soft     — tracked only; advance allowed without a record unless --strict
+// Records live on attempt.json: `gates[phase]` = {status: accepted|denied,
+// comment, by, at} (deny requires a comment — revise-and-retry feedback) and
+// `evidence[phase]` = {command, output, at}. Pending = absent (tri-state
+// pending-as-absence — never "unknown"). Old attempts (no gates in their
+// workflow.json) stay gate-free and behave exactly as before.
+
+export function workflowGates(slug, idOrName) {
+  return attemptWorkflow(slug, getAttempt(slug, idOrName)).gates;
+}
+
+// Why a phase may not be advanced past yet, or null when it can.
+function gateRequirement(gates, records, evidence, phase, strict = false) {
+  const gate = gates[phase];
+  if (!gate) return null;
+  const kind = gate.kind || "verify";
+  if (kind === "decision") {
+    return records[phase]?.status === "accepted"
+      ? null
+      : { kind, reason: `Phase "${phase}" is a decision gate — record the decision first (dirf attempt gate ... accept|deny --comment "...")` };
+  }
+  if (evidence[phase]) return null;
+  if (kind === "soft" && !strict) return null;
+  return { kind, reason: `Phase "${phase}" is a ${kind} gate — record its evidence first (dirf attempt advance --evidence "<command>")` };
+}
+
+// All gate declarations for an attempt with their current record status,
+// resolved from an already-loaded attempt (one workflow read — projections
+// must not re-lookup per gate).
+// decision gates: pending (no record) / accepted / denied.
+// verify & soft gates: pending (no evidence) / satisfied (evidence recorded) —
+// a recorded accept also satisfies them.
+export function attemptGateState(slug, attempt) {
+  const { phases, gates } = attemptWorkflow(slug, attempt);
+  const records = attempt.gates || {};
+  const evidence = attempt.evidence || {};
+  return {
+    phases,
+    gates: phases.filter((phase) => gates[phase]).map((phase) => {
+      const record = records[phase] || null;
+      const kind = gates[phase].kind || "verify";
+      const satisfied = kind !== "decision" && Boolean(evidence[phase]);
+      return {
+        phase,
+        kind,
+        verify: gates[phase].verify || null,
+        status: record ? record.status : satisfied ? "satisfied" : "pending",
+        comment: record?.comment || null,
+        by: record?.by || null,
+        at: record?.at || null,
+      };
+    }),
+  };
+}
+
+export function attemptGates(slug, idOrName) {
+  return attemptGateState(slug, getAttempt(slug, idOrName)).gates;
+}
+
+// Gates not yet satisfied — what a resume must reconcile before continuing.
+export function pendingGates(slug, idOrName) {
+  return attemptGateState(slug, getAttempt(slug, idOrName)).gates.filter((gate) => gate.status !== "accepted" && gate.status !== "satisfied");
+}
+
+// Recorded verification evidence per phase (replay-don't-rerun).
+export function recordedEvidence(slug, idOrName) {
+  return getAttempt(slug, idOrName).evidence || {};
 }
 
 export function readAttemptHandoff(slug, idOrName) {
   const attempt = getAttempt(slug, idOrName);
-  const path = join(attempt.folder, "HANDOFF.md");
+  return readAttemptHandoffFile(slug, attempt.id);
+}
+
+// Direct file read (no getAttempt lookup) — used by hot loops like
+// portfolioSnapshot where the attempt objects are already in hand.
+function readAttemptHandoffFile(slug, attemptId) {
+  const path = join(storeAttemptDir(slug, attemptId), "HANDOFF.md");
   return existsSync(path) ? readFileSync(path, "utf8") : null;
+}
+
+// Completion evidence an attempt HANDOFF.md can carry. Two deliberately
+// conservative signals: the storytellers-style explicit status line, or a
+// filled-in "## Completed" section (the workflow template writes that section
+// with "(none yet)" as a placeholder, so an empty section is NOT evidence).
+export function handoffHasCompletionEvidence(markdown) {
+  if (!markdown) return false;
+  if (/^##\s*Status:\s*Complete\.?\s*$/m.test(markdown)) return true;
+  return /^##\s+Completed\b/m.test(markdown) && !/\(\s*none yet\s*\)/i.test(markdown);
+}
+
+// The status the store should REPORT for an attempt. Lifecycle states (done,
+// in_progress, blocked) always win — they are authoritative. planned/historical
+// attempts are upgraded to done when their handoff carries completion evidence
+// (status_source distinguishes "handoff" from "lifecycle" so the view never
+// lies about where a status came from). Reading is cheap (one tiny file per
+// attempt) and the store itself is never mutated by this.
+export function effectiveAttemptStatus(slug, attempt) {
+  if (attempt.status === "done" || attempt.status === "in_progress" || attempt.status === "blocked") {
+    return { status: attempt.status, status_source: "lifecycle" };
+  }
+  if (handoffHasCompletionEvidence(readAttemptHandoffFile(slug, attempt.id))) {
+    return { status: "done", status_source: "handoff" };
+  }
+  return { status: attempt.status, status_source: "lifecycle" };
 }
 
 export function attemptNextAction(slug, idOrName) {
@@ -333,15 +450,41 @@ export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now
     if (attempt.status !== "in_progress") throw new Error("Only an in-progress attempt can advance");
     const index = phases.indexOf(attempt.current_phase);
     if (index < 0 || index >= phases.length - 1) throw new Error("Attempt is already at its final phase");
-    attempt = { ...attempt, current_phase: phases[index + 1] };
+    const leaving = phases[index];
+    const evidence = { ...(attempt.evidence || {}) };
+    if (options.evidence) {
+      const command = String(options.evidence.command || "").trim();
+      if (!command) throw new Error("evidence command must not be empty");
+      evidence[leaving] = { command, output: options.evidence.output ? String(options.evidence.output) : null, at: timestamp };
+    }
+    const requirement = gateRequirement(workflowGates(slug, attempt.id), attempt.gates || {}, evidence, leaving, options.strict === true);
+    if (requirement) throw new Error(requirement.reason);
+    // Only introduce the evidence key when it has content — gate-free attempts
+    // stay byte-identical to how they were written before.
+    attempt = { ...attempt, current_phase: phases[index + 1], ...(Object.keys(evidence).length ? { evidence } : {}) };
   } else if (action === "block") {
     const blocker = String(options.reason || "").trim();
     if (!blocker) throw new Error("blocker reason is required");
     if (!new Set(["planned", "in_progress"]).has(attempt.status)) throw new Error("Only planned or in-progress attempts can be blocked");
-    attempt = { ...attempt, status: "blocked", blocker };
+    const wait = options.wait === "input" || options.wait === "blocker" ? options.wait : null;
+    attempt = { ...attempt, status: "blocked", blocker, ...(wait ? { wait } : {}) };
+  } else if (action === "gate") {
+    if (attempt.status !== "in_progress") throw new Error("Only an in-progress attempt can record a gate decision");
+    const phase = String(options.phase || "").trim();
+    if (!phase) throw new Error("gate phase is required");
+    if (!phases.includes(phase)) throw new Error(`Unknown phase ${JSON.stringify(phase)} — no such workflow phase`);
+    const decision = options.decision;
+    if (decision !== "accept" && decision !== "deny") throw new Error('gate decision must be "accept" or "deny"');
+    const comment = String(options.comment || "").trim();
+    if (decision === "deny" && !comment) throw new Error("denial requires a comment (revise-and-retry feedback)");
+    const gates = {
+      ...(attempt.gates || {}),
+      [phase]: { status: decision === "accept" ? "accepted" : "denied", comment: comment || null, by: attempt.worker || options.worker || null, at: timestamp },
+    };
+    attempt = { ...attempt, gates };
   } else if (action === "reopen") {
     if (!new Set(["blocked", "done"]).has(attempt.status)) throw new Error("Only blocked or done attempts can reopen");
-    attempt = { ...attempt, status: "in_progress", current_phase: attempt.current_phase || phases[0] || null, blocker: null, completed_at: null };
+    attempt = { ...attempt, status: "in_progress", current_phase: attempt.current_phase || phases[0] || null, blocker: null, wait: null, completed_at: null };
   } else if (action === "complete") {
     if (attempt.status !== "in_progress") throw new Error("Only an in-progress attempt can complete");
     if (!phases.length || attempt.current_phase !== phases.at(-1)) throw new Error("Attempt must reach its final phase before completion");
@@ -355,6 +498,36 @@ export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now
   return writeAttempt(slug, { ...attempt, updated_at: timestamp });
 }
 
+// Guarded auto-advance (HumanLayer F4: covered transitions auto-start the next
+// session; the user-owned handoffs always wait). Advances through non-gated
+// phases and stops AT any unsatisfied gate, reporting it. Never crosses a
+// gate — the loop runs the same single-fire enforcement as `advance`.
+// `evidence` (from `advance --auto --evidence`) is recorded for the FIRST
+// leaving phase, so a verify gate is satisfiable in the same pass; a decision
+// gate still stops and nothing is recorded for it.
+export function autoAdvance(slug, idOrName, { strict = false, evidence, now = new Date() } = {}) {
+  let attempt = getAttempt(slug, idOrName);
+  if (!attempt.tracked) throw new Error(`Attempt ${attempt.id} is historical. Start tracking it first.`);
+  const phases = attemptPhases(slug, attempt.id);
+  const gates = workflowGates(slug, attempt.id);
+  let advanced = 0;
+  let stoppedAt = null;
+  for (;;) {
+    if (attempt.status !== "in_progress") break;
+    const index = phases.indexOf(attempt.current_phase);
+    if (index < 0 || index >= phases.length - 1) break;
+    const leaving = phases[index];
+    const stepEvidence = advanced === 0 && evidence ? evidence : undefined;
+    // The gate check must see the to-be-recorded evidence (M1), otherwise a
+    // verify gate blocks the very step that would satisfy it.
+    const view = stepEvidence ? { ...(attempt.evidence || {}), [leaving]: stepEvidence } : attempt.evidence || {};
+    if (gateRequirement(gates, attempt.gates || {}, view, leaving, strict)) { stoppedAt = leaving; break; }
+    attempt = updateAttemptLifecycle(slug, attempt.id, "advance", stepEvidence ? { evidence: stepEvidence } : {}, now);
+    advanced += 1;
+  }
+  return { attempt, advanced, stopped_at_gate: stoppedAt };
+}
+
 export function linkAttemptWorktree(slug, idOrName, worktreePath, now = new Date()) {
   const attempt = getAttempt(slug, idOrName);
   if (!attempt.tracked) throw new Error(`Attempt ${attempt.id} is historical. Start tracking it first.`);
@@ -364,7 +537,67 @@ export function linkAttemptWorktree(slug, idOrName, worktreePath, now = new Date
   return writeAttempt(slug, { ...attempt, worktree_path: portable(resolvedPath), updated_at: now.toISOString() });
 }
 
-const DEFAULT_SETTINGS = Object.freeze({ schema_version: 1, dirf_cli_path: null, stale_worktree_days: 14, archive_reminder_days: 30 });
+// Backfill: promote handoff completion evidence into the lifecycle. Only
+// planned/historical attempts are upgraded (in_progress/blocked stay put —
+// open work is authoritative). completed_at comes from the handoff file mtime,
+// i.e. when the work was actually written. Never touches the handoff itself.
+export function syncAttemptFromHandoff(slug, idOrName) {
+  const attempt = getAttempt(slug, idOrName);
+  if (attempt.status === "done") return { ...attempt, changed: false, reason: "already done" };
+  if (attempt.status === "in_progress" || attempt.status === "blocked") {
+    return { ...attempt, changed: false, reason: `status is ${attempt.status} — open work wins` };
+  }
+  const handoffPath = join(storeAttemptDir(slug, attempt.id), "HANDOFF.md");
+  const handoff = readAttemptHandoffFile(slug, attempt.id);
+  if (!handoffHasCompletionEvidence(handoff)) {
+    return { ...attempt, changed: false, reason: "no completion evidence in HANDOFF.md" };
+  }
+  const completedAt = statSync(handoffPath).mtime.toISOString();
+  const phases = attemptPhases(slug, attempt.id);
+  return {
+    ...writeAttempt(slug, {
+      ...attempt,
+      schema_version: 2,
+      status: "done",
+      current_phase: attempt.current_phase || phases.at(-1) || null,
+      blocker: null,
+      completed_at: completedAt,
+      updated_at: completedAt,
+    }),
+    changed: true,
+    reason: "backfilled from handoff evidence",
+  };
+}
+
+// Automation: keep the lifecycle honest as work progresses. Called by
+// `dirf record-progress`. planned → start (needs workflow phases); in_progress
+// → advance until current_phase matches the reported phase (unknown phases are
+// left alone — conservative). Returns the updated attempt, or null when
+// nothing changed.
+export function syncLifecycleFromProgress(slug, phase, now = new Date()) {
+  const attempt = currentAttempt(slug);
+  if (!attempt?.tracked) return null;
+  const phases = attemptPhases(slug, attempt.id);
+  if (attempt.status === "planned") {
+    if (!phases.length) return null;
+    return updateAttemptLifecycle(slug, attempt.id, "start", {}, now);
+  }
+  if (attempt.status === "in_progress" && phase && phases.includes(phase)) {
+    let current = attempt;
+    let steps = 0;
+    const gates = workflowGates(slug, attempt.id);
+    while (current.current_phase !== phase && steps < phases.length) {
+      // Stop at unsatisfied gates — the lifecycle must never cross one.
+      if (gateRequirement(gates, current.gates || {}, current.evidence || {}, current.current_phase, false)) break;
+      current = updateAttemptLifecycle(slug, attempt.id, "advance", {}, now);
+      steps += 1;
+    }
+    return current.current_phase === phase ? current : null;
+  }
+  return null;
+}
+
+const DEFAULT_SETTINGS = Object.freeze({ schema_version: 1, dirf_cli_path: null, stale_worktree_days: 14, archive_reminder_days: 30, stale_project_days: 30 });
 
 export function readSettings() {
   const path = join(storeHome(), "settings.json");
@@ -376,7 +609,7 @@ export function readSettings() {
 
 export function writeSettings(patch) {
   const settings = { ...readSettings(), ...patch, schema_version: 1 };
-  for (const key of ["stale_worktree_days", "archive_reminder_days"]) {
+  for (const key of ["stale_worktree_days", "archive_reminder_days", "stale_project_days"]) {
     if (!Number.isInteger(settings[key]) || settings[key] < 1) throw new Error(`${key} must be a positive integer`);
   }
   if (settings.dirf_cli_path !== null && (typeof settings.dirf_cli_path !== "string" || !settings.dirf_cli_path.trim())) {
@@ -697,4 +930,114 @@ export function promoteObservation(slug, entryN, { attemptId } = {}) {
   if (!entry) throw new Error(`No observation #${entryN} in attempt ${cur.id}. Run \`dirf notice list\` to see entries.`);
   appendObservation(slug, entry.text, { project: true });
   return { promoted: entryN, from: cur.id, text: entry.text };
+}
+
+// ─── Portfolio (cross-project view) ─────────────────────────────────────────
+// A derived, read-only snapshot of every registered project: identity, an
+// active/stale/completed/archived/empty classification, attempt counts and the
+// latest attempt. Powers `dirf portfolio`, `dirf export obsidian|graphify` and
+// (later) the flow-board app. The only project-level write is the explicit
+// status override (setProjectStatus) — everything else stays derived so the
+// view can never drift from the store.
+
+// Explicit project-level statuses stored on the registry record. `null` clears
+// the override and returns the project to derived classification.
+export function setProjectStatus(slug, status) {
+  if (status !== null && status !== "complete" && status !== "archived") {
+    throw new Error(`Invalid project status ${JSON.stringify(status)} — use "complete" or "archived"`);
+  }
+  const registry = readRegistry();
+  const record = registry.projects[slug];
+  if (!record) throw new Error(`Unknown DIRF project ${slug}`);
+  if (status === null) delete record.status;
+  else record.status = status;
+  writeRegistry(registry);
+  return getProject(slug);
+}
+
+// The completion signal a project handoff can carry when it was closed by hand
+// (storytellers-style) rather than through the attempt lifecycle.
+const HANDOFF_COMPLETE_RE = /^##\s*Status:\s*Complete\.?\s*$/m;
+
+// Classification ladder (first match wins):
+//   explicit override -> empty (no attempts) -> active (open work)
+//   -> completed (all tracked done | handoff says Complete)
+//   -> active (recent activity within stale_project_days) -> stale.
+export function portfolioSnapshot(now = new Date()) {
+  const settings = readSettings();
+  const staleDays = Number.isInteger(settings.stale_project_days) && settings.stale_project_days > 0
+    ? settings.stale_project_days
+    : DEFAULT_SETTINGS.stale_project_days;
+  const staleMs = staleDays * 86_400_000;
+  const nowMs = now.getTime();
+
+  const projects = listProjects().map((project) => {
+    const attempts = listAttempts(project.slug);
+    const counts = { planned: 0, in_progress: 0, blocked: 0, done: 0, historical: 0 };
+    const effective = new Map();
+    let evidenceDone = 0;
+    let lastActivity = Date.parse(project.last_seen || 0) || 0;
+    for (const attempt of attempts) {
+      const { status, status_source: source } = effectiveAttemptStatus(project.slug, attempt);
+      effective.set(attempt.id, { status, status_source: source });
+      if (status === "done" && source === "handoff") evidenceDone += 1;
+      const key = ["planned", "in_progress", "blocked", "done", "historical"].includes(status) ? status : "historical";
+      counts[key] += 1;
+      const ts = Date.parse(attempt.updated_at || attempt.created_at || 0) || 0;
+      if (ts > lastActivity) lastActivity = ts;
+    }
+    const tracked = attempts.filter((attempt) => attempt.tracked);
+    const latest = attempts.at(-1) || null;
+    const handoff = readHandoff(project.slug);
+    const handoffComplete = handoff !== null && HANDOFF_COMPLETE_RE.test(handoff);
+    const hasOpenWork = counts.in_progress > 0 || counts.blocked > 0;
+    const allTrackedDone = tracked.length > 0 && tracked.every((attempt) => effective.get(attempt.id).status === "done");
+
+    let status;
+    if (project.status === "complete" || project.status === "archived") status = project.status;
+    else if (attempts.length === 0) status = "empty";
+    else if (hasOpenWork) status = "active";
+    else if (allTrackedDone || handoffComplete) status = "completed";
+    else if (nowMs - lastActivity < staleMs) status = "active";
+    else status = "stale";
+
+    return {
+      slug: project.slug,
+      name: project.name,
+      main_path: project.main_path,
+      created_at: project.created_at,
+      last_seen: project.last_seen,
+      status,
+      explicit_status: project.status || null,
+      last_activity: lastActivity ? new Date(lastActivity).toISOString() : null,
+      days_since_activity: lastActivity ? Math.max(0, Math.floor((nowMs - lastActivity) / 86_400_000)) : null,
+      handoff: handoff !== null,
+      attempts: { total: attempts.length, tracked: tracked.length, evidence_done: evidenceDone, ...counts },
+      latest: latest ? {
+        id: latest.id,
+        name: latest.name,
+        status: effective.get(latest.id).status,
+        status_source: effective.get(latest.id).status_source,
+        current_phase: latest.current_phase || null,
+        updated_at: latest.updated_at || latest.created_at,
+        next_action: attemptNextAction(project.slug, latest.id),
+      } : null,
+    };
+  });
+
+  const summary = { projects: projects.length };
+  for (const project of projects) {
+    summary[project.status] = (summary[project.status] || 0) + 1;
+    for (const [key, value] of Object.entries(project.attempts)) {
+      if (key === "total" || key === "tracked") continue;
+      summary[`attempts_${key}`] = (summary[`attempts_${key}`] || 0) + value;
+    }
+  }
+
+  return {
+    generated_at: new Date(nowMs).toISOString(),
+    stale_project_days: staleDays,
+    summary,
+    projects,
+  };
 }

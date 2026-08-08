@@ -95,24 +95,65 @@ function parseFrontmatter(text) {
 }
 
 function readSkillFile(path) {
-  // Read a skill definition file. Returns [name, fieldsObj].
+  // Read a skill definition file. Returns [name, fieldsObj, lineCount, body].
   let text;
   try {
     text = readFileSync(path, "utf-8");
   } catch {
-    return ["", {}];
+    return ["", {}, 0, ""];
   }
+  const lines = text.split(/\r?\n/).length;
   if (path.endsWith(".json")) {
     try {
       const data = JSON.parse(text);
-      if (data && typeof data === "object") return [String(data.name || basenameDir(path)), data];
+      if (data && typeof data === "object") return [String(data.name || basenameDir(path)), data, lines, ""];
     } catch {
       /* fall through */
     }
-    return ["", {}];
+    return ["", {}, 0, ""];
   }
   const fm = parseFrontmatter(text);
-  return [fm.name || basenameDir(path), fm];
+  return [fm.name || basenameDir(path), fm, lines, text];
+}
+
+// Backticked /skill references are the ecosystem's de-facto dependency
+// mechanism ("Run a `/grilling` session."). Precise by construction: only
+// backtick-wrapped slash-commands count, so paths and prose never do. The
+// index records them so `skills scan` can resolve referenced-but-absent
+// skills — DIRF's agnostic promise extended from registries to bodies.
+function backtickSkillRefs(body) {
+  const refs = [];
+  const re = /`\/([a-z0-9][a-z0-9-]*)`/g;
+  let m;
+  while ((m = re.exec(body || ""))) refs.push(m[1]);
+  return [...new Set(refs)].sort();
+}
+
+// Tolerant boolean for frontmatter flags (yes/no/on/off/1/0/true/false — the
+// Claude Code convention). Returns undefined when absent or unparseable.
+function parseBool(value) {
+  if (value === undefined || value === null) return undefined;
+  const v = String(value).trim().toLowerCase();
+  if (["yes", "on", "1", "true"].includes(v)) return true;
+  if (["no", "off", "0", "false"].includes(v)) return false;
+  return undefined;
+}
+
+function collectDisclosures(folder, indexFile) {
+  // Progressive disclosure: co-located files one level deep next to a skill's
+  // index file (tests.md, mocking.md, scripts/, templates/) are loaded on
+  // demand. Index them so rendered sets can point at them lazily — unread
+  // files cost zero tokens. Excludes the index file itself.
+  let entries;
+  try {
+    entries = readdirSync(folder, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((entry) => entry.name !== indexFile)
+    .map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name))
+    .sort();
 }
 
 function basenameDir(path) {
@@ -220,15 +261,37 @@ function walkFiles(dir, out = []) {
 }
 
 function indexOne(path, index) {
-  const [name, fm] = readSkillFile(path);
+  const [name, fm, lineCount, body] = readSkillFile(path);
   if (!name) return;
   const desc = typeof fm === "object" ? fm.description || "" : "";
   // First found wins (SKILL.md priority order), but keep richer descriptions.
   const existing = index[name];
   if (existing && !desc) return;
   const normalized = path.replace(/\\/g, "/");
-  const provider = providerForPath(normalized);
-  index[name] = { name, path: normalized.replace(/\/[^/]+$/, ""), file: normalized.split("/").pop(), description: desc, provider };
+  const folder = normalized.replace(/\/[^/]+$/, "");
+  const file = normalized.split("/").pop();
+  // Invocation class (the ecosystem's master routing attribute). A skill that
+  // declares `disable-model-invocation` is user-invoked: its description is
+  // written for a person, NOT a routing hint — flow.js must not score it.
+  // Absent flag ⇒ model-invoked (the default). DIRF only reads the skill's
+  // own declaration; it never imposes one.
+  const invocation = parseBool(typeof fm === "object" ? fm["disable-model-invocation"] : undefined) === true ? "user" : "model";
+  // Self-references (a skill's help text mentioning its own /name) are not
+  // dependencies — drop them so the reference graph stays meaningful.
+  const references = backtickSkillRefs(body).filter((ref) => ref !== name);
+  index[name] = {
+    name,
+    path: folder,
+    file,
+    description: desc,
+    provider: providerForPath(normalized),
+    invocation,
+    disclosures: collectDisclosures(folder, file),
+    body_lines: lineCount,
+    body_chars: body.length,
+    // Only emitted when present — plain skills keep their historical shape.
+    ...(references.length ? { references } : {}),
+  };
 }
 
 export function discoverAgents(projectRoot) {
@@ -274,6 +337,43 @@ export function providerForPath(path) {
     const index = normalized.lastIndexOf(marker);
     return index > best.index ? { index, provider } : best;
   }, { index: -1, provider: "project" }).provider;
+}
+
+// Mechanical, spec-level metadata linting (agentskills.io + Anthropic
+// guidance). Read-only and warning-shaped: DIRF never fails on skill quality,
+// it only surfaces what a host can fix. Every check is structural — no
+// skill-specific knowledge, nothing opinionated about which skills to use.
+export function lintSkillMetadata(entry) {
+  const warnings = [];
+  const name = entry?.name || "";
+  const desc = entry?.description || "";
+  if (!desc) {
+    warnings.push("missing description — cannot be routed");
+  } else {
+    if (desc.length > 1024) warnings.push(`description is ${desc.length} chars (spec cap 1024)`);
+    if (/^(i|we|you|my|our)\b/i.test(desc)) warnings.push("description reads first-person (write in third person)");
+    if (/<[a-z][a-z0-9]*>/i.test(desc)) warnings.push("description contains XML tags");
+  }
+  const dir = String(entry?.path || "").replace(/\\/g, "/").split("/").pop();
+  if (dir && dir !== name) warnings.push(`name "${name}" does not match parent directory "${dir}" (breaks installers' routing)`);
+  if (entry?.body_lines && entry.body_lines > 500) warnings.push(`SKILL.md body is ${entry.body_lines} lines (keep under 500 — progressive disclosure)`);
+  return warnings;
+}
+
+// Progressive-disclosure economics, in tokens (rough: chars / 4). Only name +
+// description are always loaded (the metadata tier); bodies cost tokens only
+// when actually read. The savings figure is the measured upside of loading
+// lazily instead of eagerly.
+export function tokenBudget(index) {
+  const skills = Object.values(index || {});
+  const metadataTokens = Math.ceil(skills.reduce((sum, s) => sum + (s.name || "").length + (s.description || "").length, 0) / 4);
+  const eagerTokens = Math.ceil(skills.reduce((sum, s) => sum + (s.body_chars || 0), 0) / 4);
+  return {
+    skills: skills.length,
+    metadataTokens,
+    eagerTokens,
+    savings: eagerTokens > 0 ? Math.round((1 - metadataTokens / eagerTokens) * 100) : 0,
+  };
 }
 
 export function bundledSkills() {

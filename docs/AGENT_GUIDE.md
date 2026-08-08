@@ -75,6 +75,21 @@ not-your-job, done-when). The handoff inside the attempt folder
 (`attempts/<id>/HANDOFF.md`) is **attempt-scoped** — it's for resuming that
 specific run, separate from the canonical project handoff.
 
+**Gates.** Some playbooks declare gates on phases: `verify` (advancing past
+requires recorded evidence), `decision` (requires a recorded accept/deny —
+user-owned, per the Decision Ownership policy), `soft` (tracked; enforced only
+with `--strict`). Record them explicitly:
+
+```bash
+dirf attempt advance <id> --evidence "<verify command>" [--output F]   # verify gates
+dirf attempt gate <id> "<phase>" accept|deny --comment "…"             # decision gates (deny requires a comment)
+dirf attempt advance <id> --auto [--strict]                            # cross covered phases, stop at gates
+```
+
+`dirf resume` lists any **pending gates** first so you reconcile them before
+continuing, and replays recorded evidence for completed phases instead of
+re-running them.
+
 To resume an attempt later:
 
 ```bash
@@ -86,7 +101,8 @@ dirf resume <name-or-id>     # prints that attempt's workflow + handoff
 This is the step that prevents drift for the next agent. When you stop, capture
 the current state into the **canonical project handoff** so whoever (or whatever)
 runs next — in this checkout, a worktree, or a fresh session — starts from
-reality:
+reality. Write it **before** switching sessions, agents, or worktrees — the
+handoff comes first, the switch after (workflow policy: Handoff-Before-Switch):
 
 ```bash
 # Write your updated handoff to a file, then promote it to the canonical store:
@@ -108,9 +124,16 @@ Reference existing specs/tickets/decisions rather than restating them.
 | `dirf state list-attempts` | prior runs for this project |
 | `dirf state get-attempt <id>` | one attempt's detail |
 | `dirf build <name> "<task>"` | route a task → instruction set in the store |
-| `dirf resume <name-or-id>` | load one attempt's workflow + handoff |
+| `dirf resume <name-or-id>` | load one attempt's workflow + handoff (lists pending gates) |
+| `dirf attempt advance <id> [--evidence "CMD"] [--output F] [--strict] [--auto]` | advance one phase (gates enforced); `--auto` crosses covered phases and stops at gates |
+| `dirf attempt gate <id> <phase> accept\|deny [--comment "…"]` | record a user-owned decision on a decision-gated phase (deny requires a comment) |
+| `dirf attempt block <id> --reason R [--wait input\|blocker]` | block an attempt; `--wait input` marks it as awaiting user input |
 | `dirf list` | list attempts (alias for state list-attempts scoped here) |
 | `dirf state list` | all registered projects (works from anywhere) |
+| `dirf portfolio` | cross-project status view: every project + attempt classified active/stale/completed/archived/empty |
+| `dirf project complete\|archive\|reopen\|status` | explicit project status override (derived classification otherwise) |
+| `dirf export obsidian` | render the portfolio into an Obsidian vault (notes + canvas dashboard) |
+| `dirf export graphify` | render the portfolio as a graphify graph + interactive HTML |
 | `dirf skills scan` | show installed skills + resolved refs on this host |
 | `dirf validate` | validate registries + workflows |
 
@@ -124,6 +147,7 @@ same thing as the commands above (both forms always work):
 | `dirf where am i` | `state which` |
 | `dirf show me the handoff` | `state read-handoff` |
 | `dirf show me the projects` | `state list` |
+| `dirf show me the portfolio` | `portfolio` |
 | `dirf show me the attempts` | `state list-attempts` |
 | `dirf start work on "<task>"` | `build <auto-name> "<task>"` (name generated for you) |
 | `dirf plan "<task>"` | `flow "<task>"` (preview the skill flow without building) |
@@ -166,6 +190,43 @@ state which` resolves to the same store entry as the main tree (via
 `git-common-dir`), so you read and write the same canonical handoff. No
 per-worktree setup, no per-worktree state. Two agents in two worktrees of the
 same repo see each other's handoff updates through the store.
+
+## Portfolio (cross-project overview)
+
+`dirf portfolio` shows **every registered project on the machine**, not just the
+one you're in — useful at session start to see what's live, what's abandoned,
+and what's finished:
+
+- **active** — open work (in_progress/blocked attempts) or activity within the
+  staleness threshold (`settings set --stale-project-days N`, default 30).
+- **completed** — all tracked attempts done, or the canonical handoff carries
+  `## Status: Complete.`
+- **stale** — nothing open and no activity past the threshold.
+- **archived** / **empty** — explicitly parked, or registered with no attempts.
+
+Status is derived from store data, so it can't drift; `dirf project
+complete|archive` adds an explicit override when derived would be wrong, and
+`dirf project reopen` clears it. `dirf portfolio --json` is the machine-readable
+form — the flow-board desktop app consumes the same shape.
+
+Status is **evidence-aware**: an attempt whose HANDOFF.md carries a completion
+marker (`## Status: Complete.` or a filled-in `## Completed` section) is
+reported as `done` even when its lifecycle was never updated. If past sessions
+did the work without updating lifecycle state, promote the evidence once:
+
+```bash
+dirf attempt sync-from-handoff            # backfill done status from handoff evidence
+```
+
+And keep it honest going forward — `dirf resume` auto-starts a planned attempt,
+and `dirf record-progress --phase X` advances the attempt's lifecycle to match
+the phase being reported (start → in_progress → advance). Explicit completion
+(`dirf attempt complete --confirm`) stays a deliberate final gate.
+
+To hand the portfolio to a human: `dirf export obsidian` writes notes + a
+color-coded `.canvas` dashboard into the active Obsidian vault, and `dirf export
+graphify` renders an interactive HTML graph (`graphify-out/graph.html`). Both
+are regenerable exports of the same snapshot — re-run to refresh.
 
 ## If you hit a conflict error
 
