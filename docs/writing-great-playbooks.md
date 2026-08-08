@@ -25,6 +25,15 @@ deciding whether to load the playbook/skill. Write it for that job:
   any "when another skill needs…" reach clause. Nothing else.
 - **Keep it under 1024 chars.** Over-budget descriptions get dropped silently.
 
+**Two routing surfaces — don't confuse them.** A *skill's* description is the
+entire routing surface; write it as triggers. A *playbook* routes by
+**keywords** (DIRF's router matches keywords, not descriptions) — its
+description is identity + scope ("Research a topic, competitor, technology,
+or market and synthesize recommendations"), and trigger phrasing is optional
+there. Put the one-trigger-per-branch discipline into the keyword list
+instead. Auditing the kit found zero playbook-description issues: the
+heuristic only applies to model-invoked skills.
+
 ## Completion criteria: checkable and exhaustive
 
 Every step ends on a completion criterion. Two levers:

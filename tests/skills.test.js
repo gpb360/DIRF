@@ -104,6 +104,7 @@ test("bundledSkills exposes kit units with declared capabilities", () => {
   assert.ok(bundled["minimal-implementation"], "bundled fallback should be readable");
   assert.deepEqual(bundled["minimal-implementation"].capabilities, ["minimalism"]);
   assert.equal(bundled["minimal-implementation"].provider, "dirf");
+  assert.ok(bundled["minimal-implementation"].body_lines > 0, "bundled entries carry body size for the lint");
 });
 
 test("discover indexes invocation class from disable-model-invocation", () => {
