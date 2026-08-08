@@ -156,6 +156,17 @@ test("discover indexes backticked /skill references from bodies", () => {
   assert.equal(idx["grilling"].references, undefined);
 });
 
+test("lintSkillMetadata surfaces spec-level quality warnings, never false on clean skills", () => {
+  const clean = { name: "tdd", path: "/s/tdd", description: "Use when the user wants to build features test-first or mentions red-green-refactor", body_lines: 38 };
+  assert.deepEqual(skills.lintSkillMetadata(clean), []);
+  assert.ok(skills.lintSkillMetadata({ name: "x", path: "/s/x", description: "" }).some((w) => /missing description/.test(w)));
+  assert.ok(skills.lintSkillMetadata({ name: "a", path: "/s/b", description: "d" }).some((w) => /does not match parent directory/.test(w)));
+  assert.ok(skills.lintSkillMetadata({ name: "x", path: "/s/x", description: "I create things" }).some((w) => /first-person/.test(w)));
+  assert.ok(skills.lintSkillMetadata({ name: "x", path: "/s/x", description: `d${"x".repeat(1025)}` }).some((w) => /spec cap 1024/.test(w)));
+  assert.ok(skills.lintSkillMetadata({ name: "x", path: "/s/x", description: "d", body_lines: 501 }).some((w) => /keep under 500/.test(w)));
+  assert.ok(skills.lintSkillMetadata({ name: "x", path: "/s/x", description: "d <xml>tag</xml>" }).some((w) => /XML tags/.test(w)));
+});
+
 test("discoverAgents indexes project agent files but never the kit's bundled agents/", () => {
   const root = mkdtempSync(join(tmpdir(), "dirf-agents-"));
   mkdirSync(join(root, ".claude", "agents"), { recursive: true });

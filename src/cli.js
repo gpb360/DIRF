@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { ROOT, REGISTRY, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, fileHash, folderHash, loadJson } from "./paths.js";
 import { collectRoutingFacts, loadPlaybooks, recommend } from "./router.js";
-import { discover, discoverAgents, enrichDiscovered, loadRegistry, loadTrustedSources, providerForPath, resolveAgentSkills } from "./skills.js";
+import { discover, discoverAgents, enrichDiscovered, lintSkillMetadata, loadRegistry, loadTrustedSources, providerForPath, resolveAgentSkills } from "./skills.js";
 import { FOCUSED_OUTPUT_RULES, buildInstructions, buildHtml } from "./renderer.js";
 import { main as validateMain } from "./validate.js";
 import { inspect, detectStackProfile } from "./inspect.js";
@@ -556,6 +556,12 @@ function cmdSkillsScan(args) {
       const resolved = skill.references.map((ref) => `${ref} (${idx[ref] ? "installed" : "referenced, not installed"})`).join(", ");
       console.log(`  ${skill.name} → ${resolved}`);
     }
+  }
+  const quality = discoveredList.map((skill) => ({ skill: skill.name, warnings: lintSkillMetadata(skill) })).filter((entry) => entry.warnings.length);
+  if (quality.length) {
+    console.log("\nSkill quality warnings (spec-level heuristics — read-only):");
+    for (const { skill, warnings } of quality.slice(0, 20)) console.log(`  ${skill}: ${warnings.join("; ")}`);
+    if (quality.length > 20) console.log(`  … and ${quality.length - 20} more skill(s) with warnings`);
   }
 }
 

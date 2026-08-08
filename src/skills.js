@@ -336,6 +336,27 @@ export function providerForPath(path) {
   }, { index: -1, provider: "project" }).provider;
 }
 
+// Mechanical, spec-level metadata linting (agentskills.io + Anthropic
+// guidance). Read-only and warning-shaped: DIRF never fails on skill quality,
+// it only surfaces what a host can fix. Every check is structural — no
+// skill-specific knowledge, nothing opinionated about which skills to use.
+export function lintSkillMetadata(entry) {
+  const warnings = [];
+  const name = entry?.name || "";
+  const desc = entry?.description || "";
+  if (!desc) {
+    warnings.push("missing description — cannot be routed");
+  } else {
+    if (desc.length > 1024) warnings.push(`description is ${desc.length} chars (spec cap 1024)`);
+    if (/^(i|we|you|my|our)\b/i.test(desc)) warnings.push("description reads first-person (write in third person)");
+    if (/<[a-z][a-z0-9]*>/i.test(desc)) warnings.push("description contains XML tags");
+  }
+  const dir = String(entry?.path || "").replace(/\\/g, "/").split("/").pop();
+  if (dir && dir !== name) warnings.push(`name "${name}" does not match parent directory "${dir}" (breaks installers' routing)`);
+  if (entry?.body_lines && entry.body_lines > 500) warnings.push(`SKILL.md body is ${entry.body_lines} lines (keep under 500 — progressive disclosure)`);
+  return warnings;
+}
+
 export function bundledSkills() {
   // The kit's own skills/ folder, exposed ONLY as fallbacks for capabilities
   // the local install cannot cover. Folder units parsed via the DAG contract
