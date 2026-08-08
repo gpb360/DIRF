@@ -57,6 +57,19 @@ test("dirf state which reports the current branch", () => {
   assert.match(out, /branch: feature\/x/);
 });
 
+test("dirf state which reports detached HEAD", () => {
+  const home = freshHome();
+  const main = mkdtempSync(join(tmpdir(), "detachwhich-"));
+  execFileSync("git", ["init", "-q"], { cwd: main, timeout: TIMEOUT });
+  run(["setup", main], { DIRF_HOME: home });
+  writeFileSync(join(main, "f.txt"), "x");
+  execFileSync("git", ["-C", main, "add", "."], { timeout: TIMEOUT });
+  execFileSync("git", ["-C", main, "commit", "-qm", "init"], { timeout: TIMEOUT, env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
+  execFileSync("git", ["-C", main, "checkout", "-q", "--detach"], { timeout: TIMEOUT });
+  const out = run(["state", "which"], { DIRF_HOME: home }, main);
+  assert.match(out, /branch: \(detached HEAD\)/);
+});
+
 test("dirf state write-handoff --file writes the canonical handoff", () => {
   const home = freshHome();
   const main = mkdtempSync(join(tmpdir(), "whproj2-"));
