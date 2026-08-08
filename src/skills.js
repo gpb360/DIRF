@@ -95,25 +95,37 @@ function parseFrontmatter(text) {
 }
 
 function readSkillFile(path) {
-  // Read a skill definition file. Returns [name, fieldsObj, lineCount, body].
+  // Read a skill definition file. Returns [name, fieldsObj, bodyLineCount, body].
+  // body excludes the frontmatter, so body_lines/body_chars measure the actual
+  // instructions — the 500-line lint and the token budget then mean what they
+  // say (L4).
   let text;
   try {
     text = readFileSync(path, "utf-8");
   } catch {
     return ["", {}, 0, ""];
   }
-  const lines = text.split(/\r?\n/).length;
   if (path.endsWith(".json")) {
     try {
       const data = JSON.parse(text);
-      if (data && typeof data === "object") return [String(data.name || basenameDir(path)), data, lines, ""];
+      if (data && typeof data === "object") return [String(data.name || basenameDir(path)), data, 0, ""];
     } catch {
       /* fall through */
     }
     return ["", {}, 0, ""];
   }
   const fm = parseFrontmatter(text);
-  return [fm.name || basenameDir(path), fm, lines, text];
+  const body = stripFrontmatter(text);
+  return [fm.name || basenameDir(path), fm, body.split(/\r?\n/).length, body];
+}
+
+function stripFrontmatter(text) {
+  // Everything after the closing frontmatter fence (trimmed, matching
+  // parseUnitReadme); the full text when there is no fence.
+  if (!text.startsWith("---")) return text;
+  const end = text.indexOf("\n---", 4);
+  if (end === -1) return text;
+  return text.slice(end + 4).trim();
 }
 
 // Backticked /skill references are the ecosystem's de-facto dependency
@@ -143,7 +155,8 @@ function collectDisclosures(folder, indexFile) {
   // Progressive disclosure: co-located files one level deep next to a skill's
   // index file (tests.md, mocking.md, scripts/, templates/) are loaded on
   // demand. Index them so rendered sets can point at them lazily — unread
-  // files cost zero tokens. Excludes the index file itself.
+  // files cost zero tokens. Excludes the index file itself, and a human-facing
+  // README.md when the skill is defined by SKILL.md/skill.json (L5).
   let entries;
   try {
     entries = readdirSync(folder, { withFileTypes: true });
@@ -151,7 +164,7 @@ function collectDisclosures(folder, indexFile) {
     return [];
   }
   return entries
-    .filter((entry) => entry.name !== indexFile)
+    .filter((entry) => entry.name !== indexFile && !(indexFile !== "README.md" && entry.name === "README.md"))
     .map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name))
     .sort();
 }
