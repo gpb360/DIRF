@@ -131,7 +131,19 @@ test("discover indexes progressive-disclosure files and body size", () => {
   writeFileSync(join(root, "skills", "docs-skill", "scripts", "run.sh"), "#!/bin/sh\n", "utf-8");
   const idx = skills.discover(root);
   assert.deepEqual(idx["docs-skill"].disclosures, ["mocking.md", "scripts/", "tests.md"]);
-  assert.ok(idx["docs-skill"].body_lines > 0);
+  assert.equal(idx["docs-skill"].body_lines, 1);
+  // body metrics exclude the frontmatter (L4) — "body" is 4 chars / 1 line
+  assert.equal(idx["docs-skill"].body_chars, 4);
+});
+
+test("discover skips a human README.md disclosure when SKILL.md is the index", () => {
+  const root = makeRoot();
+  write(join(root, "skills", "dual"), "SKILL.md",
+    "---\nname: dual\ndescription: d\n---\nbody");
+  write(join(root, "skills", "dual"), "README.md", "# human readme");
+  write(join(root, "skills", "dual"), "tests.md", "tests");
+  const idx = skills.discover(root);
+  assert.deepEqual(idx["dual"].disclosures, ["tests.md"]);
 });
 
 test("discover hides README.md fallback itself from disclosures", () => {
