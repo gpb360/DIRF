@@ -454,9 +454,9 @@
         "compare",
         "synthesize"
       ],
-      "output": "evidence-backed recommendation",
-      "validation": "cite concrete sources or repo evidence",
-      "recovery": "if sources are unavailable, mark claims as unverified"
+      "output": "evidence-backed recommendation where every claim traces to a typed source or is marked unverified",
+      "validation": "every claim cites a primary or secondary source (typed as such); unverified claims are labeled, and the recommendation restates the decision it supports",
+      "recovery": "if sources are unavailable, mark claims as unverified rather than guessing"
     },
     "questions": [
       "What decision should the research support?",
@@ -469,13 +469,13 @@
           "stage": "research",
           "reason": "Investigate the decision against primary sources and preserve citations.",
           "capability": "primary source research",
-          "output": "one cited markdown note whose claims each trace to a primary source"
+          "output": "one cited markdown note whose claims each trace to a typed primary or secondary source; unverified claims labeled"
         },
         {
           "stage": "synthesize",
           "reason": "Stop at the smallest evidence-backed recommendation.",
           "capability": "minimalism",
-          "output": "a single recommendation with the smallest sufficient evidence, and an explicit stop reason"
+          "output": "a single recommendation with the smallest sufficient evidence, restating the decision it supports, and an explicit stop reason"
         }
       ]
     }
@@ -856,6 +856,11 @@
         "assign agents and ownership",
         "define verification gates"
       ],
+      "gates": {
+        "assign agents and ownership": {
+          "kind": "verify"
+        }
+      },
       "output": "short execution plan with agent/model routing and credit controls",
       "validation": "plan names concrete files/modules, commands, and what not to spawn",
       "recovery": "if scope is unclear, stop at questions and do not implement"
@@ -1164,6 +1169,11 @@
         "check evidence requirements",
         "emit allow/deny/approval decision contract"
       ],
+      "gates": {
+        "check evidence requirements": {
+          "kind": "decision"
+        }
+      },
       "output": "governance contract or review with decision evidence",
       "validation": "prove state-changing actions are blocked without mandate, evidence, scope, and named authority",
       "recovery": "if authority, scope, or evidence is missing, deny or require named human approval"
