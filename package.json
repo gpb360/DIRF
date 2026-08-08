@@ -1,6 +1,6 @@
 {
   "name": "amf-dirf",
-  "version": "0.25.0",
+  "version": "0.26.0",
   "description": "Agent Spec Kit — maps a host repo's installed skills to agents/playbooks and emits a lean, token-cheap instruction set. AMF = Agent Marketing Factory, DIRF = Do It Right First.",
   "type": "module",
   "bin": {

@@ -7,6 +7,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HOOKS = join(dirname(fileURLToPath(import.meta.url)), "..", ".githooks");
+const GIT_EXEC_PATH = execFileSync("git", ["--exec-path"], { encoding: "utf8" }).trim();
+const SH = process.platform === "win32"
+  ? join(dirname(dirname(dirname(GIT_EXEC_PATH))), "bin", "sh.exe")
+  : "sh";
 
 const ENV = {
   ...process.env,
@@ -160,7 +164,7 @@ test("every head of an octopus merge is gated independently", () => {
 // shell script as a program, and a spawn failure yields status null, which
 // would satisfy a "did not exit 0" assertion without the gate ever running.
 function checker(root, ...args) {
-  const r = spawnSync("sh", [".githooks/review-gate.sh", ...args], { cwd: root, env: ENV, encoding: "utf8" });
+  const r = spawnSync(SH, [".githooks/review-gate.sh", ...args], { cwd: root, env: ENV, encoding: "utf8" });
   assert.equal(typeof r.status, "number", "checker must actually run");
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }

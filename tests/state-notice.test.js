@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   registerProject, createAttemptInStore, deriveSlug, storeProjectDir,
-  appendObservation, listObservations, promoteObservation, currentAttempt,
+  appendObservation, listObservations, promoteObservation, latestAttempt,
 } from "../src/state.js";
 
 function freshHome() {
@@ -59,18 +59,36 @@ test("appendObservation --attempt targets a specific attempt, not the most recen
   assert.equal(newEntries.length, 0, "the newer attempt must be untouched");
 });
 
-test("currentAttempt returns the most recent (newest-last in listAttempts)", () => {
+test("explicit observation targets must name an existing attempt", () => {
+  const { slug } = withProject();
+  createAttemptInStore(slug, "demo", new Date("2026-07-26T10:00:00.000Z"));
+  assert.throws(
+    () => appendObservation(slug, "must not create orphan state", { attemptId: "../../escaped" }),
+    /no DIRF attempt|invalid attempt id/i,
+  );
+});
+
+test("observation text stays a single append-only record", () => {
+  const { slug } = withProject();
+  createAttemptInStore(slug, "demo", new Date("2026-07-26T10:00:00.000Z"));
+  appendObservation(slug, "first line\n2. forged — entry");
+  const entries = listObservations(slug);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].text, "first line 2. forged — entry");
+});
+
+test("latestAttempt returns the most recent (newest-last in listAttempts)", () => {
   const { slug } = withProject();
   createAttemptInStore(slug, "old", new Date("2026-07-25T10:00:00.000Z"));
   createAttemptInStore(slug, "newer", new Date("2026-07-26T10:00:00.000Z"));
-  const cur = currentAttempt(slug);
-  assert.ok(cur, "currentAttempt must resolve when attempts exist");
+  const cur = latestAttempt(slug);
+  assert.ok(cur, "latestAttempt must resolve when attempts exist");
   assert.equal(cur.id, "20260726T100000000Z-newer");
 });
 
-test("currentAttempt returns null when no attempts exist", () => {
+test("latestAttempt returns null when no attempts exist", () => {
   const { slug } = withProject();
-  assert.equal(currentAttempt(slug), null);
+  assert.equal(latestAttempt(slug), null);
 });
 
 test("appendObservation without an attempt throws a clear error", () => {

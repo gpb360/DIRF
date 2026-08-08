@@ -13,7 +13,9 @@ const TARGET = mkdtempSync(join(tmpdir(), "dirf-smoke-"));
 // installed on the dev machine can't leak into the assertions.
 const FAKE_HOME = mkdtempSync(join(tmpdir(), "dirf-smoke-home-"));
 const ENV = { ...process.env, HOME: FAKE_HOME, USERPROFILE: FAKE_HOME };
-const TIMEOUT_MS = 30_000;
+// The full suite runs inside this integration check. Leave enough headroom for
+// slower Windows process startup and loaded CI/dev machines.
+const TIMEOUT_MS = 60_000;
 
 function run(args, expectFail = false) {
   const res = spawnSync(process.execPath, [CLI, ...args], { cwd: ROOT, encoding: "utf-8", timeout: TIMEOUT_MS, env: ENV });
@@ -28,7 +30,11 @@ function assertContains(output, needle) {
 }
 
 try {
-  const unit = spawnSync(process.execPath, ["--test"], { cwd: join(ROOT, "tests"), encoding: "utf-8", timeout: TIMEOUT_MS });
+  const testFiles = readdirSync(join(ROOT, "tests"))
+    .filter((name) => name.endsWith(".test.js"))
+    .sort()
+    .map((name) => join("tests", name));
+  const unit = spawnSync(process.execPath, ["--test", ...testFiles], { cwd: ROOT, encoding: "utf-8", timeout: TIMEOUT_MS });
   if (unit.status !== 0) throw new Error(`unit tests failed\n${unit.error?.message || unit.stderr || unit.stdout}`);
   assertContains(unit.stdout, "# fail 0");
 
@@ -43,6 +49,9 @@ try {
   assertContains(setup, "Capability gaps:");
   assertContains(run(["setup", TARGET]), "Already configured; no files changed.");
   assertContains(readFileSync(join(TARGET, ".gitignore"), "utf8"), ".dirf/attempts/");
+  const registry = JSON.parse(readFileSync(join(FAKE_HOME, ".dirf", "projects.json"), "utf8"));
+  const [slug] = Object.keys(registry.projects);
+  const attemptsRoot = join(FAKE_HOME, ".dirf", "projects", slug, "attempts");
   let status = run(["status", "--path", TARGET]);
   assertContains(status, "Configured: yes");
   assertContains(status, "Attempts: 0");
@@ -54,8 +63,8 @@ try {
   assertContains(planOutput, "Lifecycle: discover -> model -> specify -> slice -> handoff");
   const researchOutput = run(["plan", "researched", "build an account portal", "--path", TARGET, "--research"]);
   assertContains(researchOutput, "Lifecycle: discover -> model -> research -> specify -> slice -> handoff");
-  const plannedAttempt = readdirSync(join(TARGET, ".dirf", "attempts")).find((name) => name.endsWith("-planned"));
-  const plannedSnapshot = JSON.parse(readFileSync(join(TARGET, ".dirf", "attempts", plannedAttempt, "workflow.json"), "utf8"));
+  const plannedAttempt = readdirSync(attemptsRoot).find((name) => name.endsWith("-planned"));
+  const plannedSnapshot = JSON.parse(readFileSync(join(attemptsRoot, plannedAttempt, "workflow.json"), "utf8"));
   if (plannedSnapshot.skill_flow.steps.some((step) => ["build", "design", "quality", "review"].includes(step.stage))) {
     throw new Error("dirf plan crossed the planning boundary");
   }
@@ -63,7 +72,6 @@ try {
   assertContains(run(["build", "quiet", "build a landing page", "--path", TARGET, "--no-focused-output"]), "Attempt saved:");
   assertContains(run(["create", "smoke", "build a landing page", "--path", TARGET]), "Attempt saved:");
 
-  const attemptsRoot = join(TARGET, ".dirf", "attempts");
   const smokeAttempts = readdirSync(attemptsRoot).filter((name) => JSON.parse(readFileSync(join(attemptsRoot, name, "attempt.json"), "utf8")).name === "smoke");
   if (smokeAttempts.length !== 2) throw new Error(`expected two isolated smoke attempts, got ${smokeAttempts.length}`);
   const attemptId = smokeAttempts.find((name) => existsSync(join(attemptsRoot, name, "README.md")));
@@ -107,7 +115,7 @@ try {
   assertContains(run(["render", "smoke", "--path", TARGET]), "Spec kit rendered:");
   assertContains(run(["list", "--path", TARGET]), attemptId);
   status = run(["status", "--path", TARGET]);
-  assertContains(status, "Attempts: 3");
+  assertContains(status, "Attempts: 5");
   assertContains(status, "Latest:");
   assertContains(run(["resume", attemptId, "--path", TARGET]), "## Exact next action");
   run(["render", "does-not-exist-xyz", "--path", TARGET], true);

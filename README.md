@@ -1,97 +1,115 @@
-# Do It Right First
+# DIRF — Do It Right First
 
 ![DIRF: a routed workflow ending in a verified check](docs/assets/dirf-hero.png)
 
-DIRF turns a task into a small, executable instruction set for AI coding agents.
-It inspects the target repository, maps the capabilities actually installed on
-the host, assigns bounded roles, and leaves behind a human-readable workflow.
+DIRF gives an AI coding agent a clear plan before it starts changing your
+project. You describe the job. DIRF inspects the project and the capabilities
+available on your machine, then builds a small workflow with roles, boundaries,
+checks, and a handoff.
 
-**AMF** = Agent Marketing Factory · **DIRF** = Do It Right First.
+The result is plain Markdown for the agent and a matching HTML view for you.
 
-> Requires Node.js ≥ 18.17. Zero dependencies. No `npm install`.
+> Requires Node.js 22 or newer. The CLI has no runtime dependencies, so using
+> DIRF does not require `npm install`.
 
-## Zero to running — paste this into your AI
+## What DIRF is
 
-No manual install needed. Copy this prompt into your model of choice and it
-will clone DIRF, set it up against your project, build your first workflow,
-and execute it:
+DIRF is a preflight and coordination layer for agent work. It helps Codex,
+Claude, Cursor, another agent host, or a person answer four questions:
 
-```text
-Set up and run DIRF (Do It Right First), an agent workflow kit, against my project.
+1. What are we trying to achieve?
+2. Which available capabilities fit this job?
+3. What order should the work happen in?
+4. What evidence proves the work is done?
 
-1. Clone https://github.com/gpb360/amf-dirf.git into a sibling folder of my
-   project. It needs Node.js >= 18.17 and nothing else — zero dependencies,
-   do not run npm install.
-2. Ask me two things before touching anything: the path to my project, and my
-   task in one sentence.
-3. Run: node <dirf>/src/cli.js setup <my project>
-4. Run: node <dirf>/src/cli.js build <short-name> "<my task>" --path <my project>
-5. The build prints an attempt folder. (If the project already had a legacy
-   `.dirf/`, setup migrates it into DIRF's central store at
-   `~/.dirf/projects/<slug>/` and leaves a backup; otherwise the attempt just
-   lives in the store.) Open that attempt folder's README.md and follow it as
-   your operating workflow: act as one agent role at a time, work the phases
-   in order, and do not advance a phase until it is verifiably done.
-6. If any command fails, stop and show me the exact command and its output
-   instead of improvising around it.
-```
+DIRF saves each run as an **attempt**. An attempt contains the workflow,
+role-specific instructions, safety policy, current handoff, and completion
+checks. A later session or a different agent can continue from the same state.
 
-Every generated workflow also embeds its own kickoff prompt, so you can hand
-individual workflows to any model later without repeating these steps.
+## How DIRF helps
 
-## What DIRF helps with
+- **Less guessing:** it routes the task using the project and the skills and
+  agents actually installed on the current machine.
+- **Less context waste:** the agent loads a small router first and opens detail
+  only when that stage begins.
+- **Less drift:** the objective, role boundaries, decisions, and next action
+  stay with the attempt.
+- **Safer completion:** tests, validation, and other evidence are part of the
+  workflow instead of an optional final step.
+- **Better handoffs:** another person, model, or session can see what changed,
+  what passed, what is blocked, and what happens next.
 
-- **Wrong skills:** resolves capabilities from the current repo and host instead
-  of assuming every machine has the same tools.
-- **Prompt drift:** keeps the objective, role boundaries, policy, and done-when
-  checks inside the generated artifact.
-- **Bloated context:** loads one small router first, then only the detail needed
-  for the active stage.
-- **Weak handoffs:** produces durable markdown for agents and a matching HTML
-  view for people.
-- **Skipped verification:** makes evidence and completion checks part of the
-  workflow, not an afterthought.
+## What DIRF is not
 
-## How DIRF is different
+- It is not an AI model and does not replace your coding agent.
+- It is not a new application framework or a dependency for your product.
+- It does not replace your existing skills, agents, prompts, or project rules.
+- It does not grant permission to deploy, merge, delete, or change production.
+- It is not a live agent monitor or an issue tracker.
 
-| Typical agent setup | DIRF |
-| --- | --- |
-| One large prompt | A small router with lazy-loaded detail |
-| Hardcoded skill names | Capability requests resolved against installed skills |
-| Missing tools fail silently | Gaps are explicit and approval-gated |
-| Instructions tied to one agent host | Portable, host-neutral workflow snapshots |
-| “Done” means the agent stopped | Done-when checks and evidence travel with the task |
+DIRF prepares and records the route. Your agent host still performs the work,
+and you keep control of consequential actions.
 
-DIRF is the preflight layer. It does not replace Codex, Claude, or another
-executor; it gives that executor a repo-aware route before work begins.
+## Install
 
-## Quick start
+DIRF currently runs from a local clone:
 
 ```bash
-git clone https://github.com/gpb360/amf-dirf.git
-cd amf-dirf
-
-# One-time setup for the repository you want DIRF to work on
-node src/cli.js setup ../my-project --reserve-percent 5
-
-# Task -> routed workflow -> lean markdown + human HTML
-node src/cli.js build first-run "fix the checkout timeout" --path ../my-project
+git clone https://github.com/gpb360/DIRF.git
+cd DIRF
+node src/cli.js
 ```
 
-Open the generated attempt's `README.md` (the path is printed by `build`; it
-lives under DIRF's central store at `~/.dirf/projects/<slug>/attempts/<id>/`,
-and `dirf state which` will show you the store path for the current project).
-It contains the ordered workflow and the handoff your agent host should execute.
+The last command prints the help screen. There is no runtime package install
+step. Contributors who want to run the TypeScript check should run `npm install`
+once to install the development-only tooling.
 
-Useful next commands:
+## Add DIRF to an existing project
+
+Keep the DIRF clone beside your project, then run:
 
 ```bash
-node src/cli.js flow "review this pull request" --path ../my-project
-node src/cli.js skills scan
-node src/cli.js list --path ../my-project
-node src/cli.js state which --path ../my-project   # show the project's canonical store entry
+# One-time setup
+node src/cli.js setup "../my-project"
+
+# Build a workflow for real work
+node src/cli.js build first-run "fix the checkout timeout" --path "../my-project"
+```
+
+`build` prints the saved attempt path. Open its `README.md` and give it to your
+agent as the operating workflow.
+
+Setup is additive. DIRF does not rewrite application code, replace dependencies,
+or change your agent configuration. It keeps coordination state outside the
+project at `~/.dirf/projects/<slug>/`. On first setup it may add missing support
+documents and the `.dirf/attempts/` rule to the project's `.gitignore`; review
+and commit those small files only if they fit your repository.
+
+## Works with your current setup
+
+DIRF asks for capabilities such as testing, security review, or frontend work;
+it does not force one vendor's skill names. At build time it scans the target
+project and common host locations, then maps those capabilities to what is
+actually installed. Missing optional capabilities are reported as gaps instead
+of causing the build to fail.
+
+Generated attempts contain portable capability names and provider hints, not
+hardcoded installation paths. The Markdown can therefore be executed by Codex,
+Claude, Cursor, another host, or a person. Existing project instructions still
+apply and take precedence.
+
+## Useful next commands
+
+```bash
+node src/cli.js flow "review this pull request" --path "../my-project"
+node src/cli.js skills scan --path "../my-project"
+node src/cli.js list --path "../my-project"
+node src/cli.js state which --path "../my-project"
 node src/cli.js validate
 ```
+
+The rest of this README is the technical reference for how DIRF routes,
+renders, stores, and resumes workflows.
 
 ## The pipeline
 
@@ -408,13 +426,14 @@ no SDK:
 ```
 
 Tools: `dirf_resolve_project`, `dirf_list_projects`, `dirf_read_handoff`,
-`dirf_write_handoff`, `dirf_list_attempts`, `dirf_get_attempt`. Every tool is
-a thin call into the same `src/state.js` core as the CLI, so the two surfaces
-return byte-identical results.
+`dirf_write_handoff`, `dirf_record_progress`, `dirf_list_attempts`, and
+`dirf_get_attempt`. Every tool is a thin call into the same `src/state.js` core
+as the CLI, so the two surfaces return byte-identical results.
 
 ## Conventions
 
-- **Zero dependencies.** Pure Node.js built-ins (no `node_modules`, no `npm install`, no CI). `npm run …` works as a script shortcut; nothing gets installed.
+- **Zero runtime dependencies.** The CLI uses Node.js built-ins. Contributors
+  install the development-only TypeScript checker when they need `typecheck`.
 - **One entry point:** `src/cli.js`.
 - **Names:** kebab-case folders, domain-named source files, and `<domain>.test.js` tests.
 - **Generated output:** `.dirf/attempts/`, `graphify-out/`, and HTML renders stay untracked.
@@ -432,10 +451,10 @@ npm run smoke                              # full pipeline integration
 npm run validate                           # registry consistency
 ```
 
-These are just script shortcuts — `npm run` executes them, no `npm install`,
-no dependencies, no test runner to add. Prefer raw Node? `node --test`,
-`node scripts/smoke.js`, and `node src/cli.js validate` do the same thing.
-No CI — everything runs locally.
+The unit tests, smoke test, and validation use Node.js directly and need no
+package install. `npm run typecheck` additionally needs the development tools
+from `npm install`. There is currently no hosted CI, so run the full release
+gate locally before tagging.
 
 ## Commit hooks
 

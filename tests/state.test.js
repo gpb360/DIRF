@@ -92,7 +92,7 @@ test("deriveSlug: two distinct repos produce distinct slugs", () => {
   assert.notEqual(deriveSlug(a), deriveSlug(b));
 });
 
-import { registerProject, resolveProject, getProject, writeRegistry } from "../src/state.js";
+import { registerProject, resolveProject, resolveProjectReference, getProject, writeRegistry } from "../src/state.js";
 
 test("registerProject creates a store entry + registry record", () => {
   const home = freshHome();
@@ -142,6 +142,20 @@ test("resolveProject returns null for an unregistered path", () => {
   assert.equal(resolveProject(dir), null);
 });
 
+test("resolveProjectReference applies the same registered slug and path rules", () => {
+  freshHome();
+  const repo = mkdtempSync(join(tmpdir(), "refproj-"));
+  gitInit(repo);
+  const { slug } = registerProject(repo);
+  assert.equal(resolveProjectReference(slug), slug);
+  assert.equal(resolveProjectReference(repo), slug);
+  assert.equal(resolveProjectReference(slug, { explicitSlug: true }), slug);
+  assert.throws(
+    () => resolveProjectReference("missing-project-12345678", { explicitSlug: true }),
+    /unknown DIRF project/i,
+  );
+});
+
 import { readHandoff, writeHandoff, listAttempts, getAttempt, storeAttemptDir, createAttemptInStore } from "../src/state.js";
 
 function withRegisteredProject() {
@@ -157,6 +171,13 @@ test("writeHandoff then readHandoff round-trips content", () => {
   const md = "# Handoff\n\nPhase 2 done.\n";
   writeHandoff(slug, md);
   assert.equal(readHandoff(slug), md);
+});
+
+test("store paths reject traversal segments", () => {
+  const home = freshHome();
+  assert.throws(() => storeProjectDir("../escaped-12345678"), /invalid project slug/i);
+  assert.throws(() => storeAttemptDir("safe-12345678", "../../escaped"), /invalid attempt id/i);
+  assert.equal(existsSync(join(home, "escaped-12345678")), false);
 });
 
 test("readHandoff returns null when no handoff exists", () => {

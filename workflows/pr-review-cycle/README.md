@@ -52,6 +52,10 @@ capabilities: ["code review", "security review", "confidence scoring", "iterativ
 └──────────────────┘   │     → Back to step 2 │
                        └─────────────────────┘
 
+**PR description contract:** every PR created by this cycle carries a
+description — what changed, why, and how it was verified. Never a
+title-only PR (see the workflow policy's Communication section).
+
 ## Usage
 
 ### Basic Usage

@@ -4,33 +4,29 @@
 // / tools/list / tools/call. Every tool is a thin call into state.js.
 
 import { createInterface } from "node:readline";
+import { readFileSync } from "node:fs";
 import {
-  resolveProject, listProjects,
-  readHandoff, writeHandoff, listAttempts, getAttempt, storeProjectDir,
+  resolveProject, resolveProjectReference, listProjects,
+  readHandoff, writeHandoff, listAttempts, getAttempt, storeProjectDir, recordProgress,
 } from "./state.js";
-import { updateProgressSection } from "./handoff-update.js";
 import { resolve } from "node:path";
 
 const PROTOCOL_VERSION = "2024-11-05";
-const SERVER_INFO = { name: "amf-dirf", version: "1.0.0" };
+const PACKAGE_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+const SERVER_INFO = { name: "amf-dirf", version: PACKAGE_VERSION };
 
 const TOOLS = [
   { name: "dirf_resolve_project", description: "Resolve which DIRF project a path belongs to (default: server cwd).", inputSchema: { type: "object", properties: { path: { type: "string" } } } },
   { name: "dirf_list_projects", description: "List all registered DIRF projects.", inputSchema: { type: "object", properties: {} } },
   { name: "dirf_read_handoff", description: "Read the canonical handoff for a project (slug or path; default: server cwd).", inputSchema: { type: "object", properties: { project: { type: "string" } } } },
   { name: "dirf_write_handoff", description: "Replace the canonical handoff for a project with the given content.", inputSchema: { type: "object", properties: { project: { type: "string" }, content: { type: "string" } }, required: ["content"] } },
-  { name: "dirf_record_progress", description: "Record workflow progress in HANDOFF.md - call this after completing each step. Updates current phase, last action, completed steps, and next action.", inputSchema: { type: "object", properties: { project: { type: "string", description: "Project slug or path (default: server cwd)" }, message: { type: "string", description: "What was just completed" }, currentPhase: { type: "string", description: "Current workflow phase" }, nextAction: { type: "string", description: "Exact next step" }, changedFiles: { type: "array", items: { type: "string" }, description: "Files changed in this step" } }, required: ["message", "nextAction"] } },
+  { name: "dirf_record_progress", description: "Record workflow progress in HANDOFF.md - call this after completing each step. Updates current phase, last action, completed steps, and next action.", inputSchema: { type: "object", properties: { project: { type: "string", description: "Project slug or path (default: server cwd)" }, attempt: { type: "string", description: "Attempt id or name; required when the project has multiple attempts" }, message: { type: "string", description: "What was just completed" }, currentPhase: { type: "string", description: "Current workflow phase" }, nextAction: { type: "string", description: "Exact next step" }, changedFiles: { type: "array", items: { type: "string" }, description: "Files changed in this step" } }, required: ["message", "nextAction"] } },
   { name: "dirf_list_attempts", description: "List attempts for a project.", inputSchema: { type: "object", properties: { project: { type: "string" } } } },
   { name: "dirf_get_attempt", description: "Get one attempt by id or name.", inputSchema: { type: "object", properties: { project: { type: "string" }, id: { type: "string" } }, required: ["id"] } },
 ];
 
 function resolveSlugFromParams(params = {}) {
-  const project = params.project;
-  if (project && /^[a-z0-9.-]+-[0-9a-f]{8}$/.test(project)) return project; // looks like a slug
-  const target = resolve(project || process.cwd());
-  const resolved = resolveProject(target);
-  if (!resolved) throw new Error(`DIRF has no project registered for ${target}`);
-  return resolved.slug;
+  return resolveProjectReference(params.project, { defaultPath: process.cwd() });
 }
 
 function callTool(name, args) {
@@ -54,15 +50,14 @@ function callTool(name, args) {
     }
     case "dirf_record_progress": {
       const slug = resolveSlugFromParams(args);
-      const currentHandoff = readHandoff(slug);
-      const updatedHandoff = updateProgressSection(currentHandoff || "# DIRF Handoff\n\n## Objective\n\n(Work in progress)\n", {
+      recordProgress(slug, {
         message: args.message,
         timestamp: new Date().toISOString(),
         phase: args.currentPhase || null,
         next: args.nextAction,
-        files: args.changedFiles || []
+        files: args.changedFiles || [],
+        attemptId: args.attempt || null,
       });
-      writeHandoff(slug, updatedHandoff);
       return { ok: true, slug, message: "Progress recorded" };
     }
     case "dirf_list_attempts": {
