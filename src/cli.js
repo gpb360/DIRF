@@ -915,7 +915,9 @@ function cmdRecordProgress(args) {
   const target = projectRoot(args.path);
 
   try {
-    const project = resolveProject(target);
+    // Progress owns its own project lock. Avoid the normal last_seen registry
+    // write here so concurrent checkpoints cannot race before serialization.
+    const project = resolveProject(target, { touch: false });
     if (!project) {
       throw new Error(`DIRF is not configured for ${target}. Run: dirf setup "${target}"`);
     }
@@ -1004,7 +1006,7 @@ Usage:
   dirf list [--path DIR]                               list saved attempts
   dirf status [--path DIR]                             show project and repository state
   dirf resume <name-or-id> [--path DIR]                load the workflow handoff
-  dirf record-progress "<message>" [--path DIR] [--attempt ID|NAME] [--phase PHASE] [--next ACTION] [--files FILES]
+  dirf record-progress "<message>" [--path DIR] [--attempt ID|UNIQUE_NAME] [--phase PHASE] [--next ACTION] [--files FILES]
                                                       record progress, update HANDOFF.md and sync the attempt lifecycle
   dirf attempt <action> <id> [--path DIR]              update lifecycle state
                                                       (advance: [--evidence "CMD" [--output F]] [--strict] [--auto])

@@ -12,6 +12,14 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   a workflow carry a description — what changed, why, and how it was verified.
   Never a title-only PR.
 
+### Fixed
+- Progress locks carry PID/token ownership, never evict a live owner, and only
+  release the lock acquired by the current process. Concurrent CLI/MCP progress
+  resolution no longer rewrites the global registry before serialization.
+- Reused attempt names are rejected as ambiguous, a missing canonical handoff
+  starts independently from attempt-scoped content, and the user/agent guides
+  document explicit attempt targeting.
+
 ## [0.26.0] — 2026-08-08
 
 ### Added

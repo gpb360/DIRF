@@ -20,13 +20,13 @@ const TOOLS = [
   { name: "dirf_list_projects", description: "List all registered DIRF projects.", inputSchema: { type: "object", properties: {} } },
   { name: "dirf_read_handoff", description: "Read the canonical handoff for a project (slug or path; default: server cwd).", inputSchema: { type: "object", properties: { project: { type: "string" } } } },
   { name: "dirf_write_handoff", description: "Replace the canonical handoff for a project with the given content.", inputSchema: { type: "object", properties: { project: { type: "string" }, content: { type: "string" } }, required: ["content"] } },
-  { name: "dirf_record_progress", description: "Record workflow progress in HANDOFF.md - call this after completing each step. Updates current phase, last action, completed steps, and next action.", inputSchema: { type: "object", properties: { project: { type: "string", description: "Project slug or path (default: server cwd)" }, attempt: { type: "string", description: "Attempt id or name; required when the project has multiple attempts" }, message: { type: "string", description: "What was just completed" }, currentPhase: { type: "string", description: "Current workflow phase" }, nextAction: { type: "string", description: "Exact next step" }, changedFiles: { type: "array", items: { type: "string" }, description: "Files changed in this step" } }, required: ["message", "nextAction"] } },
+  { name: "dirf_record_progress", description: "Record workflow progress in HANDOFF.md - call this after completing each step. Updates current phase, last action, completed steps, and next action.", inputSchema: { type: "object", properties: { project: { type: "string", description: "Project slug or path (default: server cwd)" }, attempt: { type: "string", description: "Attempt id or unique name; required when the project has multiple attempts" }, message: { type: "string", description: "What was just completed" }, currentPhase: { type: "string", description: "Current workflow phase" }, nextAction: { type: "string", description: "Exact next step" }, changedFiles: { type: "array", items: { type: "string" }, description: "Files changed in this step" } }, required: ["message", "nextAction"] } },
   { name: "dirf_list_attempts", description: "List attempts for a project.", inputSchema: { type: "object", properties: { project: { type: "string" } } } },
   { name: "dirf_get_attempt", description: "Get one attempt by id or name.", inputSchema: { type: "object", properties: { project: { type: "string" }, id: { type: "string" } }, required: ["id"] } },
 ];
 
-function resolveSlugFromParams(params = {}) {
-  return resolveProjectReference(params.project, { defaultPath: process.cwd() });
+function resolveSlugFromParams(params = {}, options = {}) {
+  return resolveProjectReference(params.project, { defaultPath: process.cwd(), ...options });
 }
 
 function callTool(name, args) {
@@ -49,7 +49,9 @@ function callTool(name, args) {
       return { ok: true, slug };
     }
     case "dirf_record_progress": {
-      const slug = resolveSlugFromParams(args);
+      // recordProgress serializes the checkpoint itself; avoid mutating the
+      // global registry while resolving the project before that lock.
+      const slug = resolveSlugFromParams(args, { touch: false });
       recordProgress(slug, {
         message: args.message,
         timestamp: new Date().toISOString(),
