@@ -276,7 +276,9 @@ function indexOne(path, index) {
   // Absent flag ⇒ model-invoked (the default). DIRF only reads the skill's
   // own declaration; it never imposes one.
   const invocation = parseBool(typeof fm === "object" ? fm["disable-model-invocation"] : undefined) === true ? "user" : "model";
-  const references = backtickSkillRefs(body);
+  // Self-references (a skill's help text mentioning its own /name) are not
+  // dependencies — drop them so the reference graph stays meaningful.
+  const references = backtickSkillRefs(body).filter((ref) => ref !== name);
   index[name] = {
     name,
     path: folder,

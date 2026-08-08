@@ -176,6 +176,18 @@ test("tokenBudget reports metadata vs eager-load economics", () => {
   assert.deepEqual(skills.tokenBudget({}), { skills: 0, metadataTokens: 0, eagerTokens: 0, savings: 0 });
 });
 
+test("backticked references are precise: single-token commands only, self-refs dropped", () => {
+  const root = makeRoot();
+  write(join(root, "skills", "benchmark"), "SKILL.md",
+    "---\nname: benchmark\ndescription: d\n---\nRun `/benchmark` for the suite. Execute `/bin/bash` and `/tmp/x` — never `/scripts/setup.sh`.");
+  write(join(root, "skills", "grill-me"), "SKILL.md",
+    "---\nname: grill-me\ndescription: d\n---\nRun a `/grilling` session.");
+  const idx = skills.discover(root);
+  // multi-segment backticked paths never match; own-name reference dropped
+  assert.equal(idx["benchmark"].references, undefined);
+  assert.deepEqual(idx["grill-me"].references, ["grilling"]);
+});
+
 test("discoverAgents indexes project agent files but never the kit's bundled agents/", () => {
   const root = mkdtempSync(join(tmpdir(), "dirf-agents-"));
   mkdirSync(join(root, ".claude", "agents"), { recursive: true });
