@@ -7,6 +7,8 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+## [0.26.1] — 2026-08-08
+
 ### Changed
 - **PR description contract** (workflow policy): pull requests created during
   a workflow carry a description — what changed, why, and how it was verified.
