@@ -7,9 +7,8 @@ import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
 import {
   resolveProject, listProjects, getProject,
-  readHandoff, writeHandoff, listAttempts, getAttempt, storeProjectDir,
+  readHandoff, writeHandoff, listAttempts, getAttempt, storeProjectDir, recordProgress,
 } from "./state.js";
-import { updateProgressSection } from "./handoff-update.js";
 import { resolve } from "node:path";
 
 const PROTOCOL_VERSION = "2024-11-05";
@@ -59,15 +58,13 @@ function callTool(name, args) {
     }
     case "dirf_record_progress": {
       const slug = resolveSlugFromParams(args);
-      const currentHandoff = readHandoff(slug);
-      const updatedHandoff = updateProgressSection(currentHandoff || "# DIRF Handoff\n\n## Objective\n\n(Work in progress)\n", {
+      recordProgress(slug, {
         message: args.message,
         timestamp: new Date().toISOString(),
         phase: args.currentPhase || null,
         next: args.nextAction,
         files: args.changedFiles || []
       });
-      writeHandoff(slug, updatedHandoff);
       return { ok: true, slug, message: "Progress recorded" };
     }
     case "dirf_list_attempts": {

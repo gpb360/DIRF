@@ -111,3 +111,29 @@ test("dirf state import-handoff --force promotes a local HANDOFF into the store"
   const readBack = run(["state", "read-handoff"], { DIRF_HOME: home }, main);
   assert.equal(readBack, localMd);
 });
+
+test("dirf resume surfaces canonical progress before the attempt handoff", () => {
+  const home = freshHome();
+  const main = mkdtempSync(join(tmpdir(), "resume-progress-"));
+  execFileSync("git", ["init", "-q"], { cwd: main, timeout: TIMEOUT });
+  run(["setup", main], { DIRF_HOME: home }, main);
+  const built = JSON.parse(run([
+    "build", "resume-progress", "verify canonical resume state", "--path", main, "--json",
+  ], { DIRF_HOME: home }, main));
+
+  run([
+    "record-progress", "Published PR 21", "--path", main,
+    "--phase", "verify", "--next", "Review exact head before merge",
+  ], { DIRF_HOME: home }, main);
+
+  const resumed = run(["resume", built.attempt.id, "--path", main], { DIRF_HOME: home }, main);
+  assert.match(resumed, /Canonical project handoff \(takes precedence\):/);
+  assert.match(resumed, /Published PR 21/);
+  assert.match(resumed, /Review exact head before merge/);
+  assert.match(resumed, /Attempt handoff \(scoped context\):/);
+
+  const resumedJson = JSON.parse(run([
+    "resume", built.attempt.id, "--path", main, "--json",
+  ], { DIRF_HOME: home }, main));
+  assert.equal(resumedJson.project_handoff, resumedJson.attempt_handoff);
+});

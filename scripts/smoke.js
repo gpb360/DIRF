@@ -13,7 +13,9 @@ const TARGET = mkdtempSync(join(tmpdir(), "dirf-smoke-"));
 // installed on the dev machine can't leak into the assertions.
 const FAKE_HOME = mkdtempSync(join(tmpdir(), "dirf-smoke-home-"));
 const ENV = { ...process.env, HOME: FAKE_HOME, USERPROFILE: FAKE_HOME };
-const TIMEOUT_MS = 30_000;
+// The full suite runs inside this integration check. Leave enough headroom for
+// slower Windows process startup and loaded CI/dev machines.
+const TIMEOUT_MS = 60_000;
 
 function run(args, expectFail = false) {
   const res = spawnSync(process.execPath, [CLI, ...args], { cwd: ROOT, encoding: "utf-8", timeout: TIMEOUT_MS, env: ENV });

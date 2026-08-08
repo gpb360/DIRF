@@ -28,9 +28,8 @@ import { inspect, detectStackProfile } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, getProject, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGateState, pendingGates, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, syncLifecycleFromProgress } from "./state.js";
+import { resolveProject, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, getProject, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGateState, pendingGates, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress } from "./state.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
-import { updateProgressSection } from "./handoff-update.js";
 
 const LIFECYCLE = {
   clarify: "Use the best installed interview capability before implementation.",
@@ -425,6 +424,8 @@ function cmdResume(args) {
   const workflow = existsSync(readme) ? readme : join(attempt.folder, "workflow.json");
   const handoff = join(attempt.folder, "HANDOFF.md");
   if (!existsSync(handoff)) throw new Error(`Attempt ${attempt.id} has no HANDOFF.md; rebuild it before resuming.`);
+  const projectHandoff = readHandoff(project.slug);
+  const projectHandoffPath = join(storeProjectDir(project.slug), "HANDOFF.md");
   if (args.json) {
     const prompt = `Resume DIRF attempt "${attempt.id}" for "${project?.slug || "project"}" at "${args.path || projectRoot(args.path)}".\nFirst load the canonical project handoff, then load this attempt's workflow and handoff.\nCanonical project state takes precedence if they conflict.\nContinue from the exact next action; do not restart completed work.`;
     // Re-read after auto-start so the emitted attempt reflects the store.
@@ -433,7 +434,7 @@ function cmdResume(args) {
       attempt: publicAttemptForSlug(project.slug, current),
       workflow_path: workflow,
       attempt_handoff: readFileSync(handoff, "utf8"),
-      project_handoff: readHandoff(project.slug),
+      project_handoff: projectHandoff,
       pending_gates: pendingGates(project.slug, attempt.id),
       recorded_evidence: recordedEvidence(project.slug, attempt.id),
       resume_prompt: prompt,
@@ -444,7 +445,8 @@ function cmdResume(args) {
   console.log(`Resume attempt: ${attempt.id}`);
   if (autoStarted) console.log(`Lifecycle: auto-started (planned → in_progress)`);
   console.log(`Load workflow: ${workflow}`);
-  console.log(`Load handoff: ${handoff}\n`);
+  console.log(`Load canonical handoff: ${projectHandoffPath}`);
+  console.log(`Load attempt handoff: ${handoff}\n`);
   // Reconciliation on resume: surface unresolved gates (the reconciler analog)
   // and recorded evidence (replay completed phases — do not re-run them).
   const gates = pendingGates(project.slug, attempt.id);
@@ -460,6 +462,11 @@ function cmdResume(args) {
     for (const phase of recorded) console.log(`  - ${phase}: ${evidence[phase].command}${evidence[phase].output ? ` → ${evidence[phase].output}` : ""}`);
     console.log("");
   }
+  if (projectHandoff !== null) {
+    console.log("Canonical project handoff (takes precedence):\n");
+    console.log(projectHandoff);
+  }
+  console.log("Attempt handoff (scoped context):\n");
   console.log(readFileSync(handoff, "utf-8"));
 }
 
@@ -925,12 +932,6 @@ function cmdRecordProgress(args) {
       throw new Error(`DIRF is not configured for ${target}. Run: dirf setup "${target}"`);
     }
 
-    // Read current handoff
-    const currentHandoff = readHandoff(project.slug);
-    if (currentHandoff === null) {
-      console.log("Note: No existing handoff - creating initial handoff with progress");
-    }
-
     // Build update
     const timestamp = args.timestamp || new Date().toISOString();
     const updateData = {
@@ -941,15 +942,7 @@ function cmdRecordProgress(args) {
       files: args.files ? args.files.split(",") : []
     };
 
-    // Apply update
-    const updatedHandoff = updateProgressSection(currentHandoff || "# DIRF Handoff\n\n## Objective\n\n(Work in progress)\n", updateData);
-
-    // Write back atomically
-    writeHandoff(project.slug, updatedHandoff);
-
-    // Keep the attempt lifecycle honest: planned → start, in_progress →
-    // advance to the reported phase (conservative — unknown phases are no-ops).
-    const synced = syncLifecycleFromProgress(project.slug, updateData.phase);
+    const { lifecycle: synced } = recordProgress(project.slug, updateData);
     if (synced) console.log(`   Lifecycle: ${synced.status}${synced.current_phase ? ` · phase: ${synced.current_phase}` : ""}`);
 
     console.log("✅ Progress recorded:");

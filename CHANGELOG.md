@@ -41,6 +41,9 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   additive footprint it places in an existing project.
 
 ### Fixed
+- `record-progress` now updates standard and skeletal canonical handoffs
+  without retaining stale phase/action values, and plain `resume` surfaces the
+  canonical project handoff before the scoped attempt handoff.
 - **Canonical store paths now reject traversal segments**, CLI and MCP slug
   lookups require registered projects, and explicit observation targets must
   resolve to a real attempt.

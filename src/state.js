@@ -14,6 +14,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { updateProgressSection } from "./handoff-update.js";
 
 const GIT_TIMEOUT = 30_000;
 
@@ -745,6 +746,29 @@ export function readHandoff(slug) {
 
 export function writeHandoff(slug, markdown) {
   atomicWrite(join(storeProjectDir(slug), "HANDOFF.md"), markdown);
+}
+
+// Record one progress checkpoint through the canonical core so CLI and MCP
+// cannot drift. The current attempt handoff seeds the project snapshot, then
+// both copies are updated atomically. Project state remains authoritative while
+// resume retains attempt-scoped context for concurrent/history views.
+export function recordProgress(slug, { message, timestamp, phase, next, files }) {
+  if (!getProject(slug)) throw new Error(`Unknown DIRF project ${slug}`);
+  const attempt = currentAttempt(slug);
+  const attemptHandoff = attempt ? readAttemptHandoffFile(slug, attempt.id) : null;
+  const base = attemptHandoff || readHandoff(slug) || "# DIRF Handoff\n\n## Objective\n\n(Work in progress)\n";
+  const updatedHandoff = updateProgressSection(base, {
+    message,
+    timestamp: timestamp || new Date().toISOString(),
+    phase: phase || null,
+    next,
+    files: files || [],
+  });
+
+  writeHandoff(slug, updatedHandoff);
+  if (attempt) atomicWrite(join(storeAttemptDir(slug, attempt.id), "HANDOFF.md"), updatedHandoff);
+  const lifecycle = syncLifecycleFromProgress(slug, phase || null);
+  return { handoff: updatedHandoff, attempt, lifecycle };
 }
 
 // Detect whether a target has migratable legacy state.

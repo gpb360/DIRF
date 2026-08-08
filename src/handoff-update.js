@@ -1,177 +1,110 @@
-// Progressive handoff checkpointing - update HANDOFF.md with workflow progress
-import { readFileSync, existsSync } from "node:fs";
+// Progressive handoff checkpointing - update HANDOFF.md with workflow progress.
+
+function splitSections(markdown) {
+  const lines = String(markdown || "").split(/\r?\n/);
+  const firstHeading = lines.findIndex((line) => line.startsWith("## "));
+  const preamble = firstHeading === -1 ? lines : lines.slice(0, firstHeading);
+  const sections = [];
+
+  for (let i = firstHeading === -1 ? lines.length : firstHeading; i < lines.length;) {
+    const heading = lines[i];
+    let end = i + 1;
+    while (end < lines.length && !lines[end].startsWith("## ")) end += 1;
+    sections.push({ heading, content: lines.slice(i + 1, end) });
+    i = end;
+  }
+  return { preamble, sections };
+}
+
+function sectionName(section) {
+  return section.heading.slice(3).trim().toLowerCase();
+}
+
+function findSection(sections, names) {
+  const wanted = new Set(names.map((name) => name.toLowerCase()));
+  return sections.find((section) => wanted.has(sectionName(section))) || null;
+}
+
+function ensureSection(sections, heading) {
+  const existing = findSection(sections, [heading]);
+  if (existing) return existing;
+  const created = { heading: `## ${heading}`, content: [] };
+  sections.push(created);
+  return created;
+}
+
+function sectionContent(lines) {
+  return ["", ...lines, ""];
+}
+
+function renderSections({ preamble, sections }) {
+  const lines = [...preamble];
+  for (const section of sections) lines.push(section.heading, ...section.content);
+  return `${lines.join("\n").replace(/\n+$/, "")}\n`;
+}
+
+function meaningfulLines(section) {
+  return section.content
+    .map((line) => line.trim())
+    .filter((line) => line && !/^(?:-\s+)?_\([^)]+\)_$/.test(line));
+}
 
 export function updateProgressSection(handoffMarkdown, { message, timestamp, phase, next, files }) {
-  const lines = handoffMarkdown.split(/\r?\n/);
-  const updated = [];
-  let inCurrentPhase = false;
-  let inLastAction = false;
-  let inCompleted = false;
-  let inChangedFiles = false;
+  const parsed = splitSections(handoffMarkdown);
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    if (line.startsWith("## Current phase")) {
-      inCurrentPhase = true;
-      updated.push(line);
-      if (phase) {
-        updated.push("");
-        updated.push(phase);
-      }
-      continue;
-    }
-
-    if (inCurrentPhase && line.trim() !== "" && !line.startsWith("##")) {
-      // Replace old phase content with new
-      if (phase) continue;
-      updated.push(line);
-      inCurrentPhase = false;
-      continue;
-    }
-
-    if (inCurrentPhase && line.match(/^_\([^)]+\)_$/)) {
-      // Replace placeholder with actual phase
-      if (phase) continue;
-      updated.push(line);
-      inCurrentPhase = false;
-      continue;
-    }
-
-    if (line.startsWith("## Last action")) {
-      inLastAction = true;
-      updated.push(line);
-      updated.push("");
-      const timestampStr = timestamp ? ` (${new Date(timestamp).toLocaleString()})` : "";
-      updated.push(`${message}${timestampStr}`);
-      continue;
-    }
-
-    if (inLastAction && line.trim() === "") {
-      // Skip old last action content
-      inLastAction = false;
-      updated.push(line);
-      continue;
-    }
-
-    if (inLastAction && !line.startsWith("##")) {
-      // Skip old last action lines
-      continue;
-    }
-
-    if (line.startsWith("## Completed steps")) {
-      inCompleted = true;
-      updated.push(line);
-      updated.push("");
-      updated.push(`- ${message}`);
-      continue;
-    }
-
-    if (inCompleted && line.startsWith("- ")) {
-      updated.push(line);
-      continue;
-    }
-
-    if (inCompleted && line.match(/^_\([^)]+\)_$/)) {
-      // Skip placeholder if we have content
-      continue;
-    }
-
-    if (inCompleted && line.startsWith("##")) {
-      inCompleted = false;
-    }
-
-    if (line.startsWith("## Changed files")) {
-      inChangedFiles = true;
-      updated.push(line);
-      updated.push("");
-      for (const file of files || []) {
-        updated.push(`- ${file}`);
-      }
-      continue;
-    }
-
-    if (inChangedFiles && line.startsWith("- ")) {
-      // Skip old changed files
-      continue;
-    }
-
-    if (inChangedFiles && line.match(/^_\([^)]+\)_$/)) {
-      // Skip placeholder
-      continue;
-    }
-
-    if (inChangedFiles && line.startsWith("##")) {
-      inChangedFiles = false;
-    }
-
-    if (line.startsWith("## Exact next action")) {
-      updated.push(line);
-      updated.push("");
-      updated.push(next);
-      continue;
-    }
-
-    updated.push(line);
+  if (phase) {
+    ensureSection(parsed.sections, "Current phase").content = sectionContent([phase]);
   }
 
-  return updated.join("\n");
+  const lastAction = findSection(parsed.sections, ["Last action"]);
+  if (lastAction) {
+    const timestampStr = timestamp ? ` (${new Date(timestamp).toLocaleString()})` : "";
+    lastAction.content = sectionContent([`${message}${timestampStr}`]);
+  }
+
+  let completed = findSection(parsed.sections, ["Completed", "Completed steps"]);
+  if (!completed) completed = ensureSection(parsed.sections, "Completed");
+  const completedItems = meaningfulLines(completed)
+    .filter((line) => line.startsWith("- "));
+  const completedEntry = `- ${message}`;
+  if (!completedItems.includes(completedEntry)) completedItems.push(completedEntry);
+  completed.content = sectionContent(completedItems);
+
+  const changedFiles = (files || []).map((file) => String(file).trim()).filter(Boolean);
+  if (changedFiles.length) {
+    let changed = findSection(parsed.sections, ["Changed files"]);
+    if (!changed) changed = ensureSection(parsed.sections, "Changed files");
+    const existing = meaningfulLines(changed)
+      .filter((line) => line.startsWith("- "))
+      .map((line) => line.slice(2).trim());
+    const merged = [...new Set([...existing, ...changedFiles])];
+    changed.content = sectionContent(merged.map((file) => `- ${file}`));
+  }
+
+  if (next) {
+    ensureSection(parsed.sections, "Exact next action").content = sectionContent([next]);
+  }
+
+  return renderSections(parsed);
 }
 
 export function parseCurrentHandoff(handoffMarkdown) {
-  const lines = handoffMarkdown.split(/\r?\n/);
-  const state = {
-    currentPhase: null,
-    lastAction: null,
-    completedSteps: [],
-    changedFiles: [],
-    nextAction: null
+  const { sections } = splitSections(handoffMarkdown);
+  const currentPhase = findSection(sections, ["Current phase"]);
+  const lastAction = findSection(sections, ["Last action"]);
+  const completed = findSection(sections, ["Completed", "Completed steps"]);
+  const changed = findSection(sections, ["Changed files"]);
+  const next = findSection(sections, ["Exact next action"]);
+  const firstValue = (section) => section ? meaningfulLines(section)[0] || null : null;
+  const bulletValues = (section) => section
+    ? meaningfulLines(section).filter((line) => line.startsWith("- ")).map((line) => line.slice(2).trim())
+    : [];
+
+  return {
+    currentPhase: firstValue(currentPhase),
+    lastAction: firstValue(lastAction),
+    completedSteps: bulletValues(completed),
+    changedFiles: bulletValues(changed),
+    nextAction: firstValue(next),
   };
-
-  let currentSection = null;
-
-  for (const line of lines) {
-    if (line.startsWith("## Current phase")) {
-      currentSection = "currentPhase";
-      continue;
-    }
-    if (line.startsWith("## Last action")) {
-      currentSection = "lastAction";
-      continue;
-    }
-    if (line.startsWith("## Completed steps")) {
-      currentSection = "completedSteps";
-      continue;
-    }
-    if (line.startsWith("## Changed files")) {
-      currentSection = "changedFiles";
-      continue;
-    }
-    if (line.startsWith("## Exact next action")) {
-      currentSection = "nextAction";
-      continue;
-    }
-    if (line.startsWith("## ")) {
-      currentSection = null;
-      continue;
-    }
-
-    if (currentSection === "currentPhase" && line.trim() && !line.match(/^_\([^)]+\)_$/)) {
-      state.currentPhase = line.trim();
-    }
-    if (currentSection === "lastAction" && line.trim() && !line.match(/^_\([^)]+\)_$/)) {
-      state.lastAction = line.trim();
-    }
-    if (currentSection === "completedSteps" && line.startsWith("- ")) {
-      state.completedSteps.push(line.slice(2).trim());
-    }
-    if (currentSection === "changedFiles" && line.startsWith("- ")) {
-      state.changedFiles.push(line.slice(2).trim());
-    }
-    if (currentSection === "nextAction" && line.trim() && !line.match(/^_\([^)]+\)_$/)) {
-      state.nextAction = line.trim();
-    }
-  }
-
-  return state;
 }
