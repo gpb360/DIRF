@@ -591,7 +591,7 @@ function cmdStateWhich(args) {
   // worktrees of one project can sit on different branches.
   const branch = gitOutput(target, ["branch", "--show-current"]);
   console.log(`${resolved.slug}  ->  ${storeProjectDir(resolved.slug)}`);
-  console.log(`branch: ${branch || "(detached)"}`);
+  console.log(`branch: ${branch || "(detached HEAD)"}`);
 }
 
 function cmdStateList(args = {}) {

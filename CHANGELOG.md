@@ -5,6 +5,45 @@ All notable changes to DIRF are documented here. The format is based on
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) —
 currently pre-1.0 (`0.x`), so anything may change between releases.
 
+## Unreleased
+
+### Added
+- **Workflow gates.** Playbooks declare `config.workflow.gates` (`verify` /
+  `decision` / `soft`). `dirf attempt advance` enforces them — verify gates
+  need recorded evidence, decision gates need an accepted record (deny
+  requires a comment), `--strict` promotes soft gates; `advance --auto`
+  crosses covered phases and stops at gates; `block --wait input|blocker`;
+  `resume` reconciles pending gates and replays recorded evidence.
+- **Skill-ecosystem awareness.** Discovery indexes invocation class
+  (`disable-model-invocation`), progressive-disclosure files, backticked
+  `/skill` references, and body size. `skills scan` gained an invocation
+  summary, a reference graph (referenced-but-absent resolved), spec-level
+  quality warnings, and a token budget with the ~32–36 routing ceiling.
+  **User-invoked skills are excluded from autonomous routing** (their
+  descriptions are human-facing by design; fallback when every candidate is
+  user-invoked).
+- **Policy clauses** embedded in every instruction set: Verification
+  Contract, Decision Ownership, Handoff-Before-Switch.
+- **`docs/writing-great-playbooks.md`** — authoring guidance for playbooks
+  and agents.
+- **Research reports** in `docs/research/`; the `research` playbook now
+  requires typed-source tracing and decision restatement.
+- **Bundled-skill lint in `dirf validate`** — dogfoods the authoring
+  guidance on the kit itself.
+
+### Changed
+- **`dirf state which` reports the current branch** (or `(detached HEAD)`) —
+  closes the 0.25.0 known limitation.
+
+### Fixed
+- `advance --auto --evidence` silently dropped the evidence flag (now
+  recorded for the first leaving phase).
+- Attempt projections were O(N²) reads per list (now one workflow read per
+  attempt).
+- `body_lines`/`body_chars` measured the full file including frontmatter
+  (now body-only); a co-located `README.md` was listed as a disclosure next
+  to `SKILL.md` (now excluded).
+
 ## [0.25.0] — 2026-07-27
 
 First tagged release. DIRF is a zero-runtime-dependency Node kit that turns a
