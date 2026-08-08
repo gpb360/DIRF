@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { mkdtempSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,19 @@ const TIMEOUT = 30_000;
 function run(args, env, cwd) {
   return execFileSync(process.execPath, [CLI, ...args], {
     cwd, encoding: "utf8", timeout: TIMEOUT, env: { ...process.env, ...env },
+  });
+}
+
+function runAsync(args, env, cwd) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [CLI, ...args], {
+      cwd, env: { ...process.env, ...env }, windowsHide: true,
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("close", (code) => resolve({ code, stdout, stderr }));
   });
 }
 
@@ -136,4 +149,72 @@ test("dirf resume surfaces canonical progress before the attempt handoff", () =>
     "resume", built.attempt.id, "--path", main, "--json",
   ], { DIRF_HOME: home }, main));
   assert.equal(resumedJson.project_handoff, resumedJson.attempt_handoff);
+});
+
+test("record-progress requires an explicit attempt when several exist and preserves canonical precedence", () => {
+  const home = freshHome();
+  const main = mkdtempSync(join(tmpdir(), "multi-progress-"));
+  execFileSync("git", ["init", "-q"], { cwd: main, timeout: TIMEOUT });
+  run(["setup", main], { DIRF_HOME: home }, main);
+  const older = JSON.parse(run([
+    "build", "older", "work on the older attempt", "--path", main, "--json",
+  ], { DIRF_HOME: home }, main));
+  const newer = JSON.parse(run([
+    "build", "newer", "work on the newer attempt", "--path", main, "--json",
+  ], { DIRF_HOME: home }, main));
+
+  const canonical = [
+    "# DIRF Handoff", "", "## Objective", "", "Authoritative project state", "",
+    "## Decisions and assumptions", "", "- preserve-canonical-sentinel", "",
+    "## Exact next action", "", "Choose the active attempt explicitly", "",
+  ].join("\n");
+  const canonicalFile = join(main, "canonical-handoff.md");
+  writeFileSync(canonicalFile, canonical);
+  run(["state", "write-handoff", "--file", canonicalFile, "--path", main], { DIRF_HOME: home }, main);
+
+  assert.throws(
+    () => run(["record-progress", "ambiguous progress", "--path", main, "--next", "continue"], { DIRF_HOME: home }, main),
+    /multiple attempts.*--attempt/i,
+  );
+
+  run([
+    "record-progress", "progress belongs to older", "--attempt", older.attempt.id,
+    "--path", main, "--next", "review older attempt",
+  ], { DIRF_HOME: home }, main);
+
+  const resumedOlder = JSON.parse(run([
+    "resume", older.attempt.id, "--path", main, "--json",
+  ], { DIRF_HOME: home }, main));
+  const resumedNewer = JSON.parse(run([
+    "resume", newer.attempt.id, "--path", main, "--json",
+  ], { DIRF_HOME: home }, main));
+  assert.match(resumedOlder.project_handoff, /preserve-canonical-sentinel/);
+  assert.match(resumedOlder.project_handoff, /progress belongs to older/);
+  assert.match(resumedOlder.attempt_handoff, /work on the older attempt/);
+  assert.match(resumedOlder.attempt_handoff, /progress belongs to older/);
+  assert.doesNotMatch(resumedNewer.attempt_handoff, /progress belongs to older/);
+});
+
+test("concurrent progress updates keep canonical and attempt handoffs synchronized", async () => {
+  const home = freshHome();
+  const main = mkdtempSync(join(tmpdir(), "concurrent-progress-"));
+  execFileSync("git", ["init", "-q"], { cwd: main, timeout: TIMEOUT });
+  run(["setup", main], { DIRF_HOME: home }, main);
+  const built = JSON.parse(run([
+    "build", "concurrent", "serialize progress writes", "--path", main, "--json",
+  ], { DIRF_HOME: home }, main));
+  const env = { DIRF_HOME: home };
+  const [first, second] = await Promise.all([
+    runAsync(["record-progress", "first concurrent update", "--attempt", built.attempt.id, "--path", main, "--next", "continue"], env, main),
+    runAsync(["record-progress", "second concurrent update", "--attempt", built.attempt.id, "--path", main, "--next", "continue"], env, main),
+  ]);
+  assert.equal(first.code, 0, first.stderr || first.stdout);
+  assert.equal(second.code, 0, second.stderr || second.stdout);
+
+  const resumed = JSON.parse(run([
+    "resume", built.attempt.id, "--path", main, "--json",
+  ], env, main));
+  assert.equal(resumed.project_handoff, resumed.attempt_handoff);
+  assert.match(resumed.project_handoff, /first concurrent update/);
+  assert.match(resumed.project_handoff, /second concurrent update/);
 });

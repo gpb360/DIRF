@@ -165,7 +165,7 @@ test("syncAttemptFromHandoff upgrades historical attempts with evidence", () => 
 test("syncLifecycleFromProgress starts a planned attempt", () => {
   const { slug, now } = setup();
   const attempt = addAttempt(slug, "work", daysAgo(1, now), "planned");
-  const synced = syncLifecycleFromProgress(slug, null, now);
+  const synced = syncLifecycleFromProgress(slug, attempt.id, null, now);
   assert.equal(synced.status, "in_progress");
   assert.equal(synced.current_phase, "define");
 });
@@ -173,18 +173,17 @@ test("syncLifecycleFromProgress starts a planned attempt", () => {
 test("syncLifecycleFromProgress advances to the reported phase", () => {
   const { slug, now } = setup();
   const attempt = addAttempt(slug, "work", daysAgo(1, now), "in_progress");
-  const synced = syncLifecycleFromProgress(slug, "build", now);
+  const synced = syncLifecycleFromProgress(slug, attempt.id, "build", now);
   assert.equal(synced.current_phase, "build");
-  const final = syncLifecycleFromProgress(slug, "verify", now);
+  const final = syncLifecycleFromProgress(slug, attempt.id, "verify", now);
   assert.equal(final.current_phase, "verify");
 });
 
 test("syncLifecycleFromProgress ignores unknown phases and untracked attempts", () => {
   const { slug, now } = setup();
   const attempt = addAttempt(slug, "work", daysAgo(5, now), "in_progress");
-  assert.equal(syncLifecycleFromProgress(slug, "not-a-phase", now), null);
-  // The most recent attempt is an untracked historical one — no lifecycle sync.
-  makeHistorical(createAttemptInStore(slug, "legacy", daysAgo(1, now)));
-  assert.equal(syncLifecycleFromProgress(slug, "define", now), null);
+  assert.equal(syncLifecycleFromProgress(slug, attempt.id, "not-a-phase", now), null);
+  const historical = makeHistorical(createAttemptInStore(slug, "legacy", daysAgo(1, now)));
+  assert.equal(syncLifecycleFromProgress(slug, historical.id, "define", now), null);
   assert.equal(getAttempt(slug, attempt.id).current_phase, "define");
 });

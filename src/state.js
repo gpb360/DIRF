@@ -205,6 +205,24 @@ export function resolveProject(targetPath) {
   return null;
 }
 
+const PROJECT_SLUG_RE = /^[a-z0-9.-]+-[0-9a-f]{8}$/;
+
+// Resolve a registered project reference through one core path for every
+// shell. Explicit CLI --slug values must be registered slugs; MCP-style
+// references accept either a registered slug or a filesystem path.
+export function resolveProjectReference(reference, { defaultPath = process.cwd(), explicitSlug = false } = {}) {
+  const value = reference === undefined || reference === null ? "" : String(reference);
+  if (value) {
+    const registered = getProject(value);
+    if (registered) return registered.slug;
+    if (explicitSlug || PROJECT_SLUG_RE.test(value)) throw new Error(`Unknown DIRF project ${value}`);
+  }
+  const target = resolve(value || defaultPath);
+  const project = resolveProject(target);
+  if (!project) throw new Error(`DIRF has no project registered for ${target}. Run: dirf setup "${target}"`);
+  return project.slug;
+}
+
 function portable(p) { return p.replaceAll("\\", "/"); }
 
 function slugifyName(value) {
@@ -583,8 +601,8 @@ export function syncAttemptFromHandoff(slug, idOrName) {
 // → advance until current_phase matches the reported phase (unknown phases are
 // left alone — conservative). Returns the updated attempt, or null when
 // nothing changed.
-export function syncLifecycleFromProgress(slug, phase, now = new Date()) {
-  const attempt = currentAttempt(slug);
+export function syncLifecycleFromProgress(slug, idOrName, phase, now = new Date()) {
+  const attempt = getAttempt(slug, idOrName);
   if (!attempt?.tracked) return null;
   const phases = attemptPhases(slug, attempt.id);
   if (attempt.status === "planned") {
@@ -748,27 +766,77 @@ export function writeHandoff(slug, markdown) {
   atomicWrite(join(storeProjectDir(slug), "HANDOFF.md"), markdown);
 }
 
-// Record one progress checkpoint through the canonical core so CLI and MCP
-// cannot drift. The current attempt handoff seeds the project snapshot, then
-// both copies are updated atomically. Project state remains authoritative while
-// resume retains attempt-scoped context for concurrent/history views.
-export function recordProgress(slug, { message, timestamp, phase, next, files }) {
-  if (!getProject(slug)) throw new Error(`Unknown DIRF project ${slug}`);
-  const attempt = currentAttempt(slug);
-  const attemptHandoff = attempt ? readAttemptHandoffFile(slug, attempt.id) : null;
-  const base = attemptHandoff || readHandoff(slug) || "# DIRF Handoff\n\n## Objective\n\n(Work in progress)\n";
-  const updatedHandoff = updateProgressSection(base, {
-    message,
-    timestamp: timestamp || new Date().toISOString(),
-    phase: phase || null,
-    next,
-    files: files || [],
-  });
+function progressAttempt(slug, idOrName) {
+  if (idOrName) return getAttempt(slug, idOrName);
+  const attempts = listAttempts(slug);
+  if (attempts.length > 1) {
+    throw new Error("Multiple attempts exist; pass --attempt <id|name> so progress is not attached to the wrong attempt.");
+  }
+  return attempts[0] || null;
+}
 
-  writeHandoff(slug, updatedHandoff);
-  if (attempt) atomicWrite(join(storeAttemptDir(slug, attempt.id), "HANDOFF.md"), updatedHandoff);
-  const lifecycle = syncLifecycleFromProgress(slug, phase || null);
-  return { handoff: updatedHandoff, attempt, lifecycle };
+const PROGRESS_LOCK_WAIT_MS = 5_000;
+const PROGRESS_LOCK_STALE_MS = 30_000;
+const LOCK_WAIT_ARRAY = new Int32Array(new SharedArrayBuffer(4));
+
+function withProgressLock(slug, action) {
+  const lockPath = join(storeProjectDir(slug), ".record-progress.lock");
+  const deadline = Date.now() + PROGRESS_LOCK_WAIT_MS;
+  while (true) {
+    try {
+      mkdirSync(lockPath);
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      try {
+        if (Date.now() - statSync(lockPath).mtimeMs > PROGRESS_LOCK_STALE_MS) {
+          rmSync(lockPath, { recursive: true, force: true });
+          continue;
+        }
+      } catch (statError) {
+        if (statError.code !== "ENOENT") throw statError;
+        continue;
+      }
+      if (Date.now() >= deadline) throw new Error("Another progress update is still running; retry this checkpoint.");
+      Atomics.wait(LOCK_WAIT_ARRAY, 0, 0, 25);
+    }
+  }
+  try {
+    return action();
+  } finally {
+    rmSync(lockPath, { recursive: true, force: true });
+  }
+}
+
+// Record one progress checkpoint through the canonical core so CLI and MCP
+// cannot drift. Canonical and attempt handoffs are updated from their own
+// bases; the attempt write happens first and the authoritative canonical write
+// happens last. Concurrent attempts therefore keep scoped history while the
+// project handoff remains a last-writer-wins snapshot.
+export function recordProgress(slug, { message, timestamp, phase, next, files, attemptId }) {
+  if (!getProject(slug)) throw new Error(`Unknown DIRF project ${slug}`);
+  return withProgressLock(slug, () => {
+    const attempt = progressAttempt(slug, attemptId);
+    const attemptHandoff = attempt ? readAttemptHandoffFile(slug, attempt.id) : null;
+    const fallback = "# DIRF Handoff\n\n## Objective\n\n(Work in progress)\n";
+    const canonicalBase = readHandoff(slug) || attemptHandoff || fallback;
+    const update = {
+      message,
+      timestamp: timestamp || new Date().toISOString(),
+      phase: phase || null,
+      next,
+      files: files || [],
+    };
+    const updatedHandoff = updateProgressSection(canonicalBase, update);
+    const updatedAttemptHandoff = attempt
+      ? updateProgressSection(attemptHandoff || canonicalBase, update)
+      : null;
+
+    if (attempt) atomicWrite(join(storeAttemptDir(slug, attempt.id), "HANDOFF.md"), updatedAttemptHandoff);
+    writeHandoff(slug, updatedHandoff);
+    const lifecycle = attempt ? syncLifecycleFromProgress(slug, attempt.id, phase || null) : null;
+    return { handoff: updatedHandoff, attempt_handoff: updatedAttemptHandoff, attempt, lifecycle };
+  });
 }
 
 // Detect whether a target has migratable legacy state.
@@ -890,7 +958,7 @@ export function migrateCleanup(targetPath) {
 // survives across sessions. Never flows into workflow.json or HANDOFF.md.
 
 // The most recent attempt for a project (newest-last in listAttempts), or null.
-export function currentAttempt(slug) {
+export function latestAttempt(slug) {
   const attempts = listAttempts(slug);
   return attempts.length ? attempts.at(-1) : null;
 }
@@ -922,7 +990,7 @@ export function listObservations(slug, { attemptId, project = false } = {}) {
   } else if (target) {
     target = getAttempt(slug, target).id;
   } else if (!target) {
-    const cur = currentAttempt(slug);
+    const cur = latestAttempt(slug);
     target = cur ? cur.id : null;
   }
   const file = observationsFile(slug, target);
@@ -942,7 +1010,7 @@ export function appendObservation(slug, text, { attemptId, project = false } = {
   } else if (target) {
     target = getAttempt(slug, target).id;
   } else if (!target) {
-    const cur = currentAttempt(slug);
+    const cur = latestAttempt(slug);
     if (!cur) throw new Error("No attempt to attach the observation to — run `dirf build` first, or pass --attempt <id>.");
     target = cur.id;
   }
@@ -959,7 +1027,7 @@ export function appendObservation(slug, text, { attemptId, project = false } = {
 // the source attempt keeps its log; the promoted entry is copied (re-numbered)
 // into the project file.
 export function promoteObservation(slug, entryN, { attemptId } = {}) {
-  const cur = attemptId ? { id: attemptId } : currentAttempt(slug);
+  const cur = attemptId ? { id: attemptId } : latestAttempt(slug);
   if (!cur) throw new Error("No attempt to promote from — run `dirf build` first, or pass --attempt <id>.");
   const source = listObservations(slug, { attemptId: cur.id });
   const entry = source.find((e) => e.n === entryN);

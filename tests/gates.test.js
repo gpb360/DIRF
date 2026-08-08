@@ -260,7 +260,7 @@ test("gate-free attempts advance exactly as before", () => {
 test("syncLifecycleFromProgress stops at gates instead of crossing them", () => {
   const { slug, attempt } = attemptFixture();
   updateAttemptLifecycle(slug, attempt.id, "start");
-  const synced = syncLifecycleFromProgress(slug, "ship");
+  const synced = syncLifecycleFromProgress(slug, attempt.id, "ship");
   assert.equal(synced, null);
   assert.equal(getAttempt(slug, attempt.id).current_phase, "design");
 });

@@ -92,7 +92,7 @@ test("deriveSlug: two distinct repos produce distinct slugs", () => {
   assert.notEqual(deriveSlug(a), deriveSlug(b));
 });
 
-import { registerProject, resolveProject, getProject, writeRegistry } from "../src/state.js";
+import { registerProject, resolveProject, resolveProjectReference, getProject, writeRegistry } from "../src/state.js";
 
 test("registerProject creates a store entry + registry record", () => {
   const home = freshHome();
@@ -140,6 +140,20 @@ test("resolveProject returns null for an unregistered path", () => {
   const dir = mkdtempSync(join(tmpdir(), "unknown-"));
   // not a git repo, not registered -> null
   assert.equal(resolveProject(dir), null);
+});
+
+test("resolveProjectReference applies the same registered slug and path rules", () => {
+  freshHome();
+  const repo = mkdtempSync(join(tmpdir(), "refproj-"));
+  gitInit(repo);
+  const { slug } = registerProject(repo);
+  assert.equal(resolveProjectReference(slug), slug);
+  assert.equal(resolveProjectReference(repo), slug);
+  assert.equal(resolveProjectReference(slug, { explicitSlug: true }), slug);
+  assert.throws(
+    () => resolveProjectReference("missing-project-12345678", { explicitSlug: true }),
+    /unknown DIRF project/i,
+  );
 });
 
 import { readHandoff, writeHandoff, listAttempts, getAttempt, storeAttemptDir, createAttemptInStore } from "../src/state.js";

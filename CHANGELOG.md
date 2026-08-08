@@ -41,9 +41,12 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   additive footprint it places in an existing project.
 
 ### Fixed
-- `record-progress` now updates standard and skeletal canonical handoffs
-  without retaining stale phase/action values, and plain `resume` surfaces the
-  canonical project handoff before the scoped attempt handoff.
+- `record-progress` now requires an explicit target when multiple attempts
+  exist, preserves canonical precedence, serializes mirrored writes, and keeps
+  lifecycle updates attached to the selected attempt. Plain `resume` surfaces
+  the canonical project handoff before scoped attempt context.
+- CLI and MCP project references now resolve through the same `state.js` core,
+  and the README lists the complete MCP tool surface.
 - **Canonical store paths now reject traversal segments**, CLI and MCP slug
   lookups require registered projects, and explicit observation targets must
   resolve to a real attempt.

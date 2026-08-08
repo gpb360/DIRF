@@ -28,7 +28,7 @@ import { inspect, detectStackProfile } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, getProject, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGateState, pendingGates, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress } from "./state.js";
+import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGateState, pendingGates, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress } from "./state.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 
 const LIFECYCLE = {
@@ -581,17 +581,8 @@ function cmdExportPlaybooks() {
 }
 
 function resolveStateSlug(args) {
-  if (args.slug) {
-    const project = getProject(args.slug);
-    if (!project) throw new Error(`Unknown DIRF project ${args.slug}`);
-    return project.slug;
-  }
-  const target = projectRoot(args.path || ".");
-  const resolved = resolveProject(target);
-  if (!resolved) {
-    throw new Error(`DIRF has no project registered for ${target}. Run: dirf setup "${target}"`);
-  }
-  return resolved.slug;
+  const reference = args.slug || projectRoot(args.path || ".");
+  return resolveProjectReference(reference, { explicitSlug: Boolean(args.slug) });
 }
 
 function cmdStateWhich(args) {
@@ -883,13 +874,10 @@ function cmdExportGraphify(args) {
 
 // `dirf notice` — a non-derailing side-observation channel. Park anything NOT
 // the current task (a side bug, a doc staleness, a "fix later") without acting
-// on it or polluting HANDOFF.md. Default target: the current attempt.
-function resolveNoticeSlug(args) {
-  return resolveStateSlug(args);
-}
+// on it or polluting HANDOFF.md. Default target: the latest attempt.
 
 function cmdNoticeAppend(args, text) {
-  const slug = resolveNoticeSlug(args);
+  const slug = resolveStateSlug(args);
   const opts = {};
   if (args.project) opts.project = true;
   if (args.attempt) opts.attemptId = args.attempt;
@@ -900,7 +888,7 @@ function cmdNoticeAppend(args, text) {
 }
 
 function cmdNoticeList(args) {
-  const slug = resolveNoticeSlug(args);
+  const slug = resolveStateSlug(args);
   const opts = {};
   if (args.project) opts.project = true;
   if (args.attempt) opts.attemptId = args.attempt;
@@ -912,7 +900,7 @@ function cmdNoticeList(args) {
 }
 
 function cmdNoticePromote(args, entryN) {
-  const slug = resolveNoticeSlug(args);
+  const slug = resolveStateSlug(args);
   const opts = {};
   if (args.attempt) opts.attemptId = args.attempt;
   const n = Number(entryN);
@@ -939,7 +927,8 @@ function cmdRecordProgress(args) {
       timestamp,
       phase: args.phase || null,
       next: args.next || "Continue work",
-      files: args.files ? args.files.split(",") : []
+      files: args.files ? args.files.split(",") : [],
+      attemptId: args.attempt || null,
     };
 
     const { lifecycle: synced } = recordProgress(project.slug, updateData);
@@ -1015,7 +1004,7 @@ Usage:
   dirf list [--path DIR]                               list saved attempts
   dirf status [--path DIR]                             show project and repository state
   dirf resume <name-or-id> [--path DIR]                load the workflow handoff
-  dirf record-progress "<message>" [--path DIR] [--phase PHASE] [--next ACTION] [--files FILES]
+  dirf record-progress "<message>" [--path DIR] [--attempt ID|NAME] [--phase PHASE] [--next ACTION] [--files FILES]
                                                       record progress, update HANDOFF.md and sync the attempt lifecycle
   dirf attempt <action> <id> [--path DIR]              update lifecycle state
                                                       (advance: [--evidence "CMD" [--output F]] [--strict] [--auto])
