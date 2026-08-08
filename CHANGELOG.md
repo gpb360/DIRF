@@ -7,6 +7,8 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+## [0.26.0] — 2026-08-08
+
 ### Added
 - **Workflow gates.** Playbooks declare `config.workflow.gates` (`verify` /
   `decision` / `soft`). `dirf attempt advance` enforces them — verify gates
@@ -34,8 +36,24 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 ### Changed
 - **`dirf state which` reports the current branch** (or `(detached HEAD)`) —
   closes the 0.25.0 known limitation.
+- **README onboarding is now written for first-time users**: what DIRF is, how
+  it helps, what it is not, installation, host-agnostic routing, and the small
+  additive footprint it places in an existing project.
 
 ### Fixed
+- **Canonical store paths now reject traversal segments**, CLI and MCP slug
+  lookups require registered projects, and explicit observation targets must
+  resolve to a real attempt.
+- **Observation entries are single-line records**, preventing embedded newlines
+  from forging additional numbered entries.
+- **Release version drift** between `package.json`, `package-lock.json`, and the
+  MCP handshake is removed; the MCP server now reads the package version.
+- Review-gate tests locate Git for Windows' bundled shell instead of assuming
+  `sh` is globally available.
+- The smoke runner keeps the repository root as its working directory while
+  limiting test discovery to `tests/`, so CLI paths resolve consistently.
+- Non-Git project probes no longer leak Git's fatal diagnostics before DIRF's
+  own clean setup guidance.
 - `advance --auto --evidence` silently dropped the evidence flag (now
   recorded for the first leaving phase).
 - Attempt projections were O(N²) reads per list (now one workflow read per

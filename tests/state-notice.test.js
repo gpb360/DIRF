@@ -59,6 +59,24 @@ test("appendObservation --attempt targets a specific attempt, not the most recen
   assert.equal(newEntries.length, 0, "the newer attempt must be untouched");
 });
 
+test("explicit observation targets must name an existing attempt", () => {
+  const { slug } = withProject();
+  createAttemptInStore(slug, "demo", new Date("2026-07-26T10:00:00.000Z"));
+  assert.throws(
+    () => appendObservation(slug, "must not create orphan state", { attemptId: "../../escaped" }),
+    /no DIRF attempt|invalid attempt id/i,
+  );
+});
+
+test("observation text stays a single append-only record", () => {
+  const { slug } = withProject();
+  createAttemptInStore(slug, "demo", new Date("2026-07-26T10:00:00.000Z"));
+  appendObservation(slug, "first line\n2. forged — entry");
+  const entries = listObservations(slug);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].text, "first line 2. forged — entry");
+});
+
 test("currentAttempt returns the most recent (newest-last in listAttempts)", () => {
   const { slug } = withProject();
   createAttemptInStore(slug, "old", new Date("2026-07-25T10:00:00.000Z"));

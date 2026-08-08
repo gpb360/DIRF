@@ -47,6 +47,7 @@ function gitCommonDir(targetPath) {
   try {
     let out = execFileSync("git", ["-C", targetPath, "rev-parse", "--git-common-dir"], {
       encoding: "utf8", timeout: GIT_TIMEOUT, windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
     }).trim();
     if (!out) return null;
     if (!isAbsolute(out)) out = resolve(targetPath, out);
@@ -117,8 +118,15 @@ export function atomicWrite(filePath, contents) {
   renameSync(tmp, filePath);
 }
 
+function storeSegment(value, label) {
+  if (typeof value !== "string" || !value || value === "." || value === ".." || /[\0/\\]/.test(value)) {
+    throw new Error(`Invalid ${label}: expected one safe path segment`);
+  }
+  return value;
+}
+
 export function storeProjectDir(slug) {
-  return join(storeHome(), "projects", slug);
+  return join(storeHome(), "projects", storeSegment(slug, "project slug"));
 }
 
 export function writeRegistry(registry) {
@@ -209,7 +217,7 @@ function timestampIso(now) {
 }
 
 export function storeAttemptDir(slug, attemptId) {
-  return join(storeProjectDir(slug), "attempts", attemptId);
+  return join(storeProjectDir(slug), "attempts", storeSegment(attemptId, "attempt id"));
 }
 
 // Create an attempt inside the store. Mirrors project.js createAttempt semantics
@@ -887,6 +895,8 @@ export function listObservations(slug, { attemptId, project = false } = {}) {
   let target = attemptId;
   if (project) {
     target = null;
+  } else if (target) {
+    target = getAttempt(slug, target).id;
   } else if (!target) {
     const cur = currentAttempt(slug);
     target = cur ? cur.id : null;
@@ -900,11 +910,13 @@ export function listObservations(slug, { attemptId, project = false } = {}) {
 // none exists). Options: { attemptId, project } — attemptId wins over default,
 // project wins over both (writes the project-level file).
 export function appendObservation(slug, text, { attemptId, project = false } = {}) {
-  const trimmed = String(text || "").trim();
+  const trimmed = String(text || "").trim().replace(/\s*\r?\n+\s*/g, " ");
   if (!trimmed) throw new Error("observation text must not be empty");
   let target = attemptId;
   if (project) {
     target = null;
+  } else if (target) {
+    target = getAttempt(slug, target).id;
   } else if (!target) {
     const cur = currentAttempt(slug);
     if (!cur) throw new Error("No attempt to attach the observation to — run `dirf build` first, or pass --attempt <id>.");

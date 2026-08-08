@@ -4,15 +4,17 @@
 // / tools/list / tools/call. Every tool is a thin call into state.js.
 
 import { createInterface } from "node:readline";
+import { readFileSync } from "node:fs";
 import {
-  resolveProject, listProjects,
+  resolveProject, listProjects, getProject,
   readHandoff, writeHandoff, listAttempts, getAttempt, storeProjectDir,
 } from "./state.js";
 import { updateProgressSection } from "./handoff-update.js";
 import { resolve } from "node:path";
 
 const PROTOCOL_VERSION = "2024-11-05";
-const SERVER_INFO = { name: "amf-dirf", version: "1.0.0" };
+const PACKAGE_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+const SERVER_INFO = { name: "amf-dirf", version: PACKAGE_VERSION };
 
 const TOOLS = [
   { name: "dirf_resolve_project", description: "Resolve which DIRF project a path belongs to (default: server cwd).", inputSchema: { type: "object", properties: { path: { type: "string" } } } },
@@ -26,7 +28,10 @@ const TOOLS = [
 
 function resolveSlugFromParams(params = {}) {
   const project = params.project;
-  if (project && /^[a-z0-9.-]+-[0-9a-f]{8}$/.test(project)) return project; // looks like a slug
+  if (project && /^[a-z0-9.-]+-[0-9a-f]{8}$/.test(project)) {
+    if (!getProject(project)) throw new Error(`Unknown DIRF project ${project}`);
+    return project;
+  }
   const target = resolve(project || process.cwd());
   const resolved = resolveProject(target);
   if (!resolved) throw new Error(`DIRF has no project registered for ${target}`);

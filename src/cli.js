@@ -574,7 +574,11 @@ function cmdExportPlaybooks() {
 }
 
 function resolveStateSlug(args) {
-  if (args.slug) return args.slug;
+  if (args.slug) {
+    const project = getProject(args.slug);
+    if (!project) throw new Error(`Unknown DIRF project ${args.slug}`);
+    return project.slug;
+  }
   const target = projectRoot(args.path || ".");
   const resolved = resolveProject(target);
   if (!resolved) {
@@ -740,7 +744,7 @@ function cmdStateImportHandoff(args) {
   // resolveProject would surface — import-handoff is the RESOLUTION of that
   // conflict, so it must reach the promotion step even from the conflict state.
   // registerProject is idempotent and never throws on handoff conflicts.
-  const slug = args.slug || registerProject(target).slug;
+  const slug = args.slug ? resolveStateSlug(args) : registerProject(target).slug;
   if (!slug) throw new Error(`DIRF has no project registered for ${target}. Run: dirf setup "${target}"`);
   if (!args.force) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -874,12 +878,7 @@ function cmdExportGraphify(args) {
 // the current task (a side bug, a doc staleness, a "fix later") without acting
 // on it or polluting HANDOFF.md. Default target: the current attempt.
 function resolveNoticeSlug(args) {
-  // Resolve slug for a notice op. Reuses the state slug-resolution path.
-  if (args.slug) return args.slug;
-  const target = projectRoot(args.path || ".");
-  const resolved = resolveProject(target);
-  if (!resolved) throw new Error(`DIRF has no project registered for ${target}. Run: dirf setup "${target}"`);
-  return resolved.slug;
+  return resolveStateSlug(args);
 }
 
 function cmdNoticeAppend(args, text) {

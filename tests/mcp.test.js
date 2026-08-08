@@ -4,6 +4,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import packageJson from "../package.json" with { type: "json" };
 
 const MCP = join(process.cwd(), "src", "mcp.js");
 const CLI_PROJECT = join(process.cwd(), "src", "cli.js");
@@ -55,6 +56,7 @@ test("initialize handshake returns server info + protocol version", async () => 
     const res = await once(child);
     assert.equal(res.id, 1);
     assert.ok(res.result.serverInfo.name);
+    assert.equal(res.result.serverInfo.version, packageJson.version);
     send(child, { jsonrpc: "2.0", method: "notifications/initialized" });
   } finally { child.kill(); }
 });

@@ -159,6 +159,13 @@ test("writeHandoff then readHandoff round-trips content", () => {
   assert.equal(readHandoff(slug), md);
 });
 
+test("store paths reject traversal segments", () => {
+  const home = freshHome();
+  assert.throws(() => storeProjectDir("../escaped-12345678"), /invalid project slug/i);
+  assert.throws(() => storeAttemptDir("safe-12345678", "../../escaped"), /invalid attempt id/i);
+  assert.equal(existsSync(join(home, "escaped-12345678")), false);
+});
+
 test("readHandoff returns null when no handoff exists", () => {
   const { slug } = withRegisteredProject();
   assert.equal(readHandoff(slug), null);
