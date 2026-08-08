@@ -167,6 +167,15 @@ test("lintSkillMetadata surfaces spec-level quality warnings, never false on cle
   assert.ok(skills.lintSkillMetadata({ name: "x", path: "/s/x", description: "d <xml>tag</xml>" }).some((w) => /XML tags/.test(w)));
 });
 
+test("tokenBudget reports metadata vs eager-load economics", () => {
+  const budget = skills.tokenBudget({
+    a: { name: "a", description: "abcd", body_chars: 40 },
+    b: { name: "b", description: "efgh", body_chars: 40 },
+  });
+  assert.deepEqual(budget, { skills: 2, metadataTokens: 3, eagerTokens: 20, savings: 85 });
+  assert.deepEqual(skills.tokenBudget({}), { skills: 0, metadataTokens: 0, eagerTokens: 0, savings: 0 });
+});
+
 test("discoverAgents indexes project agent files but never the kit's bundled agents/", () => {
   const root = mkdtempSync(join(tmpdir(), "dirf-agents-"));
   mkdirSync(join(root, ".claude", "agents"), { recursive: true });

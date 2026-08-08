@@ -286,6 +286,7 @@ function indexOne(path, index) {
     invocation,
     disclosures: collectDisclosures(folder, file),
     body_lines: lineCount,
+    body_chars: body.length,
     // Only emitted when present — plain skills keep their historical shape.
     ...(references.length ? { references } : {}),
   };
@@ -355,6 +356,22 @@ export function lintSkillMetadata(entry) {
   if (dir && dir !== name) warnings.push(`name "${name}" does not match parent directory "${dir}" (breaks installers' routing)`);
   if (entry?.body_lines && entry.body_lines > 500) warnings.push(`SKILL.md body is ${entry.body_lines} lines (keep under 500 — progressive disclosure)`);
   return warnings;
+}
+
+// Progressive-disclosure economics, in tokens (rough: chars / 4). Only name +
+// description are always loaded (the metadata tier); bodies cost tokens only
+// when actually read. The savings figure is the measured upside of loading
+// lazily instead of eagerly.
+export function tokenBudget(index) {
+  const skills = Object.values(index || {});
+  const metadataTokens = Math.ceil(skills.reduce((sum, s) => sum + (s.name || "").length + (s.description || "").length, 0) / 4);
+  const eagerTokens = Math.ceil(skills.reduce((sum, s) => sum + (s.body_chars || 0), 0) / 4);
+  return {
+    skills: skills.length,
+    metadataTokens,
+    eagerTokens,
+    savings: eagerTokens > 0 ? Math.round((1 - metadataTokens / eagerTokens) * 100) : 0,
+  };
 }
 
 export function bundledSkills() {

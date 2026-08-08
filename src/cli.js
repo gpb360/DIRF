@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { ROOT, REGISTRY, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, fileHash, folderHash, loadJson } from "./paths.js";
 import { collectRoutingFacts, loadPlaybooks, recommend } from "./router.js";
-import { discover, discoverAgents, enrichDiscovered, lintSkillMetadata, loadRegistry, loadTrustedSources, providerForPath, resolveAgentSkills } from "./skills.js";
+import { discover, discoverAgents, enrichDiscovered, lintSkillMetadata, loadRegistry, loadTrustedSources, providerForPath, resolveAgentSkills, tokenBudget } from "./skills.js";
 import { FOCUSED_OUTPUT_RULES, buildInstructions, buildHtml } from "./renderer.js";
 import { main as validateMain } from "./validate.js";
 import { inspect, detectStackProfile } from "./inspect.js";
@@ -563,6 +563,9 @@ function cmdSkillsScan(args) {
     for (const { skill, warnings } of quality.slice(0, 20)) console.log(`  ${skill}: ${warnings.join("; ")}`);
     if (quality.length > 20) console.log(`  … and ${quality.length - 20} more skill(s) with warnings`);
   }
+  const budget = tokenBudget(idx);
+  console.log(`\nToken budget: ${budget.metadataTokens} tokens always loaded (metadata tier) · ${budget.eagerTokens} if every body were read (progressive disclosure saves ~${budget.savings}%).`);
+  if (budget.skills > 35) console.log(`  ${budget.skills} skills exceeds the ~32-36 routing ceiling — consider a router skill or pruning.`);
 }
 
 function cmdExportPlaybooks() {
