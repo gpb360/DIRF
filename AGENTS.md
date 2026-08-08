@@ -66,6 +66,9 @@ node --test                    # run the suite (123 tests)
   (backup at `.dirf.migrating.<ts>/` first); a local `HANDOFF.md` newer than the
   store's is never silently overwritten.
 - Validate before you commit: `node src/cli.js validate`.
+- Authoring guidance for playbooks and agents (descriptions as routing hints,
+  checkable completion criteria, progressive disclosure):
+  `docs/writing-great-playbooks.md`.
 
 ## Specs + plans
 
