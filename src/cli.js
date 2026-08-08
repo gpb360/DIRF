@@ -578,7 +578,11 @@ function cmdStateWhich(args) {
   const target = projectRoot(args.path || ".");
   const resolved = resolveProject(target);
   if (!resolved) { console.log(`(no project registered for ${target})`); return; }
+  // Branch context is load-bearing for resuming work across sessions — two
+  // worktrees of one project can sit on different branches.
+  const branch = gitOutput(target, ["branch", "--show-current"]);
   console.log(`${resolved.slug}  ->  ${storeProjectDir(resolved.slug)}`);
+  console.log(`branch: ${branch || "(detached)"}`);
 }
 
 function cmdStateList(args = {}) {
