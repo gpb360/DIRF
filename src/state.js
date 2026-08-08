@@ -1195,7 +1195,9 @@ export function portfolioSnapshot(now = new Date()) {
     }
     const tracked = attempts.filter((attempt) => attempt.tracked);
     const latest = attempts.at(-1) || null;
+    const handoffPath = join(storeProjectDir(project.slug), "HANDOFF.md");
     const handoff = readHandoff(project.slug);
+    if (handoff !== null) lastActivity = Math.max(lastActivity, statSync(handoffPath).mtimeMs);
     const handoffComplete = handoff !== null && HANDOFF_COMPLETE_RE.test(handoff);
     const hasOpenWork = counts.in_progress > 0 || counts.blocked > 0;
     const allTrackedDone = tracked.length > 0 && tracked.every((attempt) => effective.get(attempt.id).status === "done");

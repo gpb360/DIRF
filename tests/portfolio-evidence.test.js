@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,6 +10,7 @@ import {
   getAttempt,
   handoffHasCompletionEvidence,
   portfolioSnapshot,
+  recordProgress,
   registerProject,
   startTrackingAttempt,
   syncAttemptFromHandoff,
@@ -115,6 +116,28 @@ test("open work still beats handoff evidence in the classification", () => {
   addAttempt(slug, "open", daysAgo(1, now), "in_progress", COMPLETE_STATUS_LINE);
   addAttempt(slug, "done-via-evidence", daysAgo(5, now), "planned", COMPLETE_STATUS_LINE);
   assert.equal(portfolioSnapshot(now).projects[0].status, "active");
+});
+
+test("canonical progress refreshes portfolio activity without rewriting the registry", () => {
+  const { home, slug, now } = setup();
+  const registryPath = join(home, "projects.json");
+  const registry = JSON.parse(readFileSync(registryPath, "utf8"));
+  registry.projects[slug].last_seen = daysAgo(60, now).toISOString();
+  writeFileSync(registryPath, JSON.stringify(registry, null, 2) + "\n");
+  const historical = makeHistorical(createAttemptInStore(slug, "historical", daysAgo(60, now)));
+
+  recordProgress(slug, {
+    message: "fresh canonical checkpoint",
+    next: "continue",
+    files: [],
+    attemptId: historical.id,
+  });
+
+  const stored = JSON.parse(readFileSync(registryPath, "utf8"));
+  assert.equal(stored.projects[slug].last_seen, daysAgo(60, now).toISOString());
+  const project = portfolioSnapshot(now).projects[0];
+  assert.equal(project.status, "active");
+  assert.ok(Date.parse(project.last_activity) > Date.parse(stored.projects[slug].last_seen));
 });
 
 // ─── Backfill: syncAttemptFromHandoff ───────────────────────────────────────
