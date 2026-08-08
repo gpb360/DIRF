@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { mkdtempSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -125,7 +125,7 @@ test("dirf state import-handoff --force promotes a local HANDOFF into the store"
   assert.equal(readBack, localMd);
 });
 
-test("dirf resume surfaces canonical progress before the attempt handoff", () => {
+test("dirf resume surfaces canonical progress before scoped attempt context", () => {
   const home = freshHome();
   const main = mkdtempSync(join(tmpdir(), "resume-progress-"));
   execFileSync("git", ["init", "-q"], { cwd: main, timeout: TIMEOUT });
@@ -148,7 +148,9 @@ test("dirf resume surfaces canonical progress before the attempt handoff", () =>
   const resumedJson = JSON.parse(run([
     "resume", built.attempt.id, "--path", main, "--json",
   ], { DIRF_HOME: home }, main));
-  assert.equal(resumedJson.project_handoff, resumedJson.attempt_handoff);
+  assert.match(resumedJson.project_handoff, /Published PR 21/);
+  assert.match(resumedJson.attempt_handoff, /verify canonical resume state/);
+  assert.notEqual(resumedJson.project_handoff, resumedJson.attempt_handoff);
 });
 
 test("record-progress requires an explicit attempt when several exist and preserves canonical precedence", () => {
@@ -195,6 +197,108 @@ test("record-progress requires an explicit attempt when several exist and preser
   assert.doesNotMatch(resumedNewer.attempt_handoff, /progress belongs to older/);
 });
 
+test("record-progress rejects an attempt name shared by several attempts", () => {
+  const home = freshHome();
+  const main = mkdtempSync(join(tmpdir(), "duplicate-progress-name-"));
+  execFileSync("git", ["init", "-q"], { cwd: main, timeout: TIMEOUT });
+  run(["setup", main], { DIRF_HOME: home }, main);
+  const older = JSON.parse(run([
+    "build", "repeated", "first run", "--path", main, "--json",
+  ], { DIRF_HOME: home }, main));
+  run(["build", "repeated", "second run", "--path", main, "--json"], { DIRF_HOME: home }, main);
+
+  assert.throws(
+    () => run([
+      "record-progress", "must not guess", "--attempt", "repeated",
+      "--path", main, "--next", "choose an id",
+    ], { DIRF_HOME: home }, main),
+    /attempt name.*ambiguous.*full attempt id/i,
+  );
+  run([
+    "record-progress", "explicit id wins", "--attempt", older.attempt.id,
+    "--path", main, "--next", "continue",
+  ], { DIRF_HOME: home }, main);
+});
+
+test("record-progress never seeds a missing canonical handoff from attempt content", () => {
+  const home = freshHome();
+  const main = mkdtempSync(join(tmpdir(), "missing-canonical-progress-"));
+  execFileSync("git", ["init", "-q"], { cwd: main, timeout: TIMEOUT });
+  run(["setup", main], { DIRF_HOME: home }, main);
+  const built = JSON.parse(run([
+    "build", "scoped", "attempt-only-secret-sentinel", "--path", main, "--json",
+  ], { DIRF_HOME: home }, main));
+  const [project] = JSON.parse(run(["state", "list", "--json"], { DIRF_HOME: home }, main));
+  const projectDir = join(home, "projects", project.slug);
+  const canonicalPath = join(projectDir, "HANDOFF.md");
+  const attemptPath = join(projectDir, "attempts", built.attempt.id, "HANDOFF.md");
+  assert.match(readFileSync(attemptPath, "utf8"), /attempt-only-secret-sentinel/);
+  rmSync(canonicalPath, { force: true });
+
+  run([
+    "record-progress", "canonical starts independently", "--attempt", built.attempt.id,
+    "--path", main, "--next", "continue",
+  ], { DIRF_HOME: home }, main);
+
+  const canonical = readFileSync(canonicalPath, "utf8");
+  assert.match(canonical, /canonical starts independently/);
+  assert.doesNotMatch(canonical, /attempt-only-secret-sentinel/);
+});
+
+test("record-progress never steals a stale-looking lock from a live owner", () => {
+  const home = freshHome();
+  const main = mkdtempSync(join(tmpdir(), "live-progress-lock-"));
+  execFileSync("git", ["init", "-q"], { cwd: main, timeout: TIMEOUT });
+  run(["setup", main], { DIRF_HOME: home }, main);
+  const built = JSON.parse(run([
+    "build", "locked", "respect lock ownership", "--path", main, "--json",
+  ], { DIRF_HOME: home }, main));
+  const [project] = JSON.parse(run(["state", "list", "--json"], { DIRF_HOME: home }, main));
+  const lockPath = join(home, "projects", project.slug, ".record-progress.lock");
+  mkdirSync(lockPath);
+  writeFileSync(join(lockPath, "owner.json"), JSON.stringify({
+    pid: process.pid,
+    token: "live-owner-token",
+    created_at: new Date(Date.now() - 60_000).toISOString(),
+  }));
+
+  assert.throws(
+    () => run([
+      "record-progress", "must wait", "--attempt", built.attempt.id,
+      "--path", main, "--next", "retry",
+    ], { DIRF_HOME: home }, main),
+    /progress update is still running/i,
+  );
+  assert.equal(JSON.parse(readFileSync(join(lockPath, "owner.json"), "utf8")).token, "live-owner-token");
+  rmSync(lockPath, { recursive: true, force: true });
+});
+
+test("record-progress safely reclaims a stale lock after its owner exits", () => {
+  const home = freshHome();
+  const main = mkdtempSync(join(tmpdir(), "dead-progress-lock-"));
+  execFileSync("git", ["init", "-q"], { cwd: main, timeout: TIMEOUT });
+  run(["setup", main], { DIRF_HOME: home }, main);
+  const built = JSON.parse(run([
+    "build", "reclaim", "recover dead lock", "--path", main, "--json",
+  ], { DIRF_HOME: home }, main));
+  const [project] = JSON.parse(run(["state", "list", "--json"], { DIRF_HOME: home }, main));
+  const lockPath = join(home, "projects", project.slug, ".record-progress.lock");
+  const exited = spawnSync(process.execPath, ["-e", "process.exit(0)"]);
+  assert.ok(Number.isInteger(exited.pid));
+  mkdirSync(lockPath);
+  writeFileSync(join(lockPath, "owner.json"), JSON.stringify({
+    pid: exited.pid,
+    token: "dead-owner-token",
+    created_at: new Date(Date.now() - 60_000).toISOString(),
+  }));
+
+  run([
+    "record-progress", "reclaimed safely", "--attempt", built.attempt.id,
+    "--path", main, "--next", "continue",
+  ], { DIRF_HOME: home }, main);
+  assert.equal(existsSync(lockPath), false);
+});
+
 test("concurrent progress updates keep canonical and attempt handoffs synchronized", async () => {
   const home = freshHome();
   const main = mkdtempSync(join(tmpdir(), "concurrent-progress-"));
@@ -214,7 +318,9 @@ test("concurrent progress updates keep canonical and attempt handoffs synchroniz
   const resumed = JSON.parse(run([
     "resume", built.attempt.id, "--path", main, "--json",
   ], env, main));
-  assert.equal(resumed.project_handoff, resumed.attempt_handoff);
   assert.match(resumed.project_handoff, /first concurrent update/);
   assert.match(resumed.project_handoff, /second concurrent update/);
+  assert.match(resumed.attempt_handoff, /first concurrent update/);
+  assert.match(resumed.attempt_handoff, /second concurrent update/);
+  assert.notEqual(resumed.project_handoff, resumed.attempt_handoff);
 });

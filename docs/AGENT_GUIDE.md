@@ -219,9 +219,11 @@ dirf attempt sync-from-handoff            # backfill done status from handoff ev
 ```
 
 And keep it honest going forward — `dirf resume` auto-starts a planned attempt,
-and `dirf record-progress --phase X` advances the attempt's lifecycle to match
-the phase being reported (start → in_progress → advance). Explicit completion
-(`dirf attempt complete --confirm`) stays a deliberate final gate.
+and `dirf record-progress "what changed" --attempt <id> --phase X --next "next step"`
+advances that attempt's lifecycle to match the phase being reported (start →
+in_progress → advance). `--attempt` may be omitted only when the project has zero
+or one attempt; use the full attempt ID when a name is reused. Explicit
+completion (`dirf attempt complete --confirm`) stays a deliberate final gate.
 
 To hand the portfolio to a human: `dirf export obsidian` writes notes + a
 color-coded `.canvas` dashboard into the active Obsidian vault, and `dirf export

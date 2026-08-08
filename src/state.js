@@ -10,7 +10,7 @@
 // storeHome() = process.env.DIRF_HOME || ~/.dirf  — enables isolated tests.
 
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -172,7 +172,7 @@ export function registerProject(targetPath) {
   return { slug, isNew };
 }
 
-export function resolveProject(targetPath) {
+export function resolveProject(targetPath, { touch = true } = {}) {
   const slug = deriveSlug(targetPath);
   const registry = readRegistry();
   const existing = registry.projects[slug];
@@ -192,9 +192,11 @@ export function resolveProject(targetPath) {
         );
       }
     }
-    existing.last_seen = nowIso();
-    registry.projects[slug] = existing;
-    writeRegistry(registry);
+    if (touch) {
+      existing.last_seen = nowIso();
+      registry.projects[slug] = existing;
+      writeRegistry(registry);
+    }
     return { slug };
   }
   // Not registered. If legacy per-target .dirf/ exists, migrate it.
@@ -210,7 +212,7 @@ const PROJECT_SLUG_RE = /^[a-z0-9.-]+-[0-9a-f]{8}$/;
 // Resolve a registered project reference through one core path for every
 // shell. Explicit CLI --slug values must be registered slugs; MCP-style
 // references accept either a registered slug or a filesystem path.
-export function resolveProjectReference(reference, { defaultPath = process.cwd(), explicitSlug = false } = {}) {
+export function resolveProjectReference(reference, { defaultPath = process.cwd(), explicitSlug = false, touch = true } = {}) {
   const value = reference === undefined || reference === null ? "" : String(reference);
   if (value) {
     const registered = getProject(value);
@@ -218,7 +220,7 @@ export function resolveProjectReference(reference, { defaultPath = process.cwd()
     if (explicitSlug || PROJECT_SLUG_RE.test(value)) throw new Error(`Unknown DIRF project ${value}`);
   }
   const target = resolve(value || defaultPath);
-  const project = resolveProject(target);
+  const project = resolveProject(target, { touch });
   if (!project) throw new Error(`DIRF has no project registered for ${target}. Run: dirf setup "${target}"`);
   return project.slug;
 }
@@ -767,8 +769,18 @@ export function writeHandoff(slug, markdown) {
 }
 
 function progressAttempt(slug, idOrName) {
-  if (idOrName) return getAttempt(slug, idOrName);
   const attempts = listAttempts(slug);
+  if (idOrName) {
+    const exact = attempts.find((attempt) => attempt.id === idOrName);
+    if (exact) return exact;
+    const wanted = slugifyName(idOrName);
+    const matches = attempts.filter((attempt) => slugifyName(attempt.name) === wanted);
+    if (!matches.length) throw new Error(`No DIRF attempt named ${JSON.stringify(idOrName)} for project ${slug}`);
+    if (matches.length > 1) {
+      throw new Error(`Attempt name ${JSON.stringify(idOrName)} is ambiguous for project ${slug}; pass a full attempt id.`);
+    }
+    return matches[0];
+  }
   if (attempts.length > 1) {
     throw new Error("Multiple attempts exist; pass --attempt <id|name> so progress is not attached to the wrong attempt.");
   }
@@ -779,32 +791,123 @@ const PROGRESS_LOCK_WAIT_MS = 5_000;
 const PROGRESS_LOCK_STALE_MS = 30_000;
 const LOCK_WAIT_ARRAY = new Int32Array(new SharedArrayBuffer(4));
 
+function readProgressLockOwner(lockPath) {
+  try {
+    const owner = JSON.parse(readFileSync(join(lockPath, "owner.json"), "utf8"));
+    return typeof owner.token === "string" && Number.isInteger(owner.pid) && owner.pid > 0 ? owner : null;
+  } catch (error) {
+    if (error.code === "ENOENT" || error instanceof SyntaxError) return null;
+    throw error;
+  }
+}
+
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code !== "ESRCH";
+  }
+}
+
+function progressLockAge(lockPath, owner) {
+  const createdAt = owner ? Date.parse(owner.created_at) : NaN;
+  return Date.now() - (Number.isFinite(createdAt) ? createdAt : statSync(lockPath).mtimeMs);
+}
+
+function claimProgressLockReclamation(claimPath, claimantToken) {
+  const claim = JSON.stringify({
+    pid: process.pid,
+    token: claimantToken,
+    created_at: new Date().toISOString(),
+  });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      writeFileSync(claimPath, claim, { encoding: "utf8", flag: "wx" });
+      return true;
+    } catch (error) {
+      if (error.code === "ENOENT") return false;
+      if (error.code !== "EEXIST") throw error;
+      try {
+        const existing = JSON.parse(readFileSync(claimPath, "utf8"));
+        const parsedCreatedAt = Date.parse(existing.created_at);
+        const createdAt = Number.isFinite(parsedCreatedAt) ? parsedCreatedAt : statSync(claimPath).mtimeMs;
+        const ownerAlive = Number.isInteger(existing.pid) && existing.pid > 0 && processIsAlive(existing.pid);
+        if (Date.now() - createdAt <= PROGRESS_LOCK_STALE_MS || ownerAlive) return false;
+      } catch (claimError) {
+        if (claimError.code === "ENOENT") continue;
+        if (!(claimError instanceof SyntaxError)) throw claimError;
+        if (Date.now() - statSync(claimPath).mtimeMs <= PROGRESS_LOCK_STALE_MS) return false;
+      }
+      rmSync(claimPath, { force: true });
+    }
+  }
+  return false;
+}
+
+function reclaimDeadProgressLock(lockPath, expectedOwner, claimantToken) {
+  const expectedAge = progressLockAge(lockPath, expectedOwner);
+  if (expectedAge <= PROGRESS_LOCK_STALE_MS) return false;
+  if (expectedOwner && processIsAlive(expectedOwner.pid)) return false;
+
+  const claimPath = join(lockPath, ".reclaim");
+  if (!claimProgressLockReclamation(claimPath, claimantToken)) return false;
+
+  try {
+    const currentOwner = readProgressLockOwner(lockPath);
+    const sameOwner = expectedOwner
+      ? currentOwner?.token === expectedOwner.token
+      : currentOwner === null;
+    const currentAge = currentOwner ? progressLockAge(lockPath, currentOwner) : expectedAge;
+    if (!sameOwner || currentAge <= PROGRESS_LOCK_STALE_MS) return false;
+    if (currentOwner && processIsAlive(currentOwner.pid)) return false;
+
+    const quarantine = `${lockPath}.stale-${claimantToken}`;
+    renameSync(lockPath, quarantine);
+    rmSync(quarantine, { recursive: true, force: true });
+    return true;
+  } finally {
+    rmSync(claimPath, { force: true });
+  }
+}
+
 function withProgressLock(slug, action) {
   const lockPath = join(storeProjectDir(slug), ".record-progress.lock");
+  const token = randomUUID();
+  const candidatePath = `${lockPath}.candidate-${process.pid}-${token}`;
+  mkdirSync(candidatePath);
+  writeFileSync(join(candidatePath, "owner.json"), JSON.stringify({
+    pid: process.pid,
+    token,
+    created_at: new Date().toISOString(),
+  }), "utf8");
   const deadline = Date.now() + PROGRESS_LOCK_WAIT_MS;
   while (true) {
     try {
-      mkdirSync(lockPath);
+      renameSync(candidatePath, lockPath);
       break;
     } catch (error) {
-      if (error.code !== "EEXIST") throw error;
+      if (!existsSync(lockPath)) throw error;
       try {
-        if (Date.now() - statSync(lockPath).mtimeMs > PROGRESS_LOCK_STALE_MS) {
-          rmSync(lockPath, { recursive: true, force: true });
-          continue;
-        }
+        const owner = readProgressLockOwner(lockPath);
+        if (reclaimDeadProgressLock(lockPath, owner, token)) continue;
       } catch (statError) {
         if (statError.code !== "ENOENT") throw statError;
         continue;
       }
-      if (Date.now() >= deadline) throw new Error("Another progress update is still running; retry this checkpoint.");
+      if (Date.now() >= deadline) {
+        rmSync(candidatePath, { recursive: true, force: true });
+        throw new Error("Another progress update is still running; retry this checkpoint.");
+      }
       Atomics.wait(LOCK_WAIT_ARRAY, 0, 0, 25);
     }
   }
   try {
     return action();
   } finally {
-    rmSync(lockPath, { recursive: true, force: true });
+    const owner = readProgressLockOwner(lockPath);
+    if (owner?.token === token) rmSync(lockPath, { recursive: true, force: true });
+    rmSync(candidatePath, { recursive: true, force: true });
   }
 }
 
@@ -819,7 +922,7 @@ export function recordProgress(slug, { message, timestamp, phase, next, files, a
     const attempt = progressAttempt(slug, attemptId);
     const attemptHandoff = attempt ? readAttemptHandoffFile(slug, attempt.id) : null;
     const fallback = "# DIRF Handoff\n\n## Objective\n\n(Work in progress)\n";
-    const canonicalBase = readHandoff(slug) || attemptHandoff || fallback;
+    const canonicalBase = readHandoff(slug) || fallback;
     const update = {
       message,
       timestamp: timestamp || new Date().toISOString(),
@@ -1092,7 +1195,9 @@ export function portfolioSnapshot(now = new Date()) {
     }
     const tracked = attempts.filter((attempt) => attempt.tracked);
     const latest = attempts.at(-1) || null;
+    const handoffPath = join(storeProjectDir(project.slug), "HANDOFF.md");
     const handoff = readHandoff(project.slug);
+    if (handoff !== null) lastActivity = Math.max(lastActivity, statSync(handoffPath).mtimeMs);
     const handoffComplete = handoff !== null && HANDOFF_COMPLETE_RE.test(handoff);
     const hasOpenWork = counts.in_progress > 0 || counts.blocked > 0;
     const allTrackedDone = tracked.length > 0 && tracked.every((attempt) => effective.get(attempt.id).status === "done");

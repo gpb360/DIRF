@@ -383,9 +383,11 @@ dirf attempt sync-from-handoff <id>         # or one attempt
 ```
 
 And to keep the lifecycle honest going forward: `dirf resume` auto-starts a
-planned attempt, and `dirf record-progress --phase X` advances the attempt to
-that phase (start → in_progress, in_progress → advance). Completion still
-requires the explicit `dirf attempt complete` gate.
+planned attempt, and `dirf record-progress "what changed" --attempt <id> --phase X --next "next step"`
+advances that attempt to the reported phase (start → in_progress, in_progress →
+advance). You may omit `--attempt` only when the project has zero or one attempt;
+when a name is reused, pass the full attempt ID. Completion still requires the
+explicit `dirf attempt complete` gate.
 
 ### Obsidian export
 
