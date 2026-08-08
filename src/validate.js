@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { AGENTS_DIR, REGISTRY, ROOT, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, loadJson } from "./paths.js";
 import { reconcile } from "./flow.js";
 import { loadPlaybookFolders, resolveGraph } from "./folders.js";
+import { bundledSkills, lintSkillMetadata } from "./skills.js";
 
 const FM_RE = /^([A-Za-z0-9_-]+):\s*(.*)$/;
 
@@ -217,6 +218,15 @@ export function main() {
     for (const folder of folders) {
       try { resolveGraph(join(base, folder.name), { allowedRoots: [ROOT, base] }); }
       catch (error) { errors.push(error.message); }
+    }
+  }
+
+  // --- bundled skill metadata (dogfoods the authoring guidance) ---
+  // Spec-level lint over the kit's own skills/ — deterministic and
+  // host-independent, so the kit itself stays clean forever.
+  for (const [name, skill] of Object.entries(bundledSkills())) {
+    for (const warning of lintSkillMetadata({ name, path: skill.path, description: skill.description, body_lines: skill.body_lines })) {
+      warnings.push(`skill ${name}: ${warning}`);
     }
   }
 

@@ -407,6 +407,7 @@ export function bundledSkills() {
         description: unit.meta.description || "",
         capabilities: unit.meta.capabilities || [],
         provider: "dirf",
+        body_lines: unit.body.split(/\r?\n/).length,
       };
     } catch { /* a malformed bundled unit is validate's problem, not discovery's */ }
   }
