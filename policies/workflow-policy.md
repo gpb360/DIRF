@@ -33,6 +33,8 @@ Use this policy in every generated workflow prompt.
 - Lead with changed, verified, blocked, or risk.
 - Use concrete files, commands, diffs, tests, and errors as proof.
 - Do not add AI attribution footers or generated-by boilerplate.
+- Pull requests created during the workflow carry a description: what
+  changed, why, and how it was verified — never a title-only PR.
 
 ## Side observations
 - Park anything noticed that is NOT the current task (a side bug, a doc staleness, a "fix later") via `dirf notice "<note>"`. Default target: the current attempt.
