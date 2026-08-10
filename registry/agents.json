@@ -11,6 +11,7 @@
     {"name": "documentation-engineer", "file": "agents/documentation-engineer.md", "tags": ["docs", "developer-experience"], "skills": ["ponytail"]},
     {"name": "dx-optimizer", "file": "agents/dx-optimizer.md", "tags": ["developer-experience", "workflow"], "skills": ["ponytail"]},
     {"name": "error-coordinator", "file": "agents/error-coordinator.md", "tags": ["resilience", "errors"], "skills": ["ponytail", "systematic-debugging"]},
+    {"name": "governance-execution-auditor", "file": "agents/governance-execution-auditor.md", "tags": ["governance", "authorization", "audit", "execution"], "skills": ["governed-execution", "security-review"]},
     {"name": "frontend-developer", "file": "agents/frontend-developer.md", "tags": ["frontend", "react", "ui"], "skills": ["ponytail", "impeccable", "ui-ux-pro-max", "frontend-design", "react-best-practices", "accessibility", "systematic-debugging", "tanstack-query", "vercel-react-best-practices", "web-design-guidelines"]},
     {"name": "knowledge-synthesizer", "file": "agents/knowledge-synthesizer.md", "tags": ["research", "synthesis"], "skills": ["ponytail"]},
     {"name": "performance-benchmarker", "file": "agents/performance-benchmarker.md", "tags": ["performance", "testing"], "skills": ["ponytail", "web-quality-audit", "tdd"]},

@@ -111,6 +111,20 @@ node src/cli.js validate
 The rest of this README is the technical reference for how DIRF routes,
 renders, stores, and resumes workflows.
 
+## Governed agent execution
+
+DIRF includes a vendor-neutral decision engine and folder-native methodology for governing agent and workflow effects. It evaluates every compound action segment, uses deny-over-approval-over-allow precedence, binds approvals to exact action and policy digests, and verifies a hash-linked evidence ledger.
+
+```bash
+node src/cli.js govern digest examples/governance/read-request.json
+node src/cli.js govern evaluate examples/governance/read-request.json
+node src/cli.js govern append examples/governance/decision-event.json --ledger ledger.json
+node src/cli.js govern verify ledger.json
+node src/cli.js validate playbooks/governed-agent-execution
+```
+
+Start with [`skills/governed-execution/METHOD.md`](skills/governed-execution/METHOD.md), then compose the evaluator, skill, workflow, playbook, and auditor from their folder contracts. Host products integrate through a trusted normalizer and remain responsible for atomic authorization consumption before credentials or side effects.
+
 ## The pipeline
 
 ```

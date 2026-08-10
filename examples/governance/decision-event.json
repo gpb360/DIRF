@@ -1,0 +1,6 @@
+{
+  "type": "decision",
+  "requestId": "example-read-1",
+  "decision": "allow",
+  "evidenceRef": "example-decision-output.json"
+}

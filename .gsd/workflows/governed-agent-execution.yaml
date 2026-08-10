@@ -1,0 +1,71 @@
+version: 1
+name: governed-agent-execution
+mode: yaml-step
+description: "Govern a state-changing agent action through normalization, exact human authorization, execution, and tamper-evident records."
+params:
+  target_repository: "owner/repository"
+  target_ref: "main"
+  policy_path: "policies/governed-execution-policy.json"
+steps:
+  - id: normalize
+    name: Normalize complete action
+    prompt: "Create a canonical governed action request for {{ target_repository }} at {{ target_ref }}. Include actor, organization, mandate, exact targets, every compound segment, payload digests, and evidence references. Store references only; never store credentials."
+    produces:
+      - governed-execution/action-request.json
+    verify:
+      policy: content-heuristic
+      minSize: 200
+      pattern: "organizationId"
+  - id: evaluate
+    name: Evaluate policy decision
+    prompt: "Evaluate the normalized request against {{ policy_path }} with DIRF. Preserve the full machine-readable decision, action digest, policy digest, matched rules, risk, and reasons. Stop this branch if the decision is deny."
+    requires:
+      - normalize
+    produces:
+      - governed-execution/decision.json
+    context_from:
+      - normalize
+    verify:
+      policy: prompt-verify
+      prompt: "PASS only when every action segment has an explicit policy result and the overall decision is allow, require_approval, or deny with exact reasons."
+  - id: authorize
+    name: Bind named human authorization
+    prompt: "For a state-changing action, present the exact action digest, policy digest, tenant, target, risk, evidence, expiry, and effect to a named human. Record an approval or denial without altering the evaluated action."
+    requires:
+      - evaluate
+    produces:
+      - governed-execution/authorization.json
+    context_from:
+      - normalize
+      - evaluate
+    verify:
+      policy: human-review
+  - id: execute
+    name: Consume and execute
+    prompt: "Re-evaluate the exact authorized request. If allowed, atomically consume the returned single-use authorization before credentials or external effects, then execute only the normalized action through one host adapter. Record consumption and outcome evidence."
+    requires:
+      - authorize
+    produces:
+      - governed-execution/execution-event.json
+    context_from:
+      - normalize
+      - evaluate
+      - authorize
+    verify:
+      policy: prompt-verify
+      prompt: "PASS only when authorization consumption precedes any credential access or external effect and the executed action exactly matches the approved digest."
+  - id: record
+    name: Verify tamper-evident records
+    prompt: "Append decision, authorization-consumption, execution, and verification events to the hash-linked ledger. Verify the complete chain and report its head hash."
+    requires:
+      - execute
+    produces:
+      - governed-execution/ledger.json
+      - governed-execution/result.md
+    context_from:
+      - evaluate
+      - authorize
+      - execute
+    verify:
+      policy: shell-command
+      command: "node src/cli.js govern verify governed-execution/ledger.json"
