@@ -106,7 +106,7 @@
       "name": "code-review",
       "category": "quality",
       "applies_to": ["test-engineer", "security-auditor", "workflow-orchestrator"],
-      "summary": "Independent review against repository standards and the requested specification",
+      "summary": "Exact-head review with provable failure scenarios, confidence-scored findings, verification evidence, and a deterministic merge gate",
       "capabilities": ["code review"]
     },
     {
