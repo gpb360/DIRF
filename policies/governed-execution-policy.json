@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "version": "dirf-governed-execution-v1",
+  "defaultEffect": "deny",
+  "rules": [
+    {
+      "id": "prohibited-exfiltration-or-bypass",
+      "match": {
+        "actionKinds": ["secret_export", "authorization_bypass", "credential_export"]
+      },
+      "risk": "critical",
+      "effect": "deny",
+      "requirements": []
+    },
+    {
+      "id": "read-only-observation",
+      "match": {
+        "actionKinds": ["read", "inspect", "analyze"]
+      },
+      "risk": "low",
+      "effect": "allow",
+      "requirements": ["exact_target"]
+    },
+    {
+      "id": "bounded-workspace-change",
+      "match": {
+        "actionKinds": ["write", "edit", "test", "build", "execute", "commit", "push"]
+      },
+      "risk": "medium",
+      "effect": "allow",
+      "requirements": ["mandate", "exact_target", "exact_repository"]
+    },
+    {
+      "id": "high-risk-state-change",
+      "match": {
+        "actionKinds": ["merge", "deploy", "database_mutation", "external_send", "shared_infrastructure", "credential_access", "authorization_change"]
+      },
+      "risk": "high",
+      "effect": "require_approval",
+      "requirements": ["mandate", "evidence", "exact_target", "human_approval", "single_use_authorization"],
+      "evidenceTypes": ["scope", "verification"]
+    },
+    {
+      "id": "exact-content-external-action",
+      "match": {
+        "actionKinds": ["external_send", "deploy", "database_mutation"]
+      },
+      "risk": "high",
+      "effect": "require_approval",
+      "requirements": ["payload_digest"]
+    },
+    {
+      "id": "critical-financial-or-destructive-action",
+      "match": {
+        "actionKinds": ["payment", "charge", "billing_change", "destructive_delete", "release"]
+      },
+      "risk": "critical",
+      "effect": "require_approval",
+      "requirements": ["mandate", "evidence", "exact_target", "payload_digest", "human_approval", "single_use_authorization"],
+      "evidenceTypes": ["scope", "verification", "rollback"]
+    }
+  ]
+}

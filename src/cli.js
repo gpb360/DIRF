@@ -30,6 +30,14 @@ import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
 import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGateState, pendingGates, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress } from "./state.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
+import {
+  DECISION,
+  DEFAULT_GOVERNED_EXECUTION_POLICY,
+  appendEvidenceLedger,
+  digestAction,
+  evaluateGovernedAction,
+  verifyEvidenceLedger,
+} from "./governance.js";
 
 const LIFECYCLE = {
   clarify: "Use the best installed interview capability before implementation.",
@@ -982,6 +990,9 @@ function parse(argv) {
     if (a === "--timestamp") { out.timestamp = rest[++i]; continue; }
     if (a === "--evidence") { out.evidence = rest[++i]; continue; }
     if (a === "--output") { out.output = rest[++i]; continue; }
+    if (a === "--policy") { out.policy = rest[++i]; continue; }
+    if (a === "--ledger") { out.ledger = rest[++i]; continue; }
+    if (a === "--now") { out.now = rest[++i]; continue; }
     if (a === "--strict") { out.strict = true; continue; }
     if (a === "--auto") { out.auto = true; continue; }
     if (a === "--wait") { out.wait = rest[++i]; continue; }
@@ -1024,6 +1035,7 @@ Usage:
   dirf export graphify [--out DIR] [--skip-render]    export portfolio as a graphify graph (+ HTML render)
   dirf inspect [<path>]                                detect a project's optimization stack + suggest gaps
   dirf flow "<task>" [--path DIR]                      show the ordered skill flow for a task (ask-matt style)
+  dirf govern <digest|evaluate|append|verify> [...]    decide actions and maintain a hash-linked evidence ledger
   dirf state which [--path DIR]                       what project am I in? (slug + store path)
   dirf state list                                      list all registered projects
   dirf state register [--path DIR]                    register a project explicitly
@@ -1100,6 +1112,63 @@ function cmdInspect(args) {
 // no parallel handlers. Keep phrases unambiguous and don't collide with the
 // real command verbs (setup/build/state/...). Anything unrecognized falls
 // through to normal dispatch (and errors there if truly unknown).
+function readGovernanceJson(path, label) {
+  if (!path) throw new Error(`Missing ${label} JSON path`);
+  const source = path === "-" ? readFileSync(0, "utf-8") : readFileSync(resolve(path), "utf-8");
+  try { return JSON.parse(source); }
+  catch (error) { throw new Error(`Invalid ${label} JSON: ${error.message}`); }
+}
+
+function governUsage() {
+  return [
+    "usage:",
+    "  dirf govern digest <request.json>",
+    "  dirf govern evaluate <request.json> [--policy policy.json] [--now ISO]",
+    "  dirf govern append <event.json> [--ledger ledger.json] [--now ISO]",
+    "  dirf govern verify <ledger.json>",
+    "",
+    "evaluate exits 0=allow, 3=require_approval, 4=deny; verify exits 0=valid, 1=invalid.",
+  ].join("\n");
+}
+
+function cmdGovern(args) {
+  const sub = args._[0];
+  const input = args._[1];
+  if (!sub || !input) { console.error(governUsage()); process.exitCode = 2; return; }
+
+  if (sub === "digest") {
+    const request = readGovernanceJson(input, "request");
+    console.log(JSON.stringify({ actionDigest: digestAction(request) }, null, 2));
+    return;
+  }
+  if (sub === "evaluate") {
+    const request = readGovernanceJson(input, "request");
+    const policy = args.policy ? readGovernanceJson(args.policy, "policy") : DEFAULT_GOVERNED_EXECUTION_POLICY;
+    const result = evaluateGovernedAction(request, policy, args.now ? { now: args.now } : {});
+    console.log(JSON.stringify(result, null, 2));
+    if (result.decision === DECISION.REQUIRE_APPROVAL) process.exitCode = 3;
+    else if (result.decision === DECISION.DENY) process.exitCode = 4;
+    return;
+  }
+  if (sub === "append") {
+    const event = readGovernanceJson(input, "event");
+    const ledger = args.ledger ? readGovernanceJson(args.ledger, "ledger") : [];
+    const output = appendEvidenceLedger(ledger, event, args.now ? { recordedAt: args.now } : {});
+    console.log(JSON.stringify(output, null, 2));
+    return;
+  }
+  if (sub === "verify") {
+    const ledger = readGovernanceJson(input, "ledger");
+    const result = verifyEvidenceLedger(ledger);
+    console.log(JSON.stringify(result, null, 2));
+    if (!result.valid) process.exitCode = 1;
+    return;
+  }
+
+  console.error(`unknown govern subcommand: ${sub}\n\n${governUsage()}`);
+  process.exitCode = 2;
+}
+
 function plainName(task) {
   // Short, filesystem-safe name from a task sentence, for `start work on`.
   return String(task || "")
@@ -1168,6 +1237,7 @@ function main() {
   else if (cmd === "project") cmdProject(args);
   else if (cmd === "inspect") { args._ = args._.length ? args._ : [args.path]; cmdInspect(args); }
   else if (cmd === "flow") { cmdFlow(args); }
+  else if (cmd === "govern") { cmdGovern(args); }
   else if (cmd === "state") {
     const sub = args._[0];
     const subArgs = { ...args, _: args._.slice(1) };

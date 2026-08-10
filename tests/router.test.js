@@ -23,6 +23,13 @@ test("security review match", () => {
   assert.equal(recommend("audit security vulnerabilities in auth").playbook, "security-review");
 });
 
+test("governed agent execution routes to the enforceable execution playbook", () => {
+  const result = recommend("apply RTK-inspired command governance to agent execution with exact tool authorization and a tamper evident ledger");
+  assert.equal(result.playbook, "governed-agent-execution");
+  assert.ok(result.workflow.phases.includes("consume authority and execute through one adapter"));
+  assert.match(result.workflow.validation, /every segment/);
+});
+
 test("implementation intent outranks incidental auth terminology", () => {
   assert.equal(
     recommend("Add GitHub repository sync to governance intake with auth, persistence, and tests").playbook,

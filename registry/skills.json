@@ -201,11 +201,27 @@
       "category": "security",
       "applies_to": [
         "security-auditor",
-        "backend-architect"
+        "backend-architect",
+        "governance-execution-auditor"
       ],
       "summary": "threat modeling, vulnerability review, trust boundaries",
       "capabilities": [
         "security review"
+      ]
+    },
+    {
+      "name": "governed-execution",
+      "category": "governance",
+      "applies_to": [
+        "governance-execution-auditor",
+        "workflow-orchestrator",
+        "security-auditor"
+      ],
+      "summary": "deterministic risk, mandate, exact approval, authorization consumption, and tamper-evident execution evidence",
+      "capabilities": [
+        "governed execution",
+        "execution authorization",
+        "evidence ledger"
       ]
     },
     {

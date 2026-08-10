@@ -1,0 +1,17 @@
+{
+  "id": "example-read-1",
+  "organizationId": "example-org",
+  "actor": {
+    "id": "example-agent",
+    "type": "agent",
+    "organizationId": "example-org"
+  },
+  "action": {
+    "kind": "inspect",
+    "operation": "inspect repository status",
+    "target": {
+      "id": "repository-status",
+      "organizationId": "example-org"
+    }
+  }
+}
