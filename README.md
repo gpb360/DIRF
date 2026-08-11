@@ -177,6 +177,13 @@ remaining context trigger the handoff at the context-reserve threshold;
 otherwise the workflow checkpoints after each completed phase. A different
 model can continue a specific attempt with `dirf resume <name-or-id> --path <project>`.
 
+Issue tracking is **local-first**. DIRF findings are validated and fixed in the
+current branch when they affect current acceptance. A GitHub issue is created
+only for a deduplicated, non-blocking P2 pull-request finding after the PR is
+at least 90% accepted, all P0/P1 findings are resolved, and a named human grants exact, single-use authorization.
+Generated workflows carry this `issue_policy` and render the finding lifecycle
+and post-merge reconciliation instructions.
+
 Each per-agent detail file is self-contained: role, **USE THESE SKILLS**
 (resolved live from the host index, with installed/recommended status),
 **YOUR JOB** (from the agent markdown), **NOT YOUR JOB** (boundary), and a

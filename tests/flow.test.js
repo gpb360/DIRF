@@ -471,3 +471,23 @@ test("validateSnapshot tolerates optional per-step output and rejects empty outp
   empty.skill_flow.steps[0].output = "  ";
   assert.ok(validateSnapshot(empty, "demo").includes("demo: skill_flow step 1 output must be a non-empty string"));
 });
+
+test("validateSnapshot accepts the local-first issue policy and rejects unsafe shapes", () => {
+  const base = {
+    schema_version: 5, name: "demo", task: "t", playbook: "triage", playbook_description: "d",
+    agents: [], baseline_skills: [], questions: [], capability_gaps: [], policy: "policies/workflow-policy.md",
+    skill_flow: { label: "l", steps: [] },
+    attempt: { id: "a", path: ".dirf/attempts/a" },
+    lifecycle: { clarify: "c", prototype: "p", split: "s", implement: "i", review: "r" },
+  };
+  const issuePolicy = {
+    schemaVersion: 1, version: "dirf-local-first-issues-v1", mode: "pr_deferral_only",
+    creationTrigger: "deferred_pr_finding", eligiblePriorities: ["P2"],
+    minimumPrAcceptancePercent: 90,
+    requiredDedupeChecks: ["open_issues", "open_pull_requests", "merged_pull_requests"],
+  };
+  assert.deepEqual(validateSnapshot({ ...base, issue_policy: issuePolicy }, "demo"), []);
+  assert.ok(validateSnapshot({ ...base, issue_policy: { ...issuePolicy, mode: "github_first" } }, "demo").includes("demo: issue_policy.mode must be pr_deferral_only"));
+  assert.ok(validateSnapshot({ ...base, issue_policy: { ...issuePolicy, eligiblePriorities: ["P1", "P2"] } }, "demo").includes('demo: issue_policy.eligiblePriorities must be ["P2"]'));
+  assert.ok(validateSnapshot({ ...base, issue_policy: { ...issuePolicy, minimumPrAcceptancePercent: 80 } }, "demo").includes("demo: issue_policy.minimumPrAcceptancePercent must be 90"));
+});

@@ -46,6 +46,19 @@ function executionHandoff() {
   return "Open the target repository in your current host. Load this README.md as the operating workflow and execute the task.";
 }
 
+function issueGovernanceLines(issuePolicy) {
+  return [
+    "## Issue governance",
+    "",
+    "Findings stay local by default. Validate and fix them in the current branch when they are required for the current pull request; do not create tracker items merely to begin work.",
+    "Classify every validated finding as `fix_now`, `duplicate`, `invalid`, `product_decision`, or `deferred_candidate`; only `deferred_candidate` can request issue authorization.",
+    `A GitHub issue is eligible only for a deferred ${issuePolicy.eligiblePriorities.join("/")} pull-request finding after the PR reaches at least ${issuePolicy.minimumPrAcceptancePercent}% acceptance, all P0/P1 findings are resolved, the finding is non-blocking, not fixable in the active PR, not speculative future work, has no canonical parent, and open issues, open pull requests, and merged pull requests have been searched for an existing owner.`,
+    "Issue creation requires named, exact-finding, single-use human authorization. After merge, reconcile every referenced issue: close completed acceptance, consolidate duplicates under the canonical owner, and move genuinely residual scope instead of broadening the old issue.",
+    "",
+    "Local finding lifecycle: `detected -> validated -> fixed_local|dismissed|deferred_candidate -> authorized -> created -> closed|consolidated`.",
+  ];
+}
+
 export function kickoffPrompt(workflow) {
   // A self-contained prompt anyone can paste into the model of their choice to
   // execute this instruction set — including chat models with no file access.
@@ -77,6 +90,9 @@ export function kickoffPrompt(workflow) {
   lines.push(`${nextRule++}. When your context is nearly exhausted, write a handoff note (completed work, decisions, changed files, validation, blockers, exact next action) and stop.`);
   if (usesFocusedOutput(workflow)) {
     lines.push(`${nextRule}. For status updates, validation summaries, and handoffs: ${FOCUSED_OUTPUT_RULES.join(" ")} This does not constrain task-specific or creative output.`);
+  }
+  if (workflow.issue_policy) {
+    lines.push("", ...issueGovernanceLines(workflow.issue_policy));
   }
   lines.push("", `Begin with phase 1${phases[0] ? `: ${phases[0]}` : ""}.`);
   return lines.join("\n");
@@ -266,6 +282,7 @@ export function buildInstructions(workflow, outDir) {
     for (const rule of FOCUSED_OUTPUT_RULES) lines.push(`- ${rule}`);
     lines.push("", "Task-specific and creative output is unchanged.");
   }
+  if (workflow.issue_policy) lines.push("", ...issueGovernanceLines(workflow.issue_policy));
   lines.push(
     "",
     "Runtime paths belong to this execution only. DIRF state is canonical and central (~/.dirf/projects/<slug>/); worktrees resolve to it automatically via git-common-dir — no per-worktree setup is needed. If isolation is needed for scratch work, select a directory inside the worktree workspace; do not fall back to another drive or the operating-system temp directory.",

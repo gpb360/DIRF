@@ -5,6 +5,7 @@ import { AGENTS_DIR, REGISTRY, ROOT, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, lo
 import { reconcile } from "./flow.js";
 import { loadPlaybookFolders, resolveGraph } from "./folders.js";
 import { bundledSkills, lintSkillMetadata } from "./skills.js";
+import { ISSUE_POLICY_SCHEMA_VERSION } from "./issue-governance.js";
 
 const FM_RE = /^([A-Za-z0-9_-]+):\s*(.*)$/;
 
@@ -27,6 +28,20 @@ export function validateSnapshot(data, label = "workflow") {
     else if (!hasType(data[key], type)) errors.push(`${label}: key ${key} must be ${type}`);
   }
   if (![2, 3, 4, 5].includes(data.schema_version)) errors.push(`${label}: unsupported schema_version`);
+  if (data.issue_policy !== undefined) {
+    const policy = data.issue_policy;
+    if (!policy || typeof policy !== "object" || Array.isArray(policy)) {
+      errors.push(`${label}: issue_policy must be an object`);
+    } else {
+      if (policy.schemaVersion !== ISSUE_POLICY_SCHEMA_VERSION) errors.push(`${label}: issue_policy.schemaVersion must be ${ISSUE_POLICY_SCHEMA_VERSION}`);
+      if (policy.mode !== "pr_deferral_only") errors.push(`${label}: issue_policy.mode must be pr_deferral_only`);
+      if (policy.creationTrigger !== "deferred_pr_finding") errors.push(`${label}: issue_policy.creationTrigger must be deferred_pr_finding`);
+      if (!Array.isArray(policy.eligiblePriorities) || policy.eligiblePriorities.length !== 1 || policy.eligiblePriorities[0] !== "P2") errors.push(`${label}: issue_policy.eligiblePriorities must be ["P2"]`);
+      if (policy.minimumPrAcceptancePercent !== 90) errors.push(`${label}: issue_policy.minimumPrAcceptancePercent must be 90`);
+      const requiredChecks = ["open_issues", "open_pull_requests", "merged_pull_requests"];
+      if (!Array.isArray(policy.requiredDedupeChecks) || policy.requiredDedupeChecks.length !== requiredChecks.length || !requiredChecks.every((check) => policy.requiredDedupeChecks.includes(check))) errors.push(`${label}: issue_policy.requiredDedupeChecks must contain open_issues, open_pull_requests, and merged_pull_requests`);
+    }
+  }
 
   // Optional per-phase gates on the persisted workflow (playbook
   // config.workflow.gates flattened at selection time). Absent is fine — old

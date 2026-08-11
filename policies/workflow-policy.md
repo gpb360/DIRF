@@ -42,6 +42,14 @@ Use this policy in every generated workflow prompt.
 - Do not act on a side observation in the current attempt. Log it and continue.
 - Observations are ephemeral to the attempt. Promote one to the project-level list with `dirf notice promote <N>` only if it should survive across sessions.
 
+## Local-First Issue Governance
+- A finding is local execution evidence first, not automatically a GitHub issue. Validate it and fix it in the current branch when it is required for current acceptance.
+- Classify each validated finding as `fix_now`, `duplicate`, `invalid`, `product_decision`, or `deferred_candidate`.
+- Create an issue only for a concrete deferred P2 found during pull-request review, after the current PR is at least 90% accepted, all P0/P1 findings are resolved, and the finding is explicitly non-blocking, not fixable in the active PR, not speculative future work, and has no canonical parent.
+- Before proposing creation, search open issues, open pull requests, and merged pull requests by symptom, module, and acceptance contract. Consolidate under the existing canonical owner when one exists.
+- Issue creation requires named human authorization bound to the exact source PR, priority, title, acceptance criteria, canonical parent, and dedupe evidence. Authorization is single-use and expires.
+- On merge, reconcile referenced issues: close completed acceptance, consolidate duplicates, and move residual work to its canonical owner. Do not keep an issue open by silently broadening its original contract.
+
 ## Workflow Audit
 - Name the selected playbook.
 - List selected agents and skipped obvious agents with reasons.
