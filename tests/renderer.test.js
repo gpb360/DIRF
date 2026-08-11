@@ -92,6 +92,7 @@ test("buildInstructions writes router + per-agent detail", () => {
     baseline_skills: [{ name: "ponytail", status: "recommended" }],
     skill_flow: { label: "persisted", branches: [], steps: [{ stage: "build", skill: "persisted-only", reason: "Use the snapshot", status: "recommended" }] },
     policy: "policies/workflow-policy.md", schema_version: 2, context_reserve_percent: 5,
+    issue_policy: { eligiblePriorities: ["P2"], minimumPrAcceptancePercent: 90 },
   };
   const written = buildInstructions(workflow, outDir);
   const names = written.map((p) => p.split(/[\\/]/).pop());
@@ -113,6 +114,8 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.match(readme, /uses: \["playbook"\]/);
   assert.match(policy, /The user's task defines what the workflow delivers/);
   assert.match(policy, /they do not add deliverables/);
+  assert.match(readme, /## Issue governance/);
+  assert.match(readme, /Findings stay local by default/);
   assert.deepEqual(resolveGraph(outDir, { allowedRoots: [outDir] }).map((unit) => unit.meta.kind), ["skill", "playbook", "workflow"]);
   const detail = readFileSync(join(outDir, "agents", "frontend-developer.md"), "utf-8");
   assert.ok(detail.includes("# frontend-developer"));

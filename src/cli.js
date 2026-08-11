@@ -38,6 +38,7 @@ import {
   evaluateGovernedAction,
   verifyEvidenceLedger,
 } from "./governance.js";
+import { DEFAULT_ISSUE_POLICY } from "./issue-governance.js";
 
 const LIFECYCLE = {
   clarify: "Use the best installed interview capability before implementation.",
@@ -140,6 +141,7 @@ function buildPlan(name, task, path, reservePercent = 5, compaction = null, focu
     baseline_skills: [],
     questions,
     policy: "policies/workflow-policy.md",
+    issue_policy: DEFAULT_ISSUE_POLICY,
     state: { status: "created", starts: 0 },
     created_at: now,
     source_hashes: {
