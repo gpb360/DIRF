@@ -92,7 +92,7 @@ test("buildInstructions writes router + per-agent detail", () => {
     baseline_skills: [{ name: "ponytail", status: "recommended" }],
     skill_flow: { label: "persisted", branches: [], steps: [{ stage: "build", skill: "persisted-only", reason: "Use the snapshot", status: "recommended" }] },
     policy: "policies/workflow-policy.md", schema_version: 2, context_reserve_percent: 5,
-    issue_policy: { eligiblePriorities: ["P2"], minimumPrAcceptancePercent: 90 },
+    issue_policy: { mode: "local_only", externalCreation: "project_policy_required" },
   };
   const written = buildInstructions(workflow, outDir);
   const names = written.map((p) => p.split(/[\\/]/).pop());

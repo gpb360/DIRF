@@ -34,12 +34,8 @@ export function validateSnapshot(data, label = "workflow") {
       errors.push(`${label}: issue_policy must be an object`);
     } else {
       if (policy.schemaVersion !== ISSUE_POLICY_SCHEMA_VERSION) errors.push(`${label}: issue_policy.schemaVersion must be ${ISSUE_POLICY_SCHEMA_VERSION}`);
-      if (policy.mode !== "pr_deferral_only") errors.push(`${label}: issue_policy.mode must be pr_deferral_only`);
-      if (policy.creationTrigger !== "deferred_pr_finding") errors.push(`${label}: issue_policy.creationTrigger must be deferred_pr_finding`);
-      if (!Array.isArray(policy.eligiblePriorities) || policy.eligiblePriorities.length !== 1 || policy.eligiblePriorities[0] !== "P2") errors.push(`${label}: issue_policy.eligiblePriorities must be ["P2"]`);
-      if (policy.minimumPrAcceptancePercent !== 90) errors.push(`${label}: issue_policy.minimumPrAcceptancePercent must be 90`);
-      const requiredChecks = ["open_issues", "open_pull_requests", "merged_pull_requests"];
-      if (!Array.isArray(policy.requiredDedupeChecks) || policy.requiredDedupeChecks.length !== requiredChecks.length || !requiredChecks.every((check) => policy.requiredDedupeChecks.includes(check))) errors.push(`${label}: issue_policy.requiredDedupeChecks must contain open_issues, open_pull_requests, and merged_pull_requests`);
+      if (policy.mode !== "local_only") errors.push(`${label}: issue_policy.mode must be local_only`);
+      if (policy.externalCreation !== "project_policy_required") errors.push(`${label}: issue_policy.externalCreation must be project_policy_required`);
     }
   }
 
