@@ -50,12 +50,12 @@ function issueGovernanceLines(issuePolicy) {
   return [
     "## Issue governance",
     "",
-    "Findings stay local by default. Validate and fix them in the current branch when they are required for the current pull request; do not create tracker items merely to begin work.",
-    "Classify every validated finding as `fix_now`, `duplicate`, `invalid`, `product_decision`, or `deferred_candidate`; only `deferred_candidate` can request issue authorization.",
-    `A GitHub issue is eligible only for a deferred ${issuePolicy.eligiblePriorities.join("/")} pull-request finding after the PR reaches at least ${issuePolicy.minimumPrAcceptancePercent}% acceptance, all P0/P1 findings are resolved, the finding is non-blocking, not fixable in the active PR, not speculative future work, has no canonical parent, and open issues, open pull requests, and merged pull requests have been searched for an existing owner.`,
-    "Issue creation requires named, exact-finding, single-use human authorization. After merge, reconcile every referenced issue: close completed acceptance, consolidate duplicates under the canonical owner, and move genuinely residual scope instead of broadening the old issue.",
+    "Findings stay local by default. Validate and resolve them in the current work instead of creating tracker items merely to begin work.",
+    "Classify validated findings as `fix_now`, `duplicate`, `invalid`, `product_decision`, or `deferred_candidate`.",
+    `External issue creation is disabled by the DIRF default (${issuePolicy.mode}); a repository may define its own tracker, severity, acceptance, deduplication, and approval policy.`,
+    "When project policy permits promotion, follow that repository's existing review and tracker audit trail. DIRF does not select GitHub, a severity scale, or an acceptance threshold.",
     "",
-    "Local finding lifecycle: `detected -> validated -> fixed_local|dismissed|deferred_candidate -> authorized -> created -> closed|consolidated`.",
+    "Local finding lifecycle: `detected -> validated -> resolved_local|dismissed|deferred_candidate|consolidated`.",
   ];
 }
 

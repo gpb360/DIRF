@@ -481,13 +481,10 @@ test("validateSnapshot accepts the local-first issue policy and rejects unsafe s
     lifecycle: { clarify: "c", prototype: "p", split: "s", implement: "i", review: "r" },
   };
   const issuePolicy = {
-    schemaVersion: 1, version: "dirf-local-first-issues-v1", mode: "pr_deferral_only",
-    creationTrigger: "deferred_pr_finding", eligiblePriorities: ["P2"],
-    minimumPrAcceptancePercent: 90,
-    requiredDedupeChecks: ["open_issues", "open_pull_requests", "merged_pull_requests"],
+    schemaVersion: 1, version: "dirf-local-findings-v1", mode: "local_only",
+    externalCreation: "project_policy_required",
   };
   assert.deepEqual(validateSnapshot({ ...base, issue_policy: issuePolicy }, "demo"), []);
-  assert.ok(validateSnapshot({ ...base, issue_policy: { ...issuePolicy, mode: "github_first" } }, "demo").includes("demo: issue_policy.mode must be pr_deferral_only"));
-  assert.ok(validateSnapshot({ ...base, issue_policy: { ...issuePolicy, eligiblePriorities: ["P1", "P2"] } }, "demo").includes('demo: issue_policy.eligiblePriorities must be ["P2"]'));
-  assert.ok(validateSnapshot({ ...base, issue_policy: { ...issuePolicy, minimumPrAcceptancePercent: 80 } }, "demo").includes("demo: issue_policy.minimumPrAcceptancePercent must be 90"));
+  assert.ok(validateSnapshot({ ...base, issue_policy: { ...issuePolicy, mode: "github_first" } }, "demo").includes("demo: issue_policy.mode must be local_only"));
+  assert.ok(validateSnapshot({ ...base, issue_policy: { ...issuePolicy, externalCreation: "automatic" } }, "demo").includes("demo: issue_policy.externalCreation must be project_policy_required"));
 });
