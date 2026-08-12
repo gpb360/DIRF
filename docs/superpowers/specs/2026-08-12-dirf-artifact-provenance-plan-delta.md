@@ -27,6 +27,7 @@ Artifact graph behavior belongs behind a small pure interface. Canonical persist
 ```js
 validateArtifactGraph(artifacts) -> { valid, errors }
 resolveGoverningArtifact(artifacts, requiredTypes?) -> artifact | null
+explainGoverningArtifact(artifacts, requiredTypes?) -> governance trace
 validatePlanDelta(value) -> { valid, errors }
 ```
 
@@ -75,6 +76,11 @@ Precedence is graph-first and time-second:
 
 Live code remains authoritative for current runtime behavior; artifact precedence governs approved intent, not claims about what the code currently does.
 
+The governance trace reports the eligible artifacts, candidates that remain after
+supersession, which artifacts were superseded by which eligible successors, and
+whether the winner was selected as the only leaf, by latest acceptance time, or
+by lexical ID tie-break.
+
 ## Acceptance gate integration
 
 Artifact acceptance reuses the current decision-gate mechanism. A workflow may add an optional required artifact type to a decision gate:
@@ -110,6 +116,11 @@ A `plan_delta` artifact is valid only when it identifies the accepted governing 
 Every entry contains a stable `id`, a concise `summary`, and non-empty `evidence` references. Entries in `additions` and `omissions` also require a reason. Empty arrays are valid and explicit.
 
 P0 validates and records this evidence. It does not attempt semantic diff generation, infer plan coverage from Git, or require GitHub.
+
+When an attempt has an accepted governing `plan`, completion requires an accepted
+governing `plan_delta` that still validates against that plan. Artifact-free
+attempts and attempts without an accepted governing plan retain legacy completion
+behavior.
 
 ## Error behavior
 

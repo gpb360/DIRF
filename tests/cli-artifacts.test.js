@@ -50,15 +50,17 @@ test("artifact record, list, and accept round-trip through JSON", () => {
   assert.match(text, /governing: plan-v1/);
 });
 
-test("artifact list stops projecting deleted content as governing", () => {
+test("artifact list reports deleted governing content", () => {
   const { root, env, attempt, attemptFolder, metadataPath } = fixture();
   run(["artifact", "record", attempt.id, "--file", metadataPath, "--path", root, "--json"], env, root);
   run(["artifact", "accept", attempt.id, "plan-v1", "--path", root, "--json"], env, root);
   rmSync(join(attemptFolder, "artifacts", "plan.md"));
 
-  const listed = JSON.parse(run(["artifact", "list", attempt.id, "--path", root, "--json"], env, root));
-  assert.equal(listed.artifacts[0].accepted_at !== undefined, true);
-  assert.equal(listed.governing.plan, null);
+  const failed = spawnSync(process.execPath, [CLI, "artifact", "list", attempt.id, "--path", root, "--json"], {
+    cwd: root, encoding: "utf8", timeout: TIMEOUT, env: { ...process.env, ...env },
+  });
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.stderr, /Artifact content does not exist: artifacts\/plan\.md/);
 });
 
 test("artifact add remains an alias for record", () => {
@@ -101,6 +103,8 @@ test("typed plan provenance and plan_delta complete an end-to-end acceptance sce
   const recorded = JSON.parse(run(["artifact", "record", attempt.id, "--file", deltaMetadata, "--path", root, "--json"], env, root));
   assert.equal(recorded.governing.plan.id, "plan-v1");
   assert.equal(recorded.governing.plan_delta, null);
+  assert.equal(recorded.governance_trace.plan.governing.id, "plan-v1");
+  assert.equal(recorded.governance_trace.plan.selected_by, "only eligible leaf");
 
   const accepted = JSON.parse(run(["artifact", "accept", attempt.id, "plan-delta-v1", "--path", root, "--json"], env, root));
   assert.equal(accepted.governing.plan.id, "plan-v1");

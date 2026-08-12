@@ -13,6 +13,7 @@ import {
   listAttemptArtifacts,
   recordAttemptArtifact,
   registerProject,
+  updateAttemptLifecycle,
 } from "../src/state.js";
 
 const CREATED = new Date("2026-08-12T18:30:00.000Z");
@@ -161,12 +162,36 @@ test("acceptAttemptArtifact timestamps an existing artifact and is idempotent", 
   assert.throws(() => acceptAttemptArtifact(slug, attempt.id, "missing", ACCEPTED), /No artifact/);
 });
 
-test("governing artifacts stop governing when their content disappears", () => {
+test("governing artifact content errors are reported instead of becoming null", () => {
   const { slug, attempt } = fixture();
   recordAttemptArtifact(slug, attempt.id, plan(attempt), CREATED);
   acceptAttemptArtifact(slug, attempt.id, "plan-1", ACCEPTED);
   rmSync(join(attempt.folder, "artifacts", "plan-1.md"));
-  assert.equal(governingAttemptArtifact(getAttempt(slug, attempt.id), "plan"), null);
+  assert.throws(
+    () => governingAttemptArtifact(getAttempt(slug, attempt.id), "plan"),
+    /Artifact content does not exist: artifacts\/plan-1\.md/,
+  );
+});
+
+test("completion requires an accepted governing plan_delta when a plan governs", () => {
+  const { slug, attempt } = fixture();
+  writeFileSync(join(attempt.folder, "workflow.json"), JSON.stringify({ workflow: { phases: ["verify"] } }));
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  recordAttemptArtifact(slug, attempt.id, plan(attempt), CREATED);
+  acceptAttemptArtifact(slug, attempt.id, "plan-1", ACCEPTED);
+
+  assert.throws(
+    () => updateAttemptLifecycle(slug, attempt.id, "complete", { confirm: true }),
+    /requires an accepted governing plan_delta/,
+  );
+
+  const deltaPath = writeArtifact(attempt, "completion-delta.json", JSON.stringify({
+    plan_artifact_id: "plan-1",
+    implemented_as_planned: [], additions: [], omissions: [], unverifiable: [],
+  }));
+  recordAttemptArtifact(slug, attempt.id, { id: "delta-1", type: "plan_delta", path: deltaPath, supersedes: [] }, CREATED);
+  acceptAttemptArtifact(slug, attempt.id, "delta-1", new Date("2026-08-12T18:36:00.000Z"));
+  assert.equal(updateAttemptLifecycle(slug, attempt.id, "complete", { confirm: true }).status, "done");
 });
 
 test("record validates a plan_delta file against the governing accepted plan", () => {

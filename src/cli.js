@@ -29,7 +29,7 @@ import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
 import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGateState, pendingGates, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact } from "./state.js";
-import { ARTIFACT_TYPES } from "./artifacts.js";
+import { ARTIFACT_TYPES, explainGoverningArtifact } from "./artifacts.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 import {
   DECISION,
@@ -672,6 +672,7 @@ function artifactProjection(slug, id) {
     attempt_id: attempt.id,
     artifacts,
     governing: Object.fromEntries(ARTIFACT_TYPES.map((type) => [type, governingAttemptArtifact(attempt, type)])),
+    governance_trace: Object.fromEntries(ARTIFACT_TYPES.map((type) => [type, explainGoverningArtifact(artifacts, type)])),
   };
 }
 
@@ -710,6 +711,13 @@ function cmdArtifact(args) {
     const status = artifact.accepted_at ? "accepted" : "recorded";
     const governing = projection.governing[artifact.type]?.id === artifact.id ? ` · governing: ${artifact.id}` : "";
     console.log(`  - ${artifact.id}  ${artifact.type}  ${status}  ${artifact.path}${governing}`);
+  }
+  for (const [type, trace] of Object.entries(projection.governance_trace)) {
+    if (!trace.governing) continue;
+    const superseded = trace.superseded.length
+      ? `; superseded: ${trace.superseded.map(({ id, by }) => `${id} by ${by.join(", ")}`).join("; ")}`
+      : "";
+    console.log(`  ${type}: ${trace.governing.id} selected by ${trace.selected_by}; candidates: ${trace.candidates.join(", ")}${superseded}`);
   }
 }
 

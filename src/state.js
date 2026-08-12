@@ -346,12 +346,8 @@ export function governingAttemptArtifact(attempt, requiredTypes) {
   assertArtifactGraph(artifacts);
   const governing = resolveGoverningArtifact(artifacts, requiredTypes);
   if (!governing) return null;
-  try {
-    assertArtifactContent(attempt, governing, artifacts);
-    return governing;
-  } catch {
-    return null;
-  }
+  assertArtifactContent(attempt, governing, artifacts);
+  return governing;
 }
 
 export function listAttemptArtifacts(slug, idOrName) {
@@ -616,6 +612,10 @@ export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now
     if (attempt.status !== "in_progress") throw new Error("Only an in-progress attempt can complete");
     if (!phases.length || attempt.current_phase !== phases.at(-1)) throw new Error("Attempt must reach its final phase before completion");
     if (options.confirm !== true) throw new Error("Confirm the final done-when checks before completion");
+    const governingPlan = governingAttemptArtifact(attempt, "plan");
+    if (governingPlan && !governingAttemptArtifact(attempt, "plan_delta")) {
+      throw new Error(`Attempt with governing plan "${governingPlan.id}" requires an accepted governing plan_delta before completion`);
+    }
     attempt = { ...attempt, status: "done", blocker: null, completed_at: timestamp };
   } else {
     throw new Error(`Unknown attempt lifecycle action ${JSON.stringify(action)}`);

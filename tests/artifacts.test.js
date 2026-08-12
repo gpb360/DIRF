@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   ARTIFACT_TYPES,
+  explainGoverningArtifact,
   resolveGoverningArtifact,
   validateArtifactGraph,
   validatePlanDelta,
@@ -73,6 +74,21 @@ test("equal acceptance timestamps use lexical artifact id as a stable tie-breake
   const at = "2026-08-12T18:35:00.000Z";
   const graph = [accepted("plan-a", at), accepted("plan-b", at)];
   assert.equal(resolveGoverningArtifact(graph, "plan").id, "plan-b");
+});
+
+test("governance trace explains supersession and the final tie-break", () => {
+  const at = "2026-08-12T18:35:00.000Z";
+  const graph = [
+    accepted("plan-old", "2026-08-12T18:31:00.000Z"),
+    accepted("plan-a", at, { supersedes: ["plan-old"] }),
+    accepted("plan-b", at),
+  ];
+  const trace = explainGoverningArtifact(graph, "plan");
+  assert.equal(trace.governing.id, "plan-b");
+  assert.deepEqual(trace.eligible, ["plan-a", "plan-b", "plan-old"]);
+  assert.deepEqual(trace.superseded, [{ id: "plan-old", by: ["plan-a"] }]);
+  assert.deepEqual(trace.candidates, ["plan-a", "plan-b"]);
+  assert.equal(trace.selected_by, "lexical id tie-break");
 });
 
 test("unaccepted and wrong-type artifacts are not eligible", () => {

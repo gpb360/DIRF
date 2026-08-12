@@ -145,30 +145,47 @@ export function validateArtifactGraph(input) {
   return { valid: errors.length === 0, errors };
 }
 
-export function resolveGoverningArtifact(input, requiredTypes) {
+export function explainGoverningArtifact(input, requiredTypes) {
   const artifacts = normalizedArtifacts(input);
-  if (!validateArtifactGraph(artifacts).valid) return null;
+  if (!validateArtifactGraph(artifacts).valid) return { governing: null, eligible: [], superseded: [], candidates: [], selected_by: null };
 
   const types = typeFilter(requiredTypes);
-  if (types && types.size === 0) return null;
+  if (types && types.size === 0) return { governing: null, eligible: [], superseded: [], candidates: [], selected_by: null };
   const eligible = artifacts.filter((item) => item.accepted_at && (!types || types.has(item.type)));
-  if (!eligible.length) return null;
+  if (!eligible.length) return { governing: null, eligible: [], superseded: [], candidates: [], selected_by: null };
 
   const byId = new Map(artifacts.map((item) => [item.id, item]));
   const eligibleIds = new Set(eligible.map((item) => item.id));
-  const superseded = new Set();
+  const supersededBy = new Map();
   for (const item of eligible) {
     for (const id of reachableIds(item.id, byId)) {
-      if (eligibleIds.has(id)) superseded.add(id);
+      if (eligibleIds.has(id)) {
+        const by = supersededBy.get(id) || [];
+        by.push(item.id);
+        supersededBy.set(id, by);
+      }
     }
   }
 
-  const leaves = eligible.filter((item) => !superseded.has(item.id));
+  const leaves = eligible.filter((item) => !supersededBy.has(item.id));
   leaves.sort((left, right) => {
     const time = Date.parse(left.accepted_at) - Date.parse(right.accepted_at);
     return time || left.id.localeCompare(right.id);
   });
-  return leaves.at(-1) || null;
+  const governing = leaves.at(-1) || null;
+  const sameTime = governing ? leaves.filter((item) => item.accepted_at === governing.accepted_at) : [];
+  return {
+    governing,
+    eligible: eligible.map((item) => item.id).sort(),
+    superseded: [...supersededBy.entries()].sort(([left], [right]) => left.localeCompare(right))
+      .map(([id, by]) => ({ id, by: [...new Set(by)].sort() })),
+    candidates: leaves.map((item) => item.id),
+    selected_by: !governing ? null : leaves.length === 1 ? "only eligible leaf" : sameTime.length > 1 ? "lexical id tie-break" : "latest acceptance time",
+  };
+}
+
+export function resolveGoverningArtifact(input, requiredTypes) {
+  return explainGoverningArtifact(input, requiredTypes).governing;
 }
 
 export function validatePlanDelta(value, inputArtifacts = []) {

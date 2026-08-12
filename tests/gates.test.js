@@ -154,11 +154,8 @@ test("artifact-aware gates fail closed when accepted content is deleted", () => 
   acceptPlan(slug, attempt);
   rmSync(join(attempt.folder, "plan.md"));
 
-  assert.deepEqual(
-    attemptGates(slug, attempt.id).map(({ status, artifact_id }) => ({ status, artifact_id })),
-    [{ status: "pending", artifact_id: null }],
-  );
-  assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "advance"), /accepted governing artifact.*plan/);
+  assert.throws(() => attemptGates(slug, attempt.id), /Artifact content does not exist: plan\.md/);
+  assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "advance"), /Artifact content does not exist: plan\.md/);
 });
 
 test("soft gates advance without a record unless --strict", () => {
