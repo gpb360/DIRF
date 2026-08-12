@@ -6,6 +6,7 @@ import { reconcile } from "./flow.js";
 import { loadPlaybookFolders, resolveGraph } from "./folders.js";
 import { bundledSkills, lintSkillMetadata } from "./skills.js";
 import { ISSUE_POLICY_SCHEMA_VERSION } from "./issue-governance.js";
+import { ARTIFACT_TYPES } from "./artifacts.js";
 
 const FM_RE = /^([A-Za-z0-9_-]+):\s*(.*)$/;
 
@@ -60,6 +61,12 @@ export function validateSnapshot(data, label = "workflow") {
         }
         if (spec.verify !== undefined && (typeof spec.verify !== "string" || !spec.verify.trim())) {
           errors.push(`${label}: workflow.gates.${phase}.verify must be a non-empty string`);
+        }
+        if (spec.artifact_type !== undefined) {
+          if (spec.kind !== "decision") errors.push(`${label}: workflow.gates.${phase}.artifact_type is only valid for decision gates`);
+          if (!ARTIFACT_TYPES.includes(spec.artifact_type)) {
+            errors.push(`${label}: workflow.gates.${phase}.artifact_type must be one of ${ARTIFACT_TYPES.join(", ")}`);
+          }
         }
       }
     }

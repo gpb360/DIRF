@@ -90,6 +90,27 @@ dirf attempt advance <id> --auto [--strict]                            # cross c
 continuing, and replays recorded evidence for completed phases instead of
 re-running them.
 
+### Typed artifacts
+
+Store artifact content inside the attempt folder first,
+then record portable metadata and accept it explicitly:
+
+```bash
+dirf artifact record <id> --file artifact.json   # add is a compatibility alias
+dirf artifact list <id> --json                   # includes governing accepted artifacts
+dirf artifact accept <id> <artifact-id>
+```
+
+Metadata requires a stable `id`, a supported `type`, and an attempt-relative
+`path`; `supersedes` may name earlier artifacts in the same attempt. Supported
+types are `research_questions`, `research`, `design`, `structure`, `plan`,
+`implementation_evidence`, and `plan_delta`. Recording never implies
+acceptance. When a decision gate declares `artifact_type`, both its accepted
+decision record and the governing accepted artifact are required to advance.
+For `plan_delta`, the referenced JSON must name the governing accepted plan and
+contain all four evidence buckets: `implemented_as_planned`, `additions`,
+`omissions`, and `unverifiable`.
+
 To resume an attempt later:
 
 ```bash
@@ -128,6 +149,9 @@ Reference existing specs/tickets/decisions rather than restating them.
 | `dirf attempt advance <id> [--evidence "CMD"] [--output F] [--strict] [--auto]` | advance one phase (gates enforced); `--auto` crosses covered phases and stops at gates |
 | `dirf attempt gate <id> <phase> accept\|deny [--comment "…"]` | record a user-owned decision on a decision-gated phase (deny requires a comment) |
 | `dirf attempt block <id> --reason R [--wait input\|blocker]` | block an attempt; `--wait input` marks it as awaiting user input |
+| `dirf artifact record <id> --file F` | validate and record one typed artifact metadata object (`add` is an alias) |
+| `dirf artifact list <id> [--json]` | list artifacts and governing accepted versions |
+| `dirf artifact accept <id> <artifact-id>` | explicitly accept a recorded artifact |
 | `dirf list` | list attempts (alias for state list-attempts scoped here) |
 | `dirf state list` | all registered projects (works from anywhere) |
 | `dirf portfolio` | cross-project status view: every project + attempt classified active/stale/completed/archived/empty |
