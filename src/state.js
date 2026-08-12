@@ -282,6 +282,7 @@ export function listAttempts(slug) {
     const metadata = join(folder, "attempt.json");
     if (!existsSync(metadata)) return [];
     const attempt = JSON.parse(readFileSync(metadata, "utf8"));
+    if (attempt.artifacts !== undefined) assertArtifactGraph(attempt.artifacts);
     return [{ ...attempt, tracked: attempt.schema_version >= 2 && Boolean(attempt.status), status: attempt.status || "historical", folder }];
   });
 }
@@ -388,7 +389,11 @@ export function acceptAttemptArtifact(slug, idOrName, artifactId, now = new Date
     ? { ...artifact, accepted_at: now.toISOString() }
     : artifact);
   assertArtifactGraph(artifacts);
-  assertArtifactContent(attempt, artifacts[index], artifacts);
+  for (const artifact of artifacts) {
+    if (artifact.id === artifactId || artifact.type === "plan_delta") {
+      assertArtifactContent(attempt, artifact, artifacts);
+    }
+  }
   return writeAttempt(slug, { ...attempt, artifacts, updated_at: now.toISOString() });
 }
 

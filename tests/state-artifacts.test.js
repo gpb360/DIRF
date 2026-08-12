@@ -80,9 +80,8 @@ test("record persists only the portable artifact metadata contract", () => {
   assert.doesNotMatch(persisted, /host_path|provider_id|C:\\\\Users/);
 });
 
-test("malformed artifact state fails closed only at artifact-aware boundaries", () => {
+test("canonical attempt loads fail closed with deterministic artifact graph errors", () => {
   const { slug, attempt } = fixture();
-  const legacy = createAttemptInStore(slug, "unrelated legacy", new Date("2026-08-12T18:31:00.000Z"));
   const metadataPath = join(attempt.folder, "attempt.json");
   const stored = JSON.parse(readFileSync(metadataPath, "utf8"));
   stored.artifacts = [
@@ -93,17 +92,16 @@ test("malformed artifact state fails closed only at artifact-aware boundaries", 
   ];
   writeFileSync(metadataPath, JSON.stringify(stored, null, 2));
 
-  assert.deepEqual(listAttempts(slug).map(({ id }) => id), [legacy.id, attempt.id].sort());
-  assert.equal(getAttempt(slug, legacy.id).id, legacy.id);
-  assert.equal(getAttempt(slug, attempt.id).id, attempt.id);
-  assert.throws(() => listAttemptArtifacts(slug, attempt.id), (error) => {
-    assert.match(error.message, /Invalid artifact graph/);
-    assert.match(error.message, /attempt-relative/);
-    assert.match(error.message, /id must be unique/);
-    assert.match(error.message, /type must be one of/);
-    assert.match(error.message, /supersedes cycle/);
-    return true;
-  });
+  for (const load of [() => listAttempts(slug), () => getAttempt(slug, attempt.id)]) {
+    assert.throws(load, (error) => {
+      assert.match(error.message, /Invalid artifact graph/);
+      assert.match(error.message, /attempt-relative/);
+      assert.match(error.message, /id must be unique/);
+      assert.match(error.message, /type must be one of/);
+      assert.match(error.message, /supersedes cycle/);
+      return true;
+    });
+  }
 });
 
 test("record keeps acceptance explicit and rejects duplicate, escaping, and missing content", () => {
@@ -196,7 +194,7 @@ test("record validates a plan_delta file against the governing accepted plan", (
   assert.equal(updated.artifacts.at(-1).type, "plan_delta");
 });
 
-test("superseding a plan leaves its delta historical and permits a replacement delta", () => {
+test("accepting a superseding plan cannot stale an existing plan_delta", () => {
   const { slug, attempt } = fixture();
   recordAttemptArtifact(slug, attempt.id, plan(attempt, "plan-1"), CREATED);
   acceptAttemptArtifact(slug, attempt.id, "plan-1", new Date("2026-08-12T18:31:00.000Z"));
@@ -208,17 +206,12 @@ test("superseding a plan leaves its delta historical and permits a replacement d
   acceptAttemptArtifact(slug, attempt.id, "delta-1", new Date("2026-08-12T18:32:00.000Z"));
   recordAttemptArtifact(slug, attempt.id, plan(attempt, "plan-2", { supersedes: ["plan-1"] }), CREATED);
 
-  const withNewPlan = acceptAttemptArtifact(slug, attempt.id, "plan-2", ACCEPTED);
-  assert.equal(governingAttemptArtifact(withNewPlan, "plan").id, "plan-2");
-  assert.equal(governingAttemptArtifact(withNewPlan, "plan_delta"), null);
-
-  const replacementPath = writeArtifact(attempt, "delta-2.json", JSON.stringify({
-    plan_artifact_id: "plan-2",
-    implemented_as_planned: [], additions: [], omissions: [], unverifiable: [],
-  }));
-  recordAttemptArtifact(slug, attempt.id, { id: "delta-2", type: "plan_delta", path: replacementPath, supersedes: ["delta-1"] }, CREATED);
-  const replaced = acceptAttemptArtifact(slug, attempt.id, "delta-2", new Date("2026-08-12T18:36:00.000Z"));
-  assert.equal(governingAttemptArtifact(replaced, "plan_delta").id, "delta-2");
+  const before = listAttemptArtifacts(slug, attempt.id);
+  assert.throws(
+    () => acceptAttemptArtifact(slug, attempt.id, "plan-2", ACCEPTED),
+    /Invalid plan_delta artifact.*governing accepted plan/,
+  );
+  assert.deepEqual(listAttemptArtifacts(slug, attempt.id), before);
 });
 
 test("a plan_delta requires the governing plan content to remain present", () => {
