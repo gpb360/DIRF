@@ -110,6 +110,13 @@
       "capabilities": ["code review"]
     },
     {
+      "name": "document-artifact-ingestion",
+      "category": "ingestion",
+      "applies_to": ["knowledge-synthesizer", "research-analyst", "workflow-orchestrator"],
+      "summary": "Locally normalize explicitly authorized documents into provenance-bound Markdown artifacts without retaining source bytes",
+      "capabilities": ["document normalization", "evidence ingestion", "artifact provenance"]
+    },
+    {
       "name": "agent-organizer",
       "category": "orchestration",
       "applies_to": ["agent-organizer", "workflow-orchestrator"],
