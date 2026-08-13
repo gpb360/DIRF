@@ -13,7 +13,8 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { resolveGoverningArtifact, validateArtifactGraph, validatePlanDelta } from "./artifacts.js";
 import { updateProgressSection } from "./handoff-update.js";
 
 const GIT_TIMEOUT = 30_000;
@@ -281,6 +282,7 @@ export function listAttempts(slug) {
     const metadata = join(folder, "attempt.json");
     if (!existsSync(metadata)) return [];
     const attempt = JSON.parse(readFileSync(metadata, "utf8"));
+    if (attempt.artifacts !== undefined) assertArtifactGraph(attempt.artifacts);
     return [{ ...attempt, tracked: attempt.schema_version >= 2 && Boolean(attempt.status), status: attempt.status || "historical", folder }];
   });
 }
@@ -305,6 +307,90 @@ function writeAttempt(slug, attempt) {
   delete stored.tracked;
   atomicWrite(attemptMetadataPath(slug, stored.id), JSON.stringify(stored, null, 2) + "\n");
   return getAttempt(slug, stored.id);
+}
+
+function assertArtifactGraph(artifacts) {
+  const result = validateArtifactGraph(artifacts);
+  if (!result.valid) throw new Error(`Invalid artifact graph: ${result.errors.join("; ")}`);
+}
+
+function artifactContentPath(attempt, artifact) {
+  const candidate = join(attempt.folder, ...artifact.path.split("/"));
+  if (!existsSync(candidate)) throw new Error(`Artifact content does not exist: ${artifact.path}`);
+
+  const attemptRoot = realpathSync(attempt.folder);
+  const contentPath = realpathSync(candidate);
+  const fromAttempt = relative(attemptRoot, contentPath);
+  if (fromAttempt === "" || fromAttempt === ".." || fromAttempt.startsWith(`..${sep}`) || isAbsolute(fromAttempt)) {
+    throw new Error(`Artifact content escapes the attempt folder: ${artifact.path}`);
+  }
+  if (!statSync(contentPath).isFile()) throw new Error(`Artifact content must be a regular file: ${artifact.path}`);
+  return contentPath;
+}
+
+function assertArtifactContent(attempt, artifact, artifacts) {
+  const contentPath = artifactContentPath(attempt, artifact);
+  if (artifact.type !== "plan_delta") return;
+
+  let value;
+  try { value = JSON.parse(readFileSync(contentPath, "utf8")); }
+  catch { throw new Error(`plan_delta artifact must contain valid JSON: ${artifact.path}`); }
+  const result = validatePlanDelta(value, artifacts);
+  if (!result.valid) throw new Error(`Invalid plan_delta artifact: ${result.errors.join("; ")}`);
+  const plan = resolveGoverningArtifact(artifacts, "plan");
+  if (plan) artifactContentPath(attempt, plan);
+}
+
+export function governingAttemptArtifact(attempt, requiredTypes) {
+  const artifacts = attempt.artifacts || [];
+  assertArtifactGraph(artifacts);
+  const governing = resolveGoverningArtifact(artifacts, requiredTypes);
+  if (!governing) return null;
+  assertArtifactContent(attempt, governing, artifacts);
+  return governing;
+}
+
+export function listAttemptArtifacts(slug, idOrName) {
+  const attempt = getAttempt(slug, idOrName);
+  const artifacts = attempt.artifacts || [];
+  assertArtifactGraph(artifacts);
+  return artifacts;
+}
+
+export function recordAttemptArtifact(slug, idOrName, artifact, now = new Date()) {
+  const attempt = getAttempt(slug, idOrName);
+  if (artifact?.accepted_at !== undefined) throw new Error("Record the artifact first and accept it separately");
+  const candidate = {
+    id: artifact?.id,
+    type: artifact?.type,
+    path: artifact?.path,
+    supersedes: artifact?.supersedes === undefined ? [] : artifact.supersedes,
+    created_at: artifact?.created_at || now.toISOString(),
+  };
+  const artifacts = [...(attempt.artifacts || []), candidate];
+  assertArtifactGraph(artifacts);
+  assertArtifactContent(attempt, candidate, artifacts);
+  return writeAttempt(slug, { ...attempt, artifacts, updated_at: now.toISOString() });
+}
+
+export function acceptAttemptArtifact(slug, idOrName, artifactId, now = new Date()) {
+  const attempt = getAttempt(slug, idOrName);
+  const current = attempt.artifacts || [];
+  assertArtifactGraph(current);
+  const index = current.findIndex((artifact) => artifact.id === artifactId);
+  if (index < 0) throw new Error(`No artifact ${JSON.stringify(artifactId)} in attempt ${attempt.id}`);
+  if (current[index].accepted_at) return attempt;
+
+  const artifacts = current.map((artifact, artifactIndex) => artifactIndex === index
+    ? { ...artifact, accepted_at: now.toISOString() }
+    : artifact);
+  assertArtifactGraph(artifacts);
+  for (const artifact of artifacts) {
+    if (artifact.id === artifactId || artifact.type === "plan_delta") {
+      assertArtifactContent(attempt, artifact, artifacts);
+    }
+  }
+  return writeAttempt(slug, { ...attempt, artifacts, updated_at: now.toISOString() });
 }
 
 // Single workflow.json read for an already-loaded attempt. Projections pass
@@ -343,14 +429,18 @@ export function workflowGates(slug, idOrName) {
 }
 
 // Why a phase may not be advanced past yet, or null when it can.
-function gateRequirement(gates, records, evidence, phase, strict = false) {
+function gateRequirement(gates, records, evidence, attempt, phase, strict = false) {
   const gate = gates[phase];
   if (!gate) return null;
   const kind = gate.kind || "verify";
   if (kind === "decision") {
-    return records[phase]?.status === "accepted"
-      ? null
-      : { kind, reason: `Phase "${phase}" is a decision gate — record the decision first (dirf attempt gate ... accept|deny --comment "...")` };
+    if (records[phase]?.status !== "accepted") {
+      return { kind, reason: `Phase "${phase}" is a decision gate — record the decision first (dirf attempt gate ... accept|deny --comment "...")` };
+    }
+    if (gate.artifact_type && !governingAttemptArtifact(attempt, gate.artifact_type)) {
+      return { kind, reason: `Phase "${phase}" requires an accepted governing artifact of type "${gate.artifact_type}"` };
+    }
+    return null;
   }
   if (evidence[phase]) return null;
   if (kind === "soft" && !strict) return null;
@@ -373,11 +463,15 @@ export function attemptGateState(slug, attempt) {
       const record = records[phase] || null;
       const kind = gates[phase].kind || "verify";
       const satisfied = kind !== "decision" && Boolean(evidence[phase]);
+      const artifactType = gates[phase].artifact_type || null;
+      const governingArtifact = artifactType ? governingAttemptArtifact(attempt, artifactType) : null;
+      const artifactPending = kind === "decision" && record?.status === "accepted" && artifactType && !governingArtifact;
       return {
         phase,
         kind,
         verify: gates[phase].verify || null,
-        status: record ? record.status : satisfied ? "satisfied" : "pending",
+        ...(artifactType ? { artifact_type: artifactType, artifact_id: governingArtifact?.id || null } : {}),
+        status: artifactPending ? "pending" : record ? record.status : satisfied ? "satisfied" : "pending",
         comment: record?.comment || null,
         by: record?.by || null,
         at: record?.at || null,
@@ -486,7 +580,7 @@ export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now
       if (!command) throw new Error("evidence command must not be empty");
       evidence[leaving] = { command, output: options.evidence.output ? String(options.evidence.output) : null, at: timestamp };
     }
-    const requirement = gateRequirement(workflowGates(slug, attempt.id), attempt.gates || {}, evidence, leaving, options.strict === true);
+    const requirement = gateRequirement(workflowGates(slug, attempt.id), attempt.gates || {}, evidence, attempt, leaving, options.strict === true);
     if (requirement) throw new Error(requirement.reason);
     // Only introduce the evidence key when it has content — gate-free attempts
     // stay byte-identical to how they were written before.
@@ -518,6 +612,10 @@ export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now
     if (attempt.status !== "in_progress") throw new Error("Only an in-progress attempt can complete");
     if (!phases.length || attempt.current_phase !== phases.at(-1)) throw new Error("Attempt must reach its final phase before completion");
     if (options.confirm !== true) throw new Error("Confirm the final done-when checks before completion");
+    const governingPlan = governingAttemptArtifact(attempt, "plan");
+    if (governingPlan && !governingAttemptArtifact(attempt, "plan_delta")) {
+      throw new Error(`Attempt with governing plan "${governingPlan.id}" requires an accepted governing plan_delta before completion`);
+    }
     attempt = { ...attempt, status: "done", blocker: null, completed_at: timestamp };
   } else {
     throw new Error(`Unknown attempt lifecycle action ${JSON.stringify(action)}`);
@@ -550,7 +648,7 @@ export function autoAdvance(slug, idOrName, { strict = false, evidence, now = ne
     // The gate check must see the to-be-recorded evidence (M1), otherwise a
     // verify gate blocks the very step that would satisfy it.
     const view = stepEvidence ? { ...(attempt.evidence || {}), [leaving]: stepEvidence } : attempt.evidence || {};
-    if (gateRequirement(gates, attempt.gates || {}, view, leaving, strict)) { stoppedAt = leaving; break; }
+    if (gateRequirement(gates, attempt.gates || {}, view, attempt, leaving, strict)) { stoppedAt = leaving; break; }
     attempt = updateAttemptLifecycle(slug, attempt.id, "advance", stepEvidence ? { evidence: stepEvidence } : {}, now);
     advanced += 1;
   }
@@ -617,7 +715,7 @@ export function syncLifecycleFromProgress(slug, idOrName, phase, now = new Date(
     const gates = workflowGates(slug, attempt.id);
     while (current.current_phase !== phase && steps < phases.length) {
       // Stop at unsatisfied gates — the lifecycle must never cross one.
-      if (gateRequirement(gates, current.gates || {}, current.evidence || {}, current.current_phase, false)) break;
+      if (gateRequirement(gates, current.gates || {}, current.evidence || {}, current, current.current_phase, false)) break;
       current = updateAttemptLifecycle(slug, attempt.id, "advance", {}, now);
       steps += 1;
     }

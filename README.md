@@ -170,6 +170,25 @@ central store (`~/.dirf/projects/<slug>/HANDOFF.md`) — the single source of
 truth a fresh agent session should read regardless of which checkout it starts
 from. Manage it with `dirf state read-handoff` / `dirf state write-handoff`.
 
+### Typed artifact provenance
+
+An attempt may record portable metadata for research, design, structure, plans,
+implementation evidence, and plan deltas. Artifact content stays inside the
+attempt folder; recording it does not imply acceptance. DIRF resolves the
+governing accepted version deterministically from the supersession graph and
+can require that content at an existing decision gate.
+
+```bash
+dirf artifact record <attempt> --file artifact.json --path "../my-project"
+dirf artifact accept <attempt> <artifact-id> --path "../my-project"
+dirf artifact list <attempt> --path "../my-project" --json
+```
+
+A `plan_delta` names the governing accepted plan and explicitly classifies
+implemented, added, omitted, and unverifiable scope. See the
+[Agent Guide](docs/AGENT_GUIDE.md#typed-artifacts) for the metadata
+and plan-delta shapes.
+
 Status updates, validation summaries, and handoffs use **focused output** by
 default: result first, concrete evidence, at most five list items, and one next
 action. Disable it for a run with `--no-focused-output`. Hosts that expose
@@ -212,6 +231,11 @@ dirf state list-attempts [--path DIR|--slug S]       list attempts for a project
 dirf state get-attempt <id> [...]                    show one attempt
 dirf state import-handoff [--path DIR] [--force]     promote a local HANDOFF.md into the store
 dirf state migrate-cleanup [--path DIR]              remove migration backup(s) once the store works
+
+# typed artifact provenance
+dirf artifact list <attempt> [--json]                list artifacts and governing versions
+dirf artifact record <attempt> --file FILE [--json] record portable metadata (add is an alias)
+dirf artifact accept <attempt> <artifact-id> [--json] explicitly accept a recorded artifact
 
 # portfolio (cross-project view — see "Portfolio" below)
 dirf portfolio [--json]                              classify every project: active/stale/completed/archived/empty

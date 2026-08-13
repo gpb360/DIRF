@@ -1,6 +1,7 @@
 // Assemble an already-selected Playbook's ordered skill flow.
 // Selection happens in router.js; this module never classifies a task.
 import { bundledSkills } from "./skills.js";
+import { ARTIFACT_TYPES } from "./artifacts.js";
 
 export const KNOWN_BRANCHES = new Set(["ui", "react", "security", "multi-session", "research"]);
 
@@ -46,6 +47,12 @@ export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
             }
             if (spec.verify !== undefined && (typeof spec.verify !== "string" || !spec.verify.trim())) {
               errors.push(`playbook ${name}: workflow.gates.${phase}.verify must be a non-empty string`);
+            }
+            if (spec.artifact_type !== undefined) {
+              if (spec.kind !== "decision") errors.push(`playbook ${name}: workflow.gates.${phase}.artifact_type is only valid for decision gates`);
+              if (!ARTIFACT_TYPES.includes(spec.artifact_type)) {
+                errors.push(`playbook ${name}: workflow.gates.${phase}.artifact_type must be one of ${ARTIFACT_TYPES.join(", ")}`);
+              }
             }
           }
         }

@@ -28,7 +28,8 @@ import { inspect, detectStackProfile } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGateState, pendingGates, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress } from "./state.js";
+import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGateState, pendingGates, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact } from "./state.js";
+import { ARTIFACT_TYPES, explainGoverningArtifact } from "./artifacts.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 import {
   DECISION,
@@ -664,6 +665,62 @@ function cmdStateGetAttempt(args) {
   console.log(`folder: ${a.folder}`);
 }
 
+function artifactProjection(slug, id) {
+  const attempt = getAttemptState(slug, id);
+  const artifacts = listAttemptArtifacts(slug, id);
+  return {
+    attempt_id: attempt.id,
+    artifacts,
+    governing: Object.fromEntries(ARTIFACT_TYPES.map((type) => [type, governingAttemptArtifact(attempt, type)])),
+    governance_trace: Object.fromEntries(ARTIFACT_TYPES.map((type) => [type, explainGoverningArtifact(artifacts, type)])),
+  };
+}
+
+function cmdArtifact(args) {
+  const slug = resolveStateSlug(args);
+  const action = args._[0];
+  const id = args._[1];
+  if (!id || !["list", "record", "add", "accept"].includes(action)) {
+    throw new Error("usage: dirf artifact <list|record|accept> <attempt> [artifact-id] [--file metadata.json] [--json]");
+  }
+
+  if (action === "record" || action === "add") {
+    if (!args.file) throw new Error("artifact record requires --file metadata.json");
+    const source = args.file === "-" ? readFileSync(0, "utf8") : readFileSync(args.file, "utf8");
+    let artifact;
+    try { artifact = JSON.parse(source); }
+    catch { throw new Error(`artifact metadata must contain valid JSON: ${args.file}`); }
+    recordAttemptArtifact(slug, id, artifact);
+  } else if (action === "accept") {
+    const artifactId = args._[2];
+    if (!artifactId) throw new Error("usage: dirf artifact accept <attempt> <artifact-id>");
+    acceptAttemptArtifact(slug, id, artifactId);
+  }
+
+  const projection = artifactProjection(slug, id);
+  if (args.json) {
+    console.log(JSON.stringify(projection, null, 2));
+    return;
+  }
+  if (!projection.artifacts.length) {
+    console.log("(no artifacts recorded)");
+    return;
+  }
+  console.log(`Artifacts for ${projection.attempt_id}:`);
+  for (const artifact of projection.artifacts) {
+    const status = artifact.accepted_at ? "accepted" : "recorded";
+    const governing = projection.governing[artifact.type]?.id === artifact.id ? ` · governing: ${artifact.id}` : "";
+    console.log(`  - ${artifact.id}  ${artifact.type}  ${status}  ${artifact.path}${governing}`);
+  }
+  for (const [type, trace] of Object.entries(projection.governance_trace)) {
+    if (!trace.governing) continue;
+    const superseded = trace.superseded.length
+      ? `; superseded: ${trace.superseded.map(({ id, by }) => `${id} by ${by.join(", ")}`).join("; ")}`
+      : "";
+    console.log(`  ${type}: ${trace.governing.id} selected by ${trace.selected_by}; candidates: ${trace.candidates.join(", ")}${superseded}`);
+  }
+}
+
 function cmdAttempt(args) {
   const slug = resolveStateSlug(args);
   const action = args._[0];
@@ -1025,6 +1082,9 @@ Usage:
                                                       (advance: [--evidence "CMD" [--output F]] [--strict] [--auto])
                                                       (gate <phase> accept|deny [--comment "..."]; block [--wait input|blocker])
                                                       (sync-from-handoff: backfill done from handoff evidence; no id = all)
+  dirf artifact list <attempt> [--json]                list typed artifacts and governing versions
+  dirf artifact record <attempt> --file FILE [--json] record one metadata JSON object (add is an alias)
+  dirf artifact accept <attempt> <artifact-id> [--json] explicitly accept a recorded artifact
   dirf worktree <list|archive|remind|remove> [path]   inspect or clean worktrees
   dirf settings <get|set>                              read or update cleanup settings
   dirf migrate [<name>]                                remove runtime paths from saved snapshots
@@ -1236,6 +1296,7 @@ function main() {
   else if (cmd === "export" && args._[0] === "obsidian") cmdExportObsidian(args);
   else if (cmd === "export" && args._[0] === "graphify") cmdExportGraphify(args);
   else if (cmd === "portfolio") cmdPortfolio(args);
+  else if (cmd === "artifact") cmdArtifact(args);
   else if (cmd === "project") cmdProject(args);
   else if (cmd === "inspect") { args._ = args._.length ? args._ : [args.path]; cmdInspect(args); }
   else if (cmd === "flow") { cmdFlow(args); }
