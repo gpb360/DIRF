@@ -15,4 +15,9 @@ config: {"description":"Review a pull request at an exact head for provable bugs
 
 Review one immutable pull request head for provable bugs, regressions, security risks, and missing tests.
 
-Follow the ordered phases and capability requirements declared above. Publish confidence-scored comments only after validating the structured review artifact and rechecking the head.
+Follow the ordered phases and capability requirements declared above. Keep the
+structured review details internal. Tell the user, in plain English, how many
+issues remain, what was fixed, what checks passed, and whether another review is
+running. Do not expose terms such as fixed-point, remediation cycle, gate, or
+exact-head unless the user asks for technical detail. Only ask for merge approval
+after the latest commit has been reviewed and no actionable findings remain.

@@ -29,9 +29,18 @@ Use this policy in every generated workflow prompt.
 - When repository guidance conflicts with the requested outcome, preserve the necessary constraint, name the conflict, and continue the unblocked task instead of building new workflow machinery.
 
 ## Communication
-- Keep output terse and technical.
-- Lead with changed, verified, blocked, or risk.
-- Use concrete files, commands, diffs, tests, and errors as proof.
+- Write user-facing updates in simple, ordinary English. Keep internal workflow
+  terms such as exact-head, fixed-point, remediation, gate, convergence, and
+  evidence ledger out of the update unless the user asks for technical detail.
+- Lead with the practical answer: what was found, what was fixed, what passed,
+  what is still being checked, or whether the work is ready for approval.
+- Prefer short sentences such as "I found 3 issues", "I fixed them and pushed
+  the changes", "The tests passed", and "I am reviewing it again".
+- Use concrete files, commands, diffs, tests, and errors as proof when useful,
+  but translate what they mean instead of making the user decode the process.
+- For pull requests, never say "ready to merge" while a review is still running
+  or any serious review issue remains. When it is ready, ask one plain question:
+  "All checks passed and no review issues remain. May I merge PR #N into staging?"
 - Do not add AI attribution footers or generated-by boilerplate.
 - Pull requests created during the workflow carry a description: what
   changed, why, and how it was verified — never a title-only PR.
