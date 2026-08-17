@@ -482,6 +482,156 @@
       ]
     }
   },
+  "decision-mapping": {
+    "description": "Review and map load-bearing decisions for large unclear work before specification and delivery tickets.",
+    "keywords": [
+      "decision map",
+      "decision mapping",
+      "map the decisions",
+      "not yet specified",
+      "large unclear effort",
+      "unclear multi-session work"
+    ],
+    "agents": [
+      "workflow-orchestrator",
+      "research-analyst",
+      "knowledge-synthesizer"
+    ],
+    "workflow": {
+      "phases": [
+        "name the destination and exit condition",
+        "record accepted decisions without duplicating their artifacts",
+        "state precise open decisions and prerequisites",
+        "separate not-yet-specified uncertainty from out-of-scope work",
+        "derive the decisions ready now",
+        "approve the route into specification"
+      ],
+      "gates": {
+        "approve the route into specification": {
+          "kind": "decision",
+          "artifact_type": "research"
+        }
+      },
+      "output": "a tracker-neutral decision map that links accepted answers, exposes ready questions, preserves unresolved uncertainty without premature tickets, and stops before specification until accepted",
+      "validation": "every open decision is a precise question; every ready decision has no unresolved prerequisite; accepted answers link to one authoritative artifact; not-yet-specified and out-of-scope items are disjoint; no delivery ticket or implementation work begins before map acceptance",
+      "recovery": "if the destination is already clear, use the existing specification and ticket workflow; if a question cannot yet be stated precisely, keep it not yet specified; if tracker or concurrency machinery appears necessary, record the observed failure and stop before adding runtime state"
+    },
+    "questions": [
+      "What destination would make the route clear enough for specification?",
+      "Which decisions can change that route, and which require a named human authority?"
+    ],
+    "skill_flow": {
+      "label": "unclear effort -> accepted decisions -> specification handoff",
+      "steps": [
+        {
+          "stage": "discover",
+          "reason": "Name the destination and expose only questions that can change the route.",
+          "capability": "stateful discovery",
+          "output": "one destination, exit condition, and bounded uncertainty inventory"
+        },
+        {
+          "stage": "model",
+          "reason": "Separate decisions, prerequisites, unspecified uncertainty, scope boundaries, and later delivery work.",
+          "capability": "domain modeling",
+          "output": "a map whose categories do not overlap"
+        },
+        {
+          "stage": "research",
+          "reason": "Resolve ready questions against current authoritative evidence.",
+          "capability": "primary source research",
+          "output": "accepted answers stored once and linked from the map"
+        },
+        {
+          "stage": "handoff",
+          "reason": "Cross into specification only when unresolved uncertainty can no longer change the destination.",
+          "capability": "session handoff",
+          "output": "an accepted recommendation or an explicit blocker; never implementation"
+        }
+      ]
+    }
+  },
+  "methodology-learning": {
+    "description": "Study an external source and turn source-grounded lessons into the smallest justified improvement.",
+    "keywords": [
+      "youtube video",
+      "youtube transcript",
+      "video transcript",
+      "learn from",
+      "learning",
+      "methodology",
+      "study this video",
+      "review this video",
+      "consume this video",
+      "improve from source"
+    ],
+    "agents": [
+      "research-analyst",
+      "knowledge-synthesizer",
+      "dx-optimizer",
+      "test-engineer"
+    ],
+    "workflow": {
+      "phases": [
+        "freeze the source and learning question",
+        "consume once for the whole argument",
+        "replay only load-bearing passages",
+        "reconstruct the methodology faithfully",
+        "compare with the live target",
+        "challenge assumptions and answer open questions",
+        "choose the smallest justified adaptation",
+        "implement one approved experiment or record no change",
+        "verify the result and retain the learning"
+      ],
+      "gates": {
+        "choose the smallest justified adaptation": {
+          "kind": "decision",
+          "artifact_type": "research"
+        }
+      },
+      "output": "one passage-grounded learning note with an adopt, adapt, experiment, reject, or defer disposition for each material idea; if approved, one reversible experiment with verification evidence",
+      "validation": "every material claim is labeled as source claim, observation, inference, or recommendation; every source claim cites a timestamp or stable passage; comparisons use current target code or docs; any implementation names one hypothesis and one verification check",
+      "recovery": "if the source is unavailable, request the missing input; if the method remains ambiguous, preserve the questions and stop before comparison; if no idea clears the value, fit, and simplicity threshold, record a justified no-change result"
+    },
+    "questions": [
+      "What authorized source should be studied?",
+      "What should be learned or decided from it, and may one approved experiment be implemented or should this run stop at recommendations?"
+    ],
+    "skill_flow": {
+      "label": "external source -> understood lesson -> smallest justified experiment",
+      "steps": [
+        {
+          "stage": "source",
+          "reason": "Freeze source provenance, quality, and the learning question before interpreting it.",
+          "capability": "primary source research",
+          "output": "a source record and one learning question"
+        },
+        {
+          "stage": "understand",
+          "reason": "Consume the whole argument, then replay only passages that carry material claims.",
+          "capability": "research synthesis",
+          "output": "a faithful method map with passage references and uncertainty separated from interpretation"
+        },
+        {
+          "stage": "compare",
+          "reason": "Map the strongest version of the method against the live target.",
+          "capability": "code review",
+          "output": "a current-state comparison marking each idea as already present, different, missing, conflicting, or unverified"
+        },
+        {
+          "stage": "decide",
+          "reason": "Prefer the smallest idea whose value, fit, evidence, and reversibility justify its complexity.",
+          "capability": "minimalism",
+          "output": "a disposition for every material idea and one experiment or a no-change conclusion"
+        },
+        {
+          "stage": "learn",
+          "reason": "Verify the approved experiment and retain what the result taught.",
+          "capability": "testing",
+          "output": "verification evidence, the retained lesson, and rollback or follow-up decision"
+        }
+      ]
+    }
+  },
   "performance-pass": {
     "description": "Find and improve performance bottlenecks.",
     "keywords": [

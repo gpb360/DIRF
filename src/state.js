@@ -328,8 +328,18 @@ function artifactContentPath(attempt, artifact) {
   return contentPath;
 }
 
+function artifactContentSha256(contentPath) {
+  return createHash("sha256").update(readFileSync(contentPath)).digest("hex");
+}
+
 function assertArtifactContent(attempt, artifact, artifacts) {
   const contentPath = artifactContentPath(attempt, artifact);
+  if (artifact.accepted_sha256) {
+    const actual = artifactContentSha256(contentPath);
+    if (actual !== artifact.accepted_sha256) {
+      throw new Error(`Artifact content changed after acceptance: ${artifact.path}`);
+    }
+  }
   if (artifact.type !== "plan_delta") return;
 
   let value;
@@ -338,7 +348,7 @@ function assertArtifactContent(attempt, artifact, artifacts) {
   const result = validatePlanDelta(value, artifacts);
   if (!result.valid) throw new Error(`Invalid plan_delta artifact: ${result.errors.join("; ")}`);
   const plan = resolveGoverningArtifact(artifacts, "plan");
-  if (plan) artifactContentPath(attempt, plan);
+  if (plan) assertArtifactContent(attempt, plan, artifacts);
 }
 
 export function governingAttemptArtifact(attempt, requiredTypes) {
@@ -359,7 +369,9 @@ export function listAttemptArtifacts(slug, idOrName) {
 
 export function recordAttemptArtifact(slug, idOrName, artifact, now = new Date()) {
   const attempt = getAttempt(slug, idOrName);
-  if (artifact?.accepted_at !== undefined) throw new Error("Record the artifact first and accept it separately");
+  if (artifact?.accepted_at !== undefined || artifact?.accepted_sha256 !== undefined) {
+    throw new Error("Record the artifact first and accept it separately");
+  }
   const candidate = {
     id: artifact?.id,
     type: artifact?.type,
@@ -379,10 +391,16 @@ export function acceptAttemptArtifact(slug, idOrName, artifactId, now = new Date
   assertArtifactGraph(current);
   const index = current.findIndex((artifact) => artifact.id === artifactId);
   if (index < 0) throw new Error(`No artifact ${JSON.stringify(artifactId)} in attempt ${attempt.id}`);
-  if (current[index].accepted_at) return attempt;
+  if (current[index].accepted_at) {
+    assertArtifactContent(attempt, current[index], current);
+    return attempt;
+  }
+
+  assertArtifactContent(attempt, current[index], current);
+  const acceptedSha256 = artifactContentSha256(artifactContentPath(attempt, current[index]));
 
   const artifacts = current.map((artifact, artifactIndex) => artifactIndex === index
-    ? { ...artifact, accepted_at: now.toISOString() }
+    ? { ...artifact, accepted_at: now.toISOString(), accepted_sha256: acceptedSha256 }
     : artifact);
   assertArtifactGraph(artifacts);
   for (const artifact of artifacts) {
