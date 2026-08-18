@@ -435,16 +435,46 @@ function cmdResume(args) {
   const workflow = existsSync(readme) ? readme : join(attempt.folder, "workflow.json");
   const handoff = join(attempt.folder, "HANDOFF.md");
   if (!existsSync(handoff)) throw new Error(`Attempt ${attempt.id} has no HANDOFF.md; rebuild it before resuming.`);
+  let config = null;
+  try { config = loadProjectConfig(target); }
+  catch { /* legacy state can predate canonical config */ }
+  const contextPath = config?.context?.path ? join(target, config.context.path) : null;
+  const attemptHandoff = readFileSync(handoff, "utf8");
   const projectHandoff = readHandoff(project.slug);
   const projectHandoffPath = join(storeProjectDir(project.slug), "HANDOFF.md");
+  const projectBrain = {
+    config,
+    context: {
+      path: config?.context?.path || null,
+      content: contextPath && existsSync(contextPath) ? readFileSync(contextPath, "utf8") : null,
+    },
+    handoff: projectHandoff,
+    attempts: listAttemptsState(project.slug).map((item) => ({
+      id: item.id,
+      name: item.name,
+      status: item.status || "historical",
+      current_phase: item.current_phase || null,
+      updated_at: item.updated_at || item.created_at,
+    })),
+    active_attempt: { id: attempt.id, handoff: attemptHandoff },
+    resolution_order: [
+      "project.config",
+      "project.context",
+      "active_attempt",
+      "project.handoff",
+      "project.attempts",
+      "global_fallback",
+    ],
+  };
   if (args.json) {
-    const prompt = `Resume DIRF attempt "${attempt.id}" for "${project?.slug || "project"}" at "${args.path || projectRoot(args.path)}".\nFirst load the canonical project handoff, then load this attempt's workflow and handoff.\nCanonical project state takes precedence if they conflict.\nContinue from the exact next action; do not restart completed work.`;
+    const prompt = `Resume DIRF attempt "${attempt.id}" for "${project?.slug || "project"}" at "${args.path || projectRoot(args.path)}".\nResolve the project brain before any global fallback. The active attempt takes precedence over the canonical project handoff if they conflict.\nContinue from the exact next action; do not restart completed work.`;
     // Re-read after auto-start so the emitted attempt reflects the store.
     const current = autoStarted ? getAttemptState(project.slug, attempt.id) : attempt;
     console.log(JSON.stringify({
       attempt: publicAttemptForSlug(project.slug, current),
       workflow_path: workflow,
-      attempt_handoff: readFileSync(handoff, "utf8"),
+      project_brain: projectBrain,
+      attempt_handoff: attemptHandoff,
       project_handoff: projectHandoff,
       pending_gates: pendingGates(project.slug, attempt.id),
       recorded_evidence: recordedEvidence(project.slug, attempt.id),
@@ -456,6 +486,8 @@ function cmdResume(args) {
   console.log(`Resume attempt: ${attempt.id}`);
   if (autoStarted) console.log(`Lifecycle: auto-started (planned → in_progress)`);
   console.log(`Load workflow: ${workflow}`);
+  console.log(`Load project config: ${join(storeProjectDir(project.slug), "config.json")}`);
+  console.log(`Load project context: ${contextPath || "(not configured)"}`);
   console.log(`Load canonical handoff: ${projectHandoffPath}`);
   console.log(`Load attempt handoff: ${handoff}\n`);
   // Reconciliation on resume: surface unresolved gates (the reconciler analog)
@@ -473,12 +505,16 @@ function cmdResume(args) {
     for (const phase of recorded) console.log(`  - ${phase}: ${evidence[phase].command}${evidence[phase].output ? ` → ${evidence[phase].output}` : ""}`);
     console.log("");
   }
+  console.log("Project context:\n");
+  console.log(projectBrain.context.content || "(no project context recorded)");
+  console.log("Attempt handoff (active scoped context; takes precedence):\n");
+  console.log(attemptHandoff);
   if (projectHandoff !== null) {
-    console.log("Canonical project handoff (takes precedence):\n");
+    console.log("Canonical project handoff (project fallback):\n");
     console.log(projectHandoff);
   }
-  console.log("Attempt handoff (scoped context):\n");
-  console.log(readFileSync(handoff, "utf-8"));
+  console.log("Project attempts (before any global fallback):\n");
+  for (const item of projectBrain.attempts) console.log(`  - ${item.id}  ${item.status}${item.id === attempt.id ? "  (active)" : ""}`);
 }
 
 function cmdMigrate(name, target) {
