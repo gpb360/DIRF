@@ -119,15 +119,21 @@ dirf artifact accept <id> <artifact-id>
 
 Metadata requires a stable `id`, a supported `type`, and an attempt-relative
 `path`; `supersedes` may name earlier artifacts in the same attempt. Supported
-types are `source`, `research_questions`, `research`, `design`, `structure`, `plan`,
-`implementation_evidence`, and `plan_delta`. Recording never implies
-acceptance. New acceptances bind the exact artifact bytes with `accepted_sha256`;
-historical accepted artifacts without a digest remain valid. When a decision
-gate declares `artifact_type`, both its accepted decision record and the
-governing accepted artifact are required to advance.
+types are `source`, `research_questions`, `research`, `lesson`, `design`,
+`structure`, `plan`, `implementation_evidence`, and `plan_delta`. Recording
+never implies acceptance. New acceptances bind the exact artifact bytes with
+`accepted_sha256`; historical accepted artifacts without a digest remain valid.
+When a decision gate declares `artifact_type`, both its accepted
+decision record and the governing accepted artifact are required to advance.
 For `plan_delta`, the referenced JSON must name the governing accepted plan and
 contain all four evidence buckets: `implemented_as_planned`, `additions`,
 `omissions`, and `unverifiable`.
+
+`lesson` artifacts capture what the attempt retained: the disposition
+(`adopt`/`adapt`/`experiment`/`reject`/`defer`/`no_change`), the source and
+recommendation it derives from, and the verification evidence — recorded at the
+learning loop's "verify and retain" phase so a justified no-change result is
+bound as evidence exactly like an accepted experiment.
 
 To resume an attempt later:
 

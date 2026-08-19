@@ -41,6 +41,7 @@ test("artifact vocabulary is stable and artifact-free attempts remain valid", ()
     "source",
     "research_questions",
     "research",
+    "lesson",
     "design",
     "structure",
     "plan",
@@ -205,4 +206,18 @@ test("plan delta requires its root, plan id, and all four arrays", () => {
   assert.ok(result.errors.some((error) => /additions must be an array/.test(error)));
   assert.ok(result.errors.some((error) => /omissions must be an array/.test(error)));
   assert.ok(result.errors.some((error) => /unverifiable must be an array/.test(error)));
+});
+
+test("lesson is a valid artifact type and governs for the lesson requirement", () => {
+  assert.ok(ARTIFACT_TYPES.includes("lesson"));
+  const graph = [artifact("lesson-1", { type: "lesson", path: "artifacts/lesson.md" })];
+  assert.equal(validateArtifactGraph(graph).valid, true);
+
+  const acceptedGraph = [accepted("lesson-1", "2026-08-12T18:33:00.000Z", { type: "lesson" })];
+  assert.equal(resolveGoverningArtifact(acceptedGraph, "lesson")?.id, "lesson-1");
+  assert.equal(explainGoverningArtifact(acceptedGraph, "lesson").selected_by, "only eligible leaf");
+
+  const rejected = validateArtifactGraph([{ ...artifact("bad"), type: "not-a-type" }]);
+  assert.equal(rejected.valid, false);
+  assert.ok(rejected.errors.some((error) => /type must be one of .*lesson/.test(error)));
 });
