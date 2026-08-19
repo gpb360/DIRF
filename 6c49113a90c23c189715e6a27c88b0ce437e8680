@@ -1,0 +1,5 @@
+score: 9/10
+
+Mechanical release commit: version bump 0.26.1 -> 0.27.0 in package.json and
+package-lock.json, changelog entry for the four reviewed PRs (32, 34, 35, 36).
+No runtime code change.
