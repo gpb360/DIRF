@@ -7,6 +7,35 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+## [0.27.0] — 2026-08-19
+
+### Added
+- **`dirf learn`** — ingest one explicitly supplied source (pasted text, local
+  file, web page, or YouTube captions) as provenance-bound reference material,
+  compare it with the live repository, and record an evidence-backed
+  recommendation behind an explicit decision gate; at most one reversible
+  experiment after acceptance. URL intake is bounded by HTTPS/public-host
+  checks, per-redirect re-validation, redirect limits, timeouts, content-type
+  and byte-size caps, with optional `yt-dlp` used only when already installed.
+  Non-TTY stdin fails closed after 15s instead of hanging; the document
+  normalizer is lazy-loaded so only `--file` intake needs the skill folder.
+- **Project playbook directory** — `dirf build|plan|create --playbooks <dir>`
+  lets one explicitly supplied directory of playbooks participate in routing,
+  alongside the bundled set, with provenance (`playbook_source` bundled or
+  project plus the resolved path) recorded on every routed result and in the
+  generated workflow. Same-name collisions fail closed naming both sources;
+  no auto-discovery; loading parses inert metadata and Markdown only.
+- **Lesson artifacts** — `lesson` joins the supported artifact vocabulary, so
+  a learning loop's retained outcome (adopt / adapt / experiment / reject /
+  defer / no_change) is recorded, accepted, and SHA-256-bound exactly like
+  intake, recommendation, and experiment evidence. A justified no-change
+  result is now provable learning.
+- **Captured workspace tooling** — the PR review cycle package
+  (`workflows/pr-review-cycle`: pr-review CLI, fixed-point gate, GitHub
+  integration, setup scripts and guides), integration guides and setup
+  script, the DIRF YouTube launch strategy and episode-01 production assets,
+  and research/QA notes now ship in the repository for triage.
+
 ## [0.26.1] — 2026-08-08
 
 ### Changed
