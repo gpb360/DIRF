@@ -158,6 +158,18 @@ test("artifact-aware gates fail closed when accepted content is deleted", () => 
   assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "advance"), /Artifact content does not exist: plan\.md/);
 });
 
+test("artifact-aware gates fail closed when accepted content changes", () => {
+  const { slug, attempt } = artifactGateFixture();
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+  updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "design", decision: "accept", comment: "plan approved" });
+  acceptPlan(slug, attempt);
+  writeFileSync(join(attempt.folder, "plan.md"), "# Changed after approval\n");
+
+  assert.throws(() => attemptGates(slug, attempt.id), /Artifact content changed after acceptance: plan\.md/);
+  assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "advance"), /Artifact content changed after acceptance: plan\.md/);
+});
+
 test("soft gates advance without a record unless --strict", () => {
   const { slug, attempt } = attemptFixture();
   updateAttemptLifecycle(slug, attempt.id, "start");
