@@ -11,7 +11,7 @@ import { loadJson, PLAYBOOKS, PLAYBOOK_DIR } from "./paths.js";
 import { loadPlaybookFolders } from "./folders.js";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 export const FALLBACK_PLAYBOOK = "triage";
 export const KEYWORD_WEIGHT = 3;
@@ -189,9 +189,29 @@ function resolveWorkflow(taskText, workflow = {}) {
   };
 }
 
-export function loadPlaybooks() {
+export function loadPlaybooks({ projectPlaybookDir } = {}) {
   const folders = loadPlaybookFolders(PLAYBOOK_DIR);
-  return Object.keys(folders).length ? folders : loadJson(PLAYBOOKS);
+  const bundled = Object.keys(folders).length ? folders : loadJson(PLAYBOOKS);
+  if (!projectPlaybookDir) return bundled;
+
+  // Experiment: an explicitly supplied project playbook directory participates
+  // in routing. No auto-discovery: absent directory, malformed playbook, and
+  // same-name collisions all fail before any playbook can route.
+  const projectRoot = resolve(projectPlaybookDir);
+  if (!existsSync(projectRoot)) throw new Error(`Project playbook directory does not exist: ${projectRoot}`);
+  const project = loadPlaybookFolders(projectRoot);
+  const bundledRoot = Object.keys(folders).length ? PLAYBOOK_DIR : PLAYBOOKS;
+  const annotated = {};
+  for (const [name, playbook] of Object.entries(bundled)) {
+    annotated[name] = { ...playbook, playbook_source: "bundled", playbook_source_path: join(bundledRoot, name) };
+  }
+  for (const [name, playbook] of Object.entries(project)) {
+    if (Object.hasOwn(annotated, name)) {
+      throw new Error(`Playbook ${name} collides: bundled at ${annotated[name].playbook_source_path}, project at ${join(projectRoot, name)}; no silent override`);
+    }
+    annotated[name] = { ...playbook, playbook_source: "project", playbook_source_path: join(projectRoot, name) };
+  }
+  return annotated;
 }
 
 export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null) {
@@ -286,7 +306,7 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
     .filter((r) => r.score > 0)
     .map((r) => ({ playbook: r.name, score: r.score, description: (r.pb.description || "") }));
 
-  return {
+  const result = {
     playbook: name,
     playbook_description: pb.description || "",
     score,
@@ -299,4 +319,11 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
     questions: pb.questions || [],
     baseline_skills: [],
   };
+  // Provenance appears only when loadPlaybooks was given a project directory;
+  // bundled-only routing output stays byte-identical to prior versions.
+  if (pb.playbook_source) {
+    result.playbook_source = pb.playbook_source;
+    result.playbook_source_path = pb.playbook_source_path;
+  }
+  return result;
 }

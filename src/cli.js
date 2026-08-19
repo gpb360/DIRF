@@ -2,9 +2,9 @@
 // amf-dirf — Agent Spec Kit (Do It Right First). Unified CLI. Node built-ins only.
 //
 //   dirf setup [path] [--reserve-percent N]              configure a target repository
-//   dirf build  <name> "<task>" [--path DIR] [--open] [--no-focused-output]
-//   dirf plan   <name> "<task>" [--path DIR] [--research] create a lifecycle planning attempt
-//   dirf create <name> "<task>" [--path DIR]             route -> attempt workflow JSON only
+//   dirf build  <name> "<task>" [--path DIR] [--open] [--no-focused-output] [--playbooks DIR]
+//   dirf plan   <name> "<task>" [--path DIR] [--research] [--playbooks DIR]  lifecycle planning attempt
+//   dirf create <name> "<task>" [--path DIR] [--playbooks DIR]  route -> attempt workflow JSON only
 //   dirf learn [URL|FILE|TEXT] [--path DIR] [--file FILE] create a read-only learning review
 //   dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
 //   dirf list [--path DIR]                               list saved attempts
@@ -130,6 +130,8 @@ function buildPlan(name, task, path, reservePercent = 5, compaction = null, focu
     task,
     playbook: selection.playbook,
     playbook_description: selection.playbook_description,
+    playbook_source: selection.playbook_source,
+    playbook_source_path: selection.playbook_source_path,
     score: selection.score,
     matched_keywords: selection.matched_keywords,
     alternates: selection.alternates,
@@ -208,7 +210,7 @@ function portablePlan(plan) {
 }
 
 function assembleTaskRouting(task, path, options = {}) {
-  const playbooks = loadPlaybooks();
+  const playbooks = loadPlaybooks({ projectPlaybookDir: options.projectPlaybooks });
   const errors = reconcile(playbooks);
   if (errors.length) throw new Error(`Task Routing reconciliation failed:\n${errors.map((error) => `  - ${error}`).join("\n")}`);
   const targetRoot = path ? (isAbsolute(path) ? path : resolve(process.cwd(), path)) : null;
@@ -227,6 +229,8 @@ function assembleTaskRouting(task, path, options = {}) {
       ...selection,
       playbook: options.playbook,
       playbook_description: playbook.description,
+      playbook_source: playbook.playbook_source,
+      playbook_source_path: playbook.playbook_source_path,
       workflow: playbook.workflow,
       skill_flow: playbook.skill_flow,
       agents: playbook.agents,
@@ -299,7 +303,9 @@ function openBrowserAt(filePath) {
 function cmdBuild(args) {
   const target = projectRoot(args.path);
   const config = loadProjectConfig(target);
-  const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction, args.focusedOutput !== false);
+  const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction, args.focusedOutput !== false, {
+    projectPlaybooks: args.playbooks,
+  });
   const attempt = createAttempt(target, args.name);
   const planPath = savePlan(plan, attempt);
   if (!args.json) console.log(`Attempt saved: ${attempt.id}`);
@@ -316,6 +322,7 @@ function cmdPlan(args) {
     playbook: "fullstack-feature",
     branches,
     planningOnly: true,
+    projectPlaybooks: args.playbooks,
   });
   const attempt = createAttempt(target, args.name);
   const planPath = savePlan(plan, attempt);
@@ -327,7 +334,9 @@ function cmdPlan(args) {
 function cmdCreate(args) {
   const target = projectRoot(args.path);
   const config = loadProjectConfig(target);
-  const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction);
+  const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction, args.focusedOutput !== false, {
+    projectPlaybooks: args.playbooks,
+  });
   const attempt = createAttempt(target, args.name);
   savePlan(plan, attempt);
   console.log(`Attempt saved: ${attempt.id}`);
@@ -1157,6 +1166,7 @@ function parse(argv) {
     if (a === "--file") { out.file = rest[++i]; continue; }
     if (a === "--name") { out.name = rest[++i]; continue; }
     if (a === "--language") { out.language = rest[++i]; continue; }
+    if (a === "--playbooks") { out.playbooks = rest[++i]; continue; }
     if (a === "--force") { out.force = true; continue; }
     if (a === "--project") { out.project = true; continue; }
     if (a === "--slug") { out.slug = rest[++i]; continue; }
@@ -1198,9 +1208,9 @@ const HELP = `amf-dirf — Agent Spec Kit (Do It Right First)
 
 Usage:
   dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
-  dirf build  <name> "<task>" [--path DIR] [--open] [--no-focused-output]
-  dirf plan   <name> "<task>" [--path DIR] [--research] [--open] [--no-focused-output]
-  dirf create <name> "<task>" [--path DIR]             JSON only
+  dirf build  <name> "<task>" [--path DIR] [--open] [--no-focused-output] [--playbooks DIR]
+  dirf plan   <name> "<task>" [--path DIR] [--research] [--open] [--no-focused-output] [--playbooks DIR]
+  dirf create <name> "<task>" [--path DIR] [--playbooks DIR]   JSON only
   dirf learn [URL|FILE|TEXT] [--path DIR] [--file FILE] [--language CODE] [--name NAME] [--json]
                                                       ingest a source; implementation requires an accepted recommendation and decision
   dirf render <name-or-id> [--path DIR] [--open]       re-render an attempt
