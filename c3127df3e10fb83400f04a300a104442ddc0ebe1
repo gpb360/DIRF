@@ -1,0 +1,7 @@
+score: 9/10
+
+Approved learn experiment #2 (lesson artifact type). Closes the learning
+loop: the retained lesson is now a typed, provenance-bound artifact like
+intake, recommendation, and evidence. Generic validation applies (sha256,
+ISO-8601, supersession); unit + CLI round-trip tests; contract documented.
+Full suite green (344 tests).
