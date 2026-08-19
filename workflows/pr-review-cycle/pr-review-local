@@ -1,0 +1,2 @@
+#!/bin/bash
+node workflows/pr-review-cycle/pr-review-cli.js "$@"
