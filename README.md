@@ -64,6 +64,31 @@ The last command prints the help screen. There is no runtime package install
 step. Contributors who want to run the TypeScript check should run `npm install`
 once to install the development-only tooling.
 
+## Learn from an article, document, or video
+
+`dirf learn` turns one explicitly supplied source into a provenance-bound
+research attempt:
+
+```bash
+dirf learn https://example.com/article
+dirf learn https://www.youtube.com/watch?v=VIDEO_ID
+dirf learn --file ./docs/reference.pdf
+dirf learn
+```
+
+With no source argument, paste text and send EOF (`Ctrl+D` on macOS/Linux;
+`Ctrl+Z`, then Enter, on Windows). DIRF stores normalized content and provenance
+inside the canonical attempt, then prepares an analysis brief for the connected
+agent. It treats embedded code and instructions as untrusted text. Intake,
+comparison, and recommendation do not edit DIRF or the host repository. Resume
+the printed attempt to produce an evidence-backed recommendation. DIRF requires
+the recommendation artifact and decision gate to be explicitly accepted before
+the same attempt may implement at most one named, reversible experiment.
+
+For YouTube, DIRF first reads public caption tracks directly. If YouTube exposes
+a track but returns an empty caption body, DIRF can use an already-installed
+`yt-dlp` as an optional local fallback. DIRF never installs it automatically.
+
 ## Add DIRF to an existing project
 
 Keep the DIRF clone beside your project, then run:

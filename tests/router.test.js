@@ -95,6 +95,23 @@ test("content overlap routes research phrasing without keywords", () => {
   assert.equal(recommend("synthesize recommendations about a technology").playbook, "research");
 });
 
+test("explicit large-work decision mapping routes to the optional planning playbook", () => {
+  const result = recommend("Create a decision map for a large unclear effort before specification and delivery tickets");
+  assert.equal(result.playbook, "decision-mapping");
+  assert.deepEqual(result.workflow.gates["approve the route into specification"], {
+    kind: "decision",
+    artifact_type: "research",
+  });
+  assert.ok(result.workflow.phases.every((phase) => !/implement|build|execute/.test(phase)));
+});
+
+test("ordinary understood feature work bypasses decision mapping", () => {
+  assert.equal(
+    recommend("Build the approved account settings feature from the existing specification").playbook,
+    "fullstack-feature",
+  );
+});
+
 test("short keywords only match whole words, not inside other words", () => {
   // "pr" must not match inside "reproduce"
   const r = recommend("reproduce the crash when saving");

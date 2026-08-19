@@ -119,10 +119,12 @@ dirf artifact accept <id> <artifact-id>
 
 Metadata requires a stable `id`, a supported `type`, and an attempt-relative
 `path`; `supersedes` may name earlier artifacts in the same attempt. Supported
-types are `research_questions`, `research`, `design`, `structure`, `plan`,
+types are `source`, `research_questions`, `research`, `design`, `structure`, `plan`,
 `implementation_evidence`, and `plan_delta`. Recording never implies
-acceptance. When a decision gate declares `artifact_type`, both its accepted
-decision record and the governing accepted artifact are required to advance.
+acceptance. New acceptances bind the exact artifact bytes with `accepted_sha256`;
+historical accepted artifacts without a digest remain valid. When a decision
+gate declares `artifact_type`, both its accepted decision record and the
+governing accepted artifact are required to advance.
 For `plan_delta`, the referenced JSON must name the governing accepted plan and
 contain all four evidence buckets: `implemented_as_planned`, `additions`,
 `omissions`, and `unverifiable`.
@@ -161,6 +163,7 @@ Reference existing specs/tickets/decisions rather than restating them.
 | `dirf state list-attempts` | prior runs for this project |
 | `dirf state get-attempt <id>` | one attempt's detail |
 | `dirf build <name> "<task>"` | route a task → instruction set in the store |
+| `dirf learn [URL\|FILE\|TEXT]` | ingest one authorized source, prepare an approvable recommendation, then allow at most one accepted reversible experiment |
 | `dirf resume <name-or-id>` | load one attempt's workflow + handoff (lists pending gates) |
 | `dirf attempt advance <id> [--evidence "CMD"] [--output F] [--strict] [--auto]` | advance one phase (gates enforced); `--auto` crosses covered phases and stops at gates |
 | `dirf attempt gate <id> <phase> accept\|deny [--comment "…"]` | record a user-owned decision on a decision-gated phase (deny requires a comment) |
