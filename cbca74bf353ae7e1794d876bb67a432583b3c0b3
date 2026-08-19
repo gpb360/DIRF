@@ -1,0 +1,4 @@
+score: 9/10
+
+Fixes the nested package.json test script reference (test-review.js did not
+exist; the package has fixed-point-gate.test.js).
