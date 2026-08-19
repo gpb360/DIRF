@@ -125,7 +125,7 @@ test("dirf state import-handoff --force promotes a local HANDOFF into the store"
   assert.equal(readBack, localMd);
 });
 
-test("dirf resume surfaces canonical progress before scoped attempt context", () => {
+test("dirf resume composes project context and gives the active attempt precedence", () => {
   const home = freshHome();
   const main = mkdtempSync(join(tmpdir(), "resume-progress-"));
   execFileSync("git", ["init", "-q"], { cwd: main, timeout: TIMEOUT });
@@ -140,17 +140,54 @@ test("dirf resume surfaces canonical progress before scoped attempt context", ()
   ], { DIRF_HOME: home }, main);
 
   const resumed = run(["resume", built.attempt.id, "--path", main], { DIRF_HOME: home }, main);
-  assert.match(resumed, /Canonical project handoff \(takes precedence\):/);
+  assert.match(resumed, /Project context:/);
   assert.match(resumed, /Published PR 21/);
   assert.match(resumed, /Review exact head before merge/);
-  assert.match(resumed, /Attempt handoff \(scoped context\):/);
+  assert.match(resumed, /Attempt handoff \(active scoped context; takes precedence\):/);
+  assert.match(resumed, /Canonical project handoff \(project fallback\):/);
 
   const resumedJson = JSON.parse(run([
     "resume", built.attempt.id, "--path", main, "--json",
   ], { DIRF_HOME: home }, main));
   assert.match(resumedJson.project_handoff, /Published PR 21/);
   assert.match(resumedJson.attempt_handoff, /verify canonical resume state/);
+  assert.equal(resumedJson.project_brain.context.path, "docs/agents/domain/CONTEXT.md");
+  assert.deepEqual(resumedJson.project_brain.resolution_order, [
+    "project.config",
+    "project.context",
+    "active_attempt",
+    "project.handoff",
+    "project.attempts",
+    "global_fallback",
+  ]);
+  assert.equal(resumedJson.project_brain.active_attempt.id, built.attempt.id);
+  assert.match(resumedJson.resume_prompt, /active attempt takes precedence/i);
   assert.notEqual(resumedJson.project_handoff, resumedJson.attempt_handoff);
+});
+
+test("dirf resume never composes attempts or context from another project", () => {
+  const home = freshHome();
+  const storytellers = mkdtempSync(join(tmpdir(), "storytellers-brain-"));
+  const guvflow = mkdtempSync(join(tmpdir(), "guvflow-brain-"));
+  for (const root of [storytellers, guvflow]) {
+    execFileSync("git", ["init", "-q"], { cwd: root, timeout: TIMEOUT });
+    run(["setup", root], { DIRF_HOME: home }, root);
+  }
+  writeFileSync(join(storytellers, "docs", "agents", "domain", "CONTEXT.md"), "Storytellers-only-context\n");
+  writeFileSync(join(guvflow, "docs", "agents", "domain", "CONTEXT.md"), "GuvFlow-private-context\n");
+  const storyAttempt = JSON.parse(run([
+    "build", "story-lane", "Storytellers-only-task", "--path", storytellers, "--json",
+  ], { DIRF_HOME: home }, storytellers));
+  run(["build", "guv-lane", "GuvFlow-private-task", "--path", guvflow, "--json"], { DIRF_HOME: home }, guvflow);
+
+  const resumed = JSON.parse(run([
+    "resume", storyAttempt.attempt.id, "--path", storytellers, "--json",
+  ], { DIRF_HOME: home }, storytellers));
+  const brain = JSON.stringify(resumed.project_brain);
+  assert.match(brain, /Storytellers-only-context/);
+  assert.match(brain, /story-lane/);
+  assert.doesNotMatch(brain, /GuvFlow-private/);
+  assert.equal(resumed.project_brain.attempts.length, 1);
 });
 
 test("record-progress requires an explicit attempt when several exist and preserves canonical precedence", () => {
