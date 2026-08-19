@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="900" viewBox="0 0 1700 900" role="img" aria-labelledby="title desc">
+  <title id="title">DIRF route, record, and finish-line model</title>
+  <desc id="desc">Task intent, repository truth, and installed capabilities converge through DIRF into a saved attempt, evidence, and a canonical handoff that survives session and worktree boundaries.</desc>
+  <defs>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#1e3a5f"/></marker>
+    <marker id="arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#c2410c"/></marker>
+    <marker id="arrow-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#6d28d9"/></marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#047857"/></marker>
+    <style>
+      .font { font-family: Inter, "Segoe UI", Arial, sans-serif; }
+      .title { font: 700 31px Inter, "Segoe UI", Arial, sans-serif; fill: #1e40af; }
+      .sub { font: 400 18px Inter, "Segoe UI", Arial, sans-serif; fill: #64748b; }
+      .section { font: 700 23px Inter, "Segoe UI", Arial, sans-serif; fill: #3b82f6; }
+      .body { font: 500 17px Inter, "Segoe UI", Arial, sans-serif; fill: #374151; }
+      .small { font: 400 15px Inter, "Segoe UI", Arial, sans-serif; fill: #64748b; }
+      .white { fill: #ffffff; }
+      .center { text-anchor: middle; }
+      .label { font: 700 21px Inter, "Segoe UI", Arial, sans-serif; letter-spacing: 1px; }
+    </style>
+  </defs>
+  <rect width="1700" height="900" fill="#ffffff"/>
+
+  <text x="60" y="68" class="title">Keep your agent stack. Give the work a route, a record, and a finish line.</text>
+  <text x="62" y="104" class="sub">DIRF reconciles the task, repository, and capabilities already installed on the host.</text>
+
+  <text x="70" y="168" class="section">Your existing stack</text>
+  <ellipse cx="210" cy="246" rx="125" ry="39" fill="#fed7aa" stroke="#c2410c" stroke-width="2"/>
+  <text x="210" y="239" class="body center"><tspan x="210">Task intent</tspan><tspan x="210" dy="23">What outcome?</tspan></text>
+
+  <rect x="82" y="340" width="300" height="122" rx="12" fill="#1e293b" stroke="#1e3a5f" stroke-width="2"/>
+  <text x="108" y="370" class="body white"><tspan x="108" font-weight="700">Repository truth</tspan><tspan x="108" dy="23">AGENTS.md</tspan><tspan x="108" dy="23">branch + worktrees</tspan><tspan x="108" dy="23">project rules</tspan></text>
+
+  <text x="83" y="535" class="section" font-size="20">Installed capabilities</text>
+  <circle cx="96" cy="573" r="8" fill="#ddd6fe" stroke="#6d28d9" stroke-width="2"/><text x="119" y="579" class="body">security-review</text>
+  <circle cx="96" cy="618" r="8" fill="#ddd6fe" stroke="#6d28d9" stroke-width="2"/><text x="119" y="624" class="body">GSD / Superpowers</text>
+  <circle cx="96" cy="663" r="8" fill="#ddd6fe" stroke="#6d28d9" stroke-width="2"/><text x="119" y="669" class="body">your local skill</text>
+  <text x="83" y="710" class="small"><tspan x="83">Metadata first.</tspan><tspan x="83" dy="21">Load detail only when selected.</tspan></text>
+
+  <path d="M340 246 H430 L522 372" fill="none" stroke="#c2410c" stroke-width="2.5" marker-end="url(#arrow-orange)"/>
+  <path d="M386 402 H522" fill="none" stroke="#1e3a5f" stroke-width="2.5" marker-end="url(#arrow-blue)"/>
+  <path d="M382 618 H455 L522 430" fill="none" stroke="#6d28d9" stroke-width="2.5" marker-end="url(#arrow-purple)"/>
+
+  <rect x="525" y="302" width="310" height="202" rx="15" fill="#3b82f6" stroke="#1e3a5f" stroke-width="3"/>
+  <text x="680" y="364" class="white center" font-family="Inter, Segoe UI, Arial" font-size="36" font-weight="800">DIRF</text>
+  <text x="680" y="407" class="white center" font-family="Inter, Segoe UI, Arial" font-size="18"><tspan x="680">inspect</tspan><tspan x="680" dy="25">route by capability</tspan><tspan x="680" dy="25">bind boundaries + checks</tspan></text>
+  <text x="680" y="548" class="label center" fill="#1e40af">ROUTE</text>
+
+  <path d="M838 402 H985" fill="none" stroke="#1e3a5f" stroke-width="3" marker-end="url(#arrow-blue)"/>
+  <text x="1100" y="132" class="small center">One route, two reading surfaces</text>
+  <rect x="890" y="150" width="195" height="82" rx="10" fill="#dbeafe" stroke="#1e3a5f" stroke-width="2"/>
+  <text x="987" y="182" class="body center"><tspan x="987">Markdown</tspan><tspan x="987" dy="23">agent source</tspan></text>
+  <path d="M1090 191 H1105" fill="none" stroke="#1e3a5f" stroke-width="2" marker-end="url(#arrow-blue)"/>
+  <rect x="1110" y="150" width="195" height="82" rx="10" fill="#dbeafe" stroke="#1e3a5f" stroke-width="2"/>
+  <text x="1207" y="182" class="body center"><tspan x="1207">HTML</tspan><tspan x="1207" dy="23">human view</tspan></text>
+  <path d="M1050 278 V250 H987 V237" fill="none" stroke="#1e3a5f" stroke-width="2" marker-end="url(#arrow-blue)"/>
+
+  <rect x="995" y="282" width="285" height="245" rx="14" fill="#93c5fd" stroke="#1e3a5f" stroke-width="2"/>
+  <text x="1137" y="329" class="center" font-family="Inter, Segoe UI, Arial" font-size="25" font-weight="700" fill="#1e3a5f">Saved attempt</text>
+  <text x="1034" y="382" class="body"><tspan x="1034">README router</tspan><tspan x="1034" dy="25">role boundaries</tspan><tspan x="1034" dy="25">current phase</tspan><tspan x="1034" dy="25">decision gates</tspan><tspan x="1034" dy="25">verification evidence</tspan></text>
+  <text x="1137" y="570" class="label center" fill="#1e40af">RECORD</text>
+
+  <rect x="875" y="640" width="385" height="112" rx="12" fill="#a7f3d0" stroke="#047857" stroke-width="2"/>
+  <text x="1067" y="685" class="body center" fill="#047857"><tspan x="1067" font-weight="700">Evidence stays specific</tspan><tspan x="1067" dy="27">local test ≠ merged PR ≠ production</tspan></text>
+  <path d="M1120 532 L1115 635" fill="none" stroke="#047857" stroke-width="2.5" marker-end="url(#arrow-green)"/>
+
+  <line x1="1345" y1="145" x2="1345" y2="715" stroke="#64748b" stroke-width="2" stroke-dasharray="10 10"/>
+  <text x="1345" y="744" class="small center"><tspan x="1345">session /</tspan><tspan x="1345" dy="20">worktree boundary</tspan></text>
+  <path d="M1284 402 H1372" fill="none" stroke="#1e3a5f" stroke-width="3" marker-end="url(#arrow-blue)"/>
+
+  <ellipse cx="1515" cy="404" rx="135" ry="119" fill="#a7f3d0" stroke="#047857" stroke-width="3"/>
+  <text x="1515" y="349" class="center" font-family="Inter, Segoe UI, Arial" font-size="26" font-weight="700" fill="#047857"><tspan x="1515">Canonical</tspan><tspan x="1515" dy="32">handoff</tspan></text>
+  <text x="1515" y="426" class="body center"><tspan x="1515">current truth</tspan><tspan x="1515" dy="25">proof + blocker</tspan><tspan x="1515" dy="25">exact next action</tspan></text>
+  <text x="1515" y="570" class="label center" fill="#047857">FINISH LINE</text>
+
+  <text x="60" y="842" class="sub">DIRF prepares and records the route. Your agent host performs the work. Human authority controls consequential actions.</text>
+</svg>

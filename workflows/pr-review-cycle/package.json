@@ -1,0 +1,41 @@
+{
+  "name": "pr-review-cycle",
+  "version": "1.0.0",
+  "description": "Universal PR review system with AI agents and confidence scoring",
+  "main": "pr-review-cli.js",
+  "bin": {
+    "pr-review": "./pr-review-cli.js"
+  },
+  "scripts": {
+    "review": "node pr-review-cli.js --local",
+    "review:pr": "node pr-review-cli.js --pr-url",
+    "review:list": "node pr-review-cli.js --list",
+    "test": "node test-review.js",
+    "setup": "bash setup.sh"
+  },
+  "keywords": [
+    "pr-review",
+    "code-review",
+    "ai-agent",
+    "confidence-scoring",
+    "automated-review",
+    "security-scan",
+    "code-quality"
+  ],
+  "author": "Gary Boyd <garypboyd@rogers.com>",
+  "license": "MIT",
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "dependencies": {},
+  "devDependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gpb360/DIRF.git",
+    "directory": "workflows/pr-review-cycle"
+  },
+  "bugs": {
+    "url": "https://github.com/gpb360/DIRF/issues"
+  },
+  "homepage": "https://github.com/gpb360/DIRF/tree/main/workflows/pr-review-cycle"
+}
