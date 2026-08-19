@@ -1,6 +1,7 @@
 export const ARTIFACT_TYPES = Object.freeze([
   "research_questions",
   "research",
+  "lesson",
   "design",
   "structure",
   "plan",

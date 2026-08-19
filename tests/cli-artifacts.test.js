@@ -110,3 +110,20 @@ test("typed plan provenance and plan_delta complete an end-to-end acceptance sce
   assert.equal(accepted.governing.plan.id, "plan-v1");
   assert.equal(accepted.governing.plan_delta.id, "plan-delta-v1");
 });
+
+test("lesson artifact records, accepts, and governs through the CLI", () => {
+  const { root, env, attempt, attemptFolder } = fixture();
+  writeFileSync(join(attemptFolder, "artifacts", "lesson.md"), "# Retained lesson\n\nKeep the loader seam explicit and provenance-carrying.\n");
+  const metadataPath = join(root, "lesson-artifact.json");
+  writeFileSync(metadataPath, JSON.stringify({ id: "lesson-v1", type: "lesson", path: "artifacts/lesson.md" }));
+
+  const recorded = JSON.parse(run(["artifact", "record", attempt.id, "--file", metadataPath, "--path", root, "--json"], env, root));
+  assert.equal(recorded.artifacts.find((item) => item.id === "lesson-v1").type, "lesson");
+
+  const accepted = JSON.parse(run(["artifact", "accept", attempt.id, "lesson-v1", "--path", root, "--json"], env, root));
+  assert.match(accepted.artifacts.find((item) => item.id === "lesson-v1").accepted_at, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(accepted.governing.lesson.id, "lesson-v1");
+
+  const text = run(["artifact", "list", attempt.id, "--path", root], env, root);
+  assert.match(text, /lesson-v1\s+lesson\s+accepted/);
+});
