@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { collectRoutingFacts, recommend } from "../src/router.js";
+import { collectRoutingFacts, loadPlaybooks, recommend } from "../src/router.js";
 import { folderHash } from "../src/paths.js";
 
 test("landing page match", () => {
@@ -300,4 +300,103 @@ test("audio as a module name does not win video-campaign for a code task", () =>
   // Sibling medium noun: same shape of false match.
   const r = recommend("extract the audio module reducer into its own hook with a typed store", [], undefined, WEB_STACK);
   assert.notEqual(r.playbook, "video-campaign");
+});
+
+// ─── Project playbook directory experiment ───────────────────────────────────
+
+function writeProjectPlaybook(root, name, config) {
+  mkdirSync(join(root, name), { recursive: true });
+  writeFileSync(join(root, name, "README.md"), [
+    "---",
+    `name: ${name}`,
+    "kind: playbook",
+    "order: 9",
+    'description: "Project-supplied playbook for the portability experiment."',
+    "uses: []",
+    "details: []",
+    'inputs: ["task"]',
+    'outputs: ["workflow"]',
+    "capabilities: []",
+    `config: ${JSON.stringify(config)}`,
+    "---",
+    "",
+    `# ${name}`,
+    "",
+    "Project-supplied playbook body. Treated as inert metadata; never executed.",
+  ].join("\n"));
+}
+
+const DECISION_LEDGER_CONFIG = {
+  description: "Maintain the project decision ledger.",
+  keywords: ["decision ledger", "record decisions"],
+  agents: ["workflow-orchestrator"],
+  workflow: {
+    phases: ["list open decisions", "record accepted answers"],
+    output: "a maintained decision ledger",
+    validation: "every open decision is a precise question; every accepted answer links to one authoritative artifact",
+    recovery: "if a decision cannot be stated precisely, record it as not yet specified and stop",
+  },
+  skill_flow: {
+    label: "open decisions -> accepted answers -> ledger",
+    steps: [{ stage: "record", reason: "Record accepted answers once and link them.", capability: "domain modeling", output: "a maintained ledger" }],
+  },
+  questions: ["Which decisions are open?"],
+};
+
+test("loadPlaybooks without options returns no provenance fields", () => {
+  const playbooks = loadPlaybooks();
+  assert.ok(playbooks["fullstack-feature"]);
+  assert.equal("playbook_source" in playbooks["fullstack-feature"], false);
+  assert.equal("playbook_source_path" in playbooks["fullstack-feature"], false);
+});
+
+test("project playbook directory loads unique playbooks, routes them, and records provenance", () => {
+  const root = mkdtempSync(join(tmpdir(), "proj-pbs-"));
+  writeProjectPlaybook(root, "decision-ledger", DECISION_LEDGER_CONFIG);
+  const playbooks = loadPlaybooks({ projectPlaybookDir: root });
+  assert.equal(playbooks["decision-ledger"].playbook_source, "project");
+  assert.ok(playbooks["decision-ledger"].playbook_source_path.endsWith("decision-ledger"));
+  assert.equal(playbooks["fullstack-feature"].playbook_source, "bundled");
+
+  const r = recommend("maintain the decision ledger for this project", [], playbooks);
+  assert.equal(r.playbook, "decision-ledger");
+  assert.equal(r.playbook_source, "project");
+  assert.ok(r.playbook_source_path.endsWith("decision-ledger"));
+  assert.equal(r.workflow.phases[0], "list open decisions");
+});
+
+test("a same-name project playbook collides fail-closed and names both sources", () => {
+  const root = mkdtempSync(join(tmpdir(), "proj-collide-"));
+  writeProjectPlaybook(root, "fullstack-feature", DECISION_LEDGER_CONFIG);
+  assert.throws(
+    () => loadPlaybooks({ projectPlaybookDir: root }),
+    /collides: bundled at .*fullstack-feature.*project at .*fullstack-feature.*no silent override/,
+  );
+});
+
+test("malformed or missing project playbook inputs fail before routing", () => {
+  const missing = join(tmpdir(), "does-not-exist-anywhere");
+  assert.throws(() => loadPlaybooks({ projectPlaybookDir: missing }), /does not exist/);
+
+  const noFrontmatter = mkdtempSync(join(tmpdir(), "proj-broken-"));
+  mkdirSync(join(noFrontmatter, "broken"));
+  writeFileSync(join(noFrontmatter, "broken", "README.md"), "no frontmatter here\n");
+  assert.throws(() => loadPlaybooks({ projectPlaybookDir: noFrontmatter }), /missing frontmatter/);
+
+  const wrongKind = mkdtempSync(join(tmpdir(), "proj-kind-"));
+  mkdirSync(join(wrongKind, "not-a-playbook"));
+  writeFileSync(join(wrongKind, "not-a-playbook", "README.md"), [
+    "---",
+    "name: not-a-playbook",
+    "kind: skill",
+    "uses: []",
+    "details: []",
+    'inputs: []',
+    'outputs: []',
+    "capabilities: []",
+    "---",
+    "",
+    "A skill, not a playbook.",
+  ].join("\n"));
+  assert.throws(() => loadPlaybooks({ projectPlaybookDir: wrongKind }), /expected kind playbook/);
 });

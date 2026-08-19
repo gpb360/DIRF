@@ -67,6 +67,22 @@ To see the routed skill flow without building:
 dirf flow "<task>"
 ```
 
+**Optional: project playbooks.** `dirf build|plan|create ... --playbooks <dir>`
+lets one explicitly supplied directory of playbooks participate in routing,
+alongside DIRF's bundled set. Trust model:
+
+- The directory is used **only when you pass the flag** — DIRF never scans a
+  repository for playbooks.
+- Each playbook must follow the same `playbooks/<name>/README.md` contract and
+  passes the same validation as bundled playbooks; a malformed playbook fails
+  the command before anything routes.
+- A same-name playbook colliding with a bundled one is an error naming both
+  sources — there is no silent override.
+- Loading parses inert metadata and Markdown only: it never executes scripts,
+  prompts, commands, installers, or source code from project playbooks.
+- The generated workflow records `playbook_source` (`bundled`|`project`) and
+  `playbook_source_path`, so every routed result is provenance-carrying.
+
 ### 3. Execute
 
 Work the attempt's phases in order. Don't advance a phase until its done-when
