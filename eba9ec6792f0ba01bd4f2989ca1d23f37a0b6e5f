@@ -1,0 +1,7 @@
+score: 9/10
+
+Capture PR for triage: pr-review-cycle package (scripts syntax-checked,
+nested test runs green in the root suite), integration guides, marketing
+launch folder, QA prompts. Machine paths replaced with placeholders per the
+pre-commit contract. Follow-up fix cbca74b points the nested test script at
+the existing test file.
