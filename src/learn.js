@@ -13,7 +13,6 @@ import {
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
-import { normalizeDocument } from "../skills/document-artifact-ingestion/scripts/normalize-document.mjs";
 
 export const MAX_PASTED_BYTES = 2 * 1024 * 1024;
 export const MAX_REMOTE_BYTES = 5 * 1024 * 1024;
@@ -488,6 +487,10 @@ export async function ingestLearningSource({ attemptRoot, input, explicitFile, l
   }
   const classified = classifyLearningSource(input, explicitFile);
   if (classified.kind === "file") {
+    // Lazy: file intake is the only path that needs the normalization script,
+    // so paste/web/YouTube intake keeps working even when the skill folder is
+    // absent from the install.
+    const { normalizeDocument } = await import("../skills/document-artifact-ingestion/scripts/normalize-document.mjs");
     const artifactPath = join(attemptRoot, "artifacts", "learning-source.md");
     const manifestPath = join(attemptRoot, "artifacts", "learning-source.json");
     const record = await normalizeDocument({ attemptRoot, input: classified.value, output: artifactPath, manifest: manifestPath }, dependencies.document || {});

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -114,4 +114,20 @@ test("package exposes only the canonical dirf CLI", () => {
   const pkg = JSON.parse(readFileSync(resolve("package.json"), "utf8"));
   assert.equal(pkg.bin.dirf, "./src/cli.js");
   assert.equal(pkg.bin.derv, undefined);
+});
+
+test("dirf learn accepts piped stdin as the learning source", () => {
+  const root = mkdtempSync(join(tmpdir(), "dirf-cli-piped-"));
+  const home = mkdtempSync(join(tmpdir(), "dirf-cli-piped-home-"));
+  execFileSync("git", ["init", "-q"], { cwd: root, timeout: TIMEOUT });
+  run(["setup", root], root, home);
+  const piped = spawnSync(process.execPath, [CLI, "learn", "--path", root, "--json"], {
+    cwd: root, encoding: "utf8", timeout: TIMEOUT,
+    env: { ...process.env, DIRF_HOME: home },
+    input: "Piped learning source: keep adapters bounded and verify every integration.\n",
+  });
+  assert.equal(piped.status, 0, piped.stderr);
+  const result = JSON.parse(piped.stdout);
+  assert.equal(result.source.kind, "paste");
+  assert.equal(result.repository_modified, false);
 });

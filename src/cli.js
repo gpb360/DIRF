@@ -343,20 +343,48 @@ function cmdCreate(args) {
   }
 }
 
-function learningInput(args) {
+function readPipedInput(timeoutMs = 15_000) {
+  // A non-TTY stdin that never closes (agent harnesses, CI) must not hang the
+  // command forever; fail with a clear usage error once the timeout elapses.
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error("timed out reading piped stdin; pass a URL, FILE, or TEXT argument instead"));
+    }, timeoutMs);
+    process.stdin.on("data", (chunk) => { if (!settled) chunks.push(chunk); });
+    process.stdin.on("end", () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(Buffer.concat(chunks).toString("utf8"));
+    });
+    process.stdin.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+}
+
+async function learningInput(args) {
   if (args._.length) return args._.join(" ");
   if (args.file) return "";
   if (process.stdin.isTTY) {
     console.error("Paste the learning source, then send EOF (Ctrl+D on macOS/Linux; Ctrl+Z then Enter on Windows):");
+    return readFileSync(0, "utf8");
   }
-  return readFileSync(0, "utf8");
+  return readPipedInput();
 }
 
 async function cmdLearn(args) {
   const { ingestLearningSource, learningArtifactRelativePath, writeLearningRequest } = await import("./learn.js");
   const target = projectRoot(args.path);
   const config = loadProjectConfig(target);
-  const input = learningInput(args);
+  const input = await learningInput(args);
   const name = args.name || "learn-source";
   const task = "Read artifacts/learning-request.md and the provenance-bound artifacts/learning-source.md, compare the source with the current repository, record an evidence-backed recommendation, and only after explicit acceptance implement at most one bounded reversible experiment";
   const plan = buildPlan(name, task, target, config.context.reserve_percent, config.compaction, true, {
