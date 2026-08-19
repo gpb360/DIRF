@@ -1,0 +1,8 @@
+score: 9/10
+
+Approved learn experiment (project playbook directory in the router loader).
+Explicit opt-in only, no auto-discovery; collisions fail closed naming both
+sources; provenance (playbook_source + path) recorded on routed results and
+generated workflows; malformed/missing inputs fail before routing; host repo
+byte-identical after the command (tested). Bundled-only behavior unchanged.
+Full suite green (346 tests).
