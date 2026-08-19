@@ -10,7 +10,7 @@
     "review": "node pr-review-cli.js --local",
     "review:pr": "node pr-review-cli.js --pr-url",
     "review:list": "node pr-review-cli.js --list",
-    "test": "node test-review.js",
+    "test": "node --test fixed-point-gate.test.js",
     "setup": "bash setup.sh"
   },
   "keywords": [
