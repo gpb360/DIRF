@@ -1,0 +1,6 @@
+score: 9/10
+
+Round-1 findings fixed: stdin hang and static skill-folder import. Piped
+stdin resolves on EOF or fails after 15s; TTY paste flow unchanged; file
+intake lazy-imports the normalizer so paste/web/YouTube work without the
+skill folder. New piped-stdin CLI test. Full suite green (360 tests).
