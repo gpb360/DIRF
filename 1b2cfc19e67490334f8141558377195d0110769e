@@ -1,0 +1,18 @@
+score: 8/10
+
+Reviewed in session (agent review of PR 32, commit 1b2cfc1).
+
+Strengths: SSRF-aware intake (HTTPS-only, public-host + private-IP checks,
+per-redirect re-validation, manual redirects with limit, timeout, and
+byte-size caps); SHA-256 provenance for raw and normalized bytes with
+fail-closed accepted_sha256 invariant in state.js; governance via accepted
+recommendation + decision gate; YouTube public captions with JSON3/XML/yt-dlp
+fallback and language preference; redactedUrl strips credential-ish query
+params from stored provenance; repository_modified: false enforced.
+
+Non-blocking: learningInput blocks on stdin read when no arg is given
+(hangs in non-TTY sessions); static import of skills/document-artifact-ingestion
+normalize-document.mjs couples learn.js to that folder (present in repo and
+npm pack, but absent installs break every learn command); decodeHtml covers
+only five named entities; DNS lookup + fetch is a theoretical TOCTOU window
+(acceptable for read-only local research intake).
