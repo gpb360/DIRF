@@ -111,6 +111,10 @@ test("record keeps acceptance explicit and rejects duplicate, escaping, and miss
     () => recordAttemptArtifact(slug, attempt.id, plan(attempt, "preaccepted", { accepted_at: ACCEPTED.toISOString() }), CREATED),
     /accept.*separately/i,
   );
+  assert.throws(
+    () => recordAttemptArtifact(slug, attempt.id, plan(attempt, "prebound", { accepted_sha256: "a".repeat(64) }), CREATED),
+    /accept.*separately/i,
+  );
 
   recordAttemptArtifact(slug, attempt.id, plan(attempt), CREATED);
   assert.throws(() => recordAttemptArtifact(slug, attempt.id, plan(attempt), CREATED), /id must be unique/);
@@ -155,11 +159,37 @@ test("acceptAttemptArtifact timestamps an existing artifact and is idempotent", 
   recordAttemptArtifact(slug, attempt.id, plan(attempt), CREATED);
   const accepted = acceptAttemptArtifact(slug, attempt.id, "plan-1", ACCEPTED);
   assert.equal(accepted.artifacts[0].accepted_at, ACCEPTED.toISOString());
+  assert.equal(accepted.artifacts[0].accepted_sha256, "c3964bb3b70a957ec9b233c7dd3653f6ba17701ab00facf88ae1393dc6155577");
   assert.equal(resolveGoverningArtifact(accepted.artifacts, "plan").id, "plan-1");
 
   const repeated = acceptAttemptArtifact(slug, attempt.id, "plan-1", new Date("2026-08-12T19:00:00.000Z"));
   assert.equal(repeated.artifacts[0].accepted_at, ACCEPTED.toISOString());
+  assert.equal(repeated.artifacts[0].accepted_sha256, accepted.artifacts[0].accepted_sha256);
   assert.throws(() => acceptAttemptArtifact(slug, attempt.id, "missing", ACCEPTED), /No artifact/);
+});
+
+test("governing content fails closed after accepted bytes change", () => {
+  const { slug, attempt } = fixture();
+  recordAttemptArtifact(slug, attempt.id, plan(attempt), CREATED);
+  acceptAttemptArtifact(slug, attempt.id, "plan-1", ACCEPTED);
+  writeFileSync(join(attempt.folder, "artifacts", "plan-1.md"), "# Mutated\n");
+
+  assert.throws(
+    () => governingAttemptArtifact(getAttempt(slug, attempt.id), "plan"),
+    /Artifact content changed after acceptance: artifacts\/plan-1\.md/,
+  );
+});
+
+test("legacy accepted artifacts without a digest remain governing", () => {
+  const { slug, attempt } = fixture();
+  recordAttemptArtifact(slug, attempt.id, plan(attempt), CREATED);
+  acceptAttemptArtifact(slug, attempt.id, "plan-1", ACCEPTED);
+  const metadataPath = join(attempt.folder, "attempt.json");
+  const stored = JSON.parse(readFileSync(metadataPath, "utf8"));
+  delete stored.artifacts[0].accepted_sha256;
+  writeFileSync(metadataPath, JSON.stringify(stored, null, 2));
+
+  assert.equal(governingAttemptArtifact(getAttempt(slug, attempt.id), "plan").id, "plan-1");
 });
 
 test("governing artifact content errors are reported instead of becoming null", () => {

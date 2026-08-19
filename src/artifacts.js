@@ -1,4 +1,5 @@
 export const ARTIFACT_TYPES = Object.freeze([
+  "source",
   "research_questions",
   "research",
   "lesson",
@@ -11,6 +12,7 @@ export const ARTIFACT_TYPES = Object.freeze([
 
 const ARTIFACT_TYPE_SET = new Set(ARTIFACT_TYPES);
 const ARTIFACT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const SHA_256_RE = /^[a-f0-9]{64}$/;
 const ISO_8601_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|[+-](\d{2}):(\d{2}))$/;
 const PLAN_DELTA_BUCKETS = Object.freeze(["implemented_as_planned", "additions", "omissions", "unverifiable"]);
 
@@ -100,8 +102,11 @@ export function validateArtifactGraph(input) {
     if (!isAttemptRelativePath(item.path)) errors.push(`${at}.path must be attempt-relative and use forward slashes`);
     const validCreatedAt = isIso8601(item.created_at);
     const validAcceptedAt = item.accepted_at === undefined || isIso8601(item.accepted_at);
+    const validAcceptedSha256 = item.accepted_sha256 === undefined || (typeof item.accepted_sha256 === "string" && SHA_256_RE.test(item.accepted_sha256));
     if (!validCreatedAt) errors.push(`${at}.created_at must be an ISO-8601 timestamp`);
     if (!validAcceptedAt) errors.push(`${at}.accepted_at must be an ISO-8601 timestamp`);
+    if (!validAcceptedSha256) errors.push(`${at}.accepted_sha256 must be a lowercase SHA-256 digest`);
+    if (item.accepted_sha256 !== undefined && item.accepted_at === undefined) errors.push(`${at}.accepted_sha256 requires accepted_at`);
     if (validCreatedAt && item.accepted_at !== undefined && validAcceptedAt && Date.parse(item.accepted_at) < Date.parse(item.created_at)) {
       errors.push(`${at}.accepted_at must not be earlier than created_at`);
     }

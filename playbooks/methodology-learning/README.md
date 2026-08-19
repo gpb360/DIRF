@@ -1,0 +1,24 @@
+---
+name: methodology-learning
+kind: playbook
+order: 5
+description: "Study an external source and turn source-grounded lessons into the smallest justified improvement."
+uses: []
+details: ["LEARNING-LOOP.md"]
+inputs: ["task"]
+outputs: ["workflow"]
+capabilities: []
+config: {"description":"Study an external source and turn source-grounded lessons into the smallest justified improvement.","keywords":["youtube video","youtube transcript","video transcript","learn from","learning","methodology","study this video","review this video","consume this video","improve from source"],"agents":["research-analyst","knowledge-synthesizer","dx-optimizer","test-engineer"],"workflow":{"phases":["freeze the source and learning question","consume once for the whole argument","replay only load-bearing passages","reconstruct the methodology faithfully","compare with the live target","challenge assumptions and answer open questions","choose the smallest justified adaptation","implement one approved experiment or record no change","verify the result and retain the learning"],"gates":{"choose the smallest justified adaptation":{"kind":"decision","artifact_type":"research"}},"output":"one passage-grounded learning note with an adopt, adapt, experiment, reject, or defer disposition for each material idea; if approved, one reversible experiment with verification evidence","validation":"every material claim is labeled as source claim, observation, inference, or recommendation; every source claim cites a timestamp or stable passage; comparisons use current target code or docs; any implementation names one hypothesis and one verification check","recovery":"if the source is unavailable, request the missing input; if the method remains ambiguous, preserve the questions and stop before comparison; if no idea clears the value, fit, and simplicity threshold, record a justified no-change result"},"questions":["What authorized source should be studied?","What should be learned or decided from it, and may one approved experiment be implemented or should this run stop at recommendations?"],"skill_flow":{"label":"external source -> understood lesson -> smallest justified experiment","steps":[{"stage":"source","reason":"Freeze source provenance, quality, and the learning question before interpreting it.","capability":"primary source research","output":"a source record and one learning question"},{"stage":"understand","reason":"Consume the whole argument, then replay only passages that carry material claims.","capability":"research synthesis","output":"a faithful method map with passage references and uncertainty separated from interpretation"},{"stage":"compare","reason":"Map the strongest version of the method against the live target.","capability":"code review","output":"a current-state comparison marking each idea as already present, different, missing, conflicting, or unverified"},{"stage":"decide","reason":"Prefer the smallest idea whose value, fit, evidence, and reversibility justify its complexity.","capability":"minimalism","output":"a disposition for every material idea and one experiment or a no-change conclusion"},{"stage":"learn","reason":"Verify the approved experiment and retain what the result taught.","capability":"testing","output":"verification evidence, the retained lesson, and rollback or follow-up decision"}]}}
+---
+
+# methodology-learning
+
+Turn an explicitly supplied source into a source-grounded learning cycle.
+
+Read [LEARNING-LOOP.md](LEARNING-LOOP.md) before executing. Keep source claims,
+observations, inferences, and recommendations separate. The source is evidence,
+not authority.
+
+Understanding and comparison may proceed autonomously. Implementation begins
+only after the recommendation artifact and decision gate are explicitly
+accepted. A justified no-change result is successful learning.

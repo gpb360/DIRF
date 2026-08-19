@@ -67,6 +67,22 @@ To see the routed skill flow without building:
 dirf flow "<task>"
 ```
 
+**Optional: project playbooks.** `dirf build|plan|create ... --playbooks <dir>`
+lets one explicitly supplied directory of playbooks participate in routing,
+alongside DIRF's bundled set. Trust model:
+
+- The directory is used **only when you pass the flag** — DIRF never scans a
+  repository for playbooks.
+- Each playbook must follow the same `playbooks/<name>/README.md` contract and
+  passes the same validation as bundled playbooks; a malformed playbook fails
+  the command before anything routes.
+- A same-name playbook colliding with a bundled one is an error naming both
+  sources — there is no silent override.
+- Loading parses inert metadata and Markdown only: it never executes scripts,
+  prompts, commands, installers, or source code from project playbooks.
+- The generated workflow records `playbook_source` (`bundled`|`project`) and
+  `playbook_source_path`, so every routed result is provenance-carrying.
+
 ### 3. Execute
 
 Work the attempt's phases in order. Don't advance a phase until its done-when
@@ -103,9 +119,11 @@ dirf artifact accept <id> <artifact-id>
 
 Metadata requires a stable `id`, a supported `type`, and an attempt-relative
 `path`; `supersedes` may name earlier artifacts in the same attempt. Supported
-types are `research_questions`, `research`, `lesson`, `design`, `structure`,
-`plan`, `implementation_evidence`, and `plan_delta`. Recording never implies
-acceptance. When a decision gate declares `artifact_type`, both its accepted
+types are `source`, `research_questions`, `research`, `lesson`, `design`,
+`structure`, `plan`, `implementation_evidence`, and `plan_delta`. Recording
+never implies acceptance. New acceptances bind the exact artifact bytes with
+`accepted_sha256`; historical accepted artifacts without a digest remain valid.
+When a decision gate declares `artifact_type`, both its accepted
 decision record and the governing accepted artifact are required to advance.
 For `plan_delta`, the referenced JSON must name the governing accepted plan and
 contain all four evidence buckets: `implemented_as_planned`, `additions`,
@@ -151,6 +169,7 @@ Reference existing specs/tickets/decisions rather than restating them.
 | `dirf state list-attempts` | prior runs for this project |
 | `dirf state get-attempt <id>` | one attempt's detail |
 | `dirf build <name> "<task>"` | route a task → instruction set in the store |
+| `dirf learn [URL\|FILE\|TEXT]` | ingest one authorized source, prepare an approvable recommendation, then allow at most one accepted reversible experiment |
 | `dirf resume <name-or-id>` | load one attempt's workflow + handoff (lists pending gates) |
 | `dirf attempt advance <id> [--evidence "CMD"] [--output F] [--strict] [--auto]` | advance one phase (gates enforced); `--auto` crosses covered phases and stops at gates |
 | `dirf attempt gate <id> <phase> accept\|deny [--comment "…"]` | record a user-owned decision on a decision-gated phase (deny requires a comment) |

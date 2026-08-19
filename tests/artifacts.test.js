@@ -38,6 +38,7 @@ function delta(overrides = {}) {
 
 test("artifact vocabulary is stable and artifact-free attempts remain valid", () => {
   assert.deepEqual(ARTIFACT_TYPES, [
+    "source",
     "research_questions",
     "research",
     "lesson",
@@ -131,6 +132,20 @@ test("timestamps must be real instants with non-reversing acceptance chronology"
   assert.ok(backwards.errors.some((error) => /accepted_at must not be earlier/.test(error)));
 
   assert.equal(validateArtifactGraph([artifact("leap", { created_at: "2028-02-29T10:00:00+05:30" })]).valid, true);
+});
+
+test("accepted content digests are optional for legacy records and strict when present", () => {
+  const timestamp = "2026-08-12T18:35:00.000Z";
+  assert.equal(validateArtifactGraph([accepted("legacy", timestamp)]).valid, true);
+  assert.equal(validateArtifactGraph([accepted("bound", timestamp, { accepted_sha256: "a".repeat(64) })]).valid, true);
+
+  const invalid = validateArtifactGraph([
+    artifact("orphan", { accepted_sha256: "a".repeat(64) }),
+    accepted("malformed", timestamp, { accepted_sha256: "A".repeat(64) }),
+  ]);
+  assert.equal(invalid.valid, false);
+  assert.ok(invalid.errors.some((error) => /accepted_sha256 requires accepted_at/.test(error)));
+  assert.ok(invalid.errors.some((error) => /accepted_sha256 must be a lowercase SHA-256 digest/.test(error)));
 });
 
 test("graph validation rejects non-arrays, malformed records, and cycles", () => {

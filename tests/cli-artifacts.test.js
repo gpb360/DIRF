@@ -43,11 +43,42 @@ test("artifact record, list, and accept round-trip through JSON", () => {
 
   const accepted = JSON.parse(run(["artifact", "accept", attempt.id, "plan-v1", "--path", root, "--json"], env, root));
   assert.match(accepted.artifacts[0].accepted_at, /^\d{4}-\d{2}-\d{2}T/);
+  assert.match(accepted.artifacts[0].accepted_sha256, /^[a-f0-9]{64}$/);
   assert.equal(accepted.governing.plan.id, "plan-v1");
 
   const text = run(["artifact", "list", attempt.id, "--path", root], env, root);
   assert.match(text, /plan-v1\s+plan\s+accepted/);
   assert.match(text, /governing: plan-v1/);
+});
+
+test("artifact state is shared across linked worktrees", () => {
+  const { root, env, attempt, metadataPath } = fixture();
+  writeFileSync(join(root, "README.md"), "# Fixture\n");
+  execFileSync("git", ["add", "README.md"], { cwd: root, timeout: TIMEOUT });
+  execFileSync("git", ["commit", "-q", "-m", "fixture"], {
+    cwd: root,
+    timeout: TIMEOUT,
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "DIRF Test",
+      GIT_AUTHOR_EMAIL: "dirf@example.test",
+      GIT_COMMITTER_NAME: "DIRF Test",
+      GIT_COMMITTER_EMAIL: "dirf@example.test",
+    },
+  });
+  const worktree = join(tmpdir(), `dirf-cli-artifacts-wt-${Date.now()}`);
+  execFileSync("git", ["worktree", "add", "-q", "-b", `artifact-wt-${Date.now()}`, worktree], {
+    cwd: root,
+    timeout: TIMEOUT,
+  });
+
+  run(["artifact", "record", attempt.id, "--file", metadataPath, "--path", root, "--json"], env, root);
+  const listed = JSON.parse(run(["artifact", "list", attempt.id, "--path", worktree, "--json"], env, worktree));
+  assert.equal(listed.artifacts[0].id, "plan-v1");
+
+  run(["artifact", "accept", attempt.id, "plan-v1", "--path", worktree, "--json"], env, worktree);
+  const fromMain = JSON.parse(run(["artifact", "list", attempt.id, "--path", root, "--json"], env, root));
+  assert.equal(fromMain.governing.plan.id, "plan-v1");
 });
 
 test("artifact list reports deleted governing content", () => {
