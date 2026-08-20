@@ -48,7 +48,7 @@ const EXPLICIT_SECURITY_AUDIT = /\bsecurity audit\b/;
 const EXPLICIT_UI_REVIEW = /\b(ui\s*(?:\/|\s)\s*ux|visual acceptance|visual regression|frontend design|design(?: |-)?system review)\b/;
 
 // Software-change intent beyond the few build verbs above — the vocabulary of
-// code structure. The Storytellers bug ("gate modules on content… shared
+// code structure. A prior regression ("gate modules on content… shared
 // predicate for the desktop rail") carries none of the IMPLEMENTATION_INTENT
 // verbs, so intent alone couldn't save it. These terms signal that the task is
 // about code, which (a) qualifies a stack-affinity boost and (b) is the trigger
@@ -254,7 +254,7 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
     //     playbooks when the detected app is a software app and the task is
     //     software work. This is the "DIRF knows what the application is"
     //     signal: it awards software playbooks the bonus even when the task
-    //     text produced ZERO keyword/context overlap (the Storytellers case —
+    //     text produced ZERO keyword/context overlap (the prior regression —
     //     "gate modules… predicate" hits no fullstack-feature keyword), so the
     //     bonus must be a floor, not an additive nudge on a positive score.
     //     Bounded at STACK_AFFINITY_BONUS (2, below KEYWORD_WEIGHT 3) so a

@@ -1,6 +1,7 @@
-# Agent Spec Kit
+# DIRF
 
-The kit turns a task into a lean instruction set grounded in the host repository's installed skills.
+DIRF turns a project task into a lean, resumable instruction set grounded in
+the project and the capabilities available to the current host.
 
 ## Language
 

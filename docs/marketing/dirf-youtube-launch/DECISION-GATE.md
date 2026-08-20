@@ -26,8 +26,8 @@ authorize voice credits, rendering, upload, scheduling, or publication.
      ```
 4. **Project proof — anonymize by default.**
    - Show Project A–D and describe the project type.
-   - Do not show Storytellers, FlowStack/GuvFlow, Challenge Builder, Lowlands,
-     client data, private repository names, local user paths, or secrets until
+   - Do not show Project A–D by real name, client data, private repository
+     names, local user paths, or secrets until
      each name is separately approved for publication.
 5. **Voice — Gary first; Kai is the fallback.**
    - Record the test below in Gary's voice before spending voice credits.

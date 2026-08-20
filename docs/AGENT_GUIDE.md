@@ -2,7 +2,7 @@
 
 This is the guide for an AI agent using **DIRF** (Do It Right First) as a tool
 against a host project — any repo DIRF has been set up for. If you're
-contributing to the amf-dirf repo itself, read
+contributing to the DIRF repo itself, read
 [`../AGENTS.md`](../AGENTS.md) instead.
 
 ## The one rule that matters most
@@ -20,15 +20,15 @@ repeat it.
 
 ## Setup (one-time, per machine)
 
-`dirf` is a shell function/alias pointing at `node <path-to-amf-dirf>/src/cli.js`.
+`dirf` is a shell function/alias pointing at `node <path-to-DIRF>/src/cli.js`.
 If `dirf state which` works, you're set up. If not, the host hasn't installed
 the alias — fall back to the full path:
 
 ```bash
-node /path/to/amf-dirf/src/cli.js state which
+node /path/to/DIRF/src/cli.js state which
 ```
 
-(Adjust the path to wherever amf-dirf lives on this machine.)
+(Adjust the path to wherever the DIRF clone lives on this machine.)
 
 ## Session lifecycle
 

@@ -63,7 +63,7 @@ test("detectStack detects Electron via an electron/ directory (hoisted deps)", (
 });
 
 test("detectStackProfile derives appKind web for a React/Vite repo", () => {
-  // Mirrors the Storytellers stack: React 19 + react-router + Zustand +
+  // Representative modern web stack: React 19 + react-router + Zustand +
   // TanStack Query + Tailwind + Vite + Supabase, NO electron.
   const root = mkdtempSync(join(tmpdir(), "dirf-inspect-"));
   try {

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// amf-dirf MCP server — optional stdio JSON-RPC surface over src/state.js.
+// DIRF MCP server — optional stdio JSON-RPC surface over src/state.js.
 // Pure Node built-ins (no SDK). Speaks MCP initialize / notifications.initialized
 // / tools/list / tools/call. Every tool is a thin call into state.js.
 
@@ -13,7 +13,7 @@ import { resolve } from "node:path";
 
 const PROTOCOL_VERSION = "2024-11-05";
 const PACKAGE_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
-const SERVER_INFO = { name: "amf-dirf", version: PACKAGE_VERSION };
+const SERVER_INFO = { name: "dirf", version: PACKAGE_VERSION };
 
 const TOOLS = [
   { name: "dirf_resolve_project", description: "Resolve which DIRF project a path belongs to (default: server cwd).", inputSchema: { type: "object", properties: { path: { type: "string" } } } },

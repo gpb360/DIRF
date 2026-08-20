@@ -1,7 +1,7 @@
 # RPI bundle assessment for DIRF
 
 Date: 2026-08-12  
-Source reviewed: `C:\Users\garyp\Downloads\RPI\rpi-bundle`  
+Source reviewed: `C:\path\to\rpi-bundle`  
 DIRF baseline: `main` at `886a762` after a fast-forward pull
 
 ## Executive assessment
@@ -39,7 +39,7 @@ The bundle's documented two-copy installation is simple, but it is not safe enou
 | Concern | RPI behavior | DIRF implication |
 |---|---|---|
 | Host binding | Claude Code slash commands, `Task` agents, and Claude-specific install roots | Import behavior through capability discovery; do not hardcode a host |
-| Author binding | Many skills reference `/Users/joshboyd/.claude/skills/...` | Paths must resolve relative to the selected skill folder |
+| Author binding | Many skills reference `~/.claude/skills/...` | Paths must resolve relative to the selected skill folder |
 | State | Repo-local `.humanlayer/tasks/<slug>/` artifacts, often expected to be uncommitted or symlinked | Keep DIRF canonical state; expose artifact links inside an attempt |
 | Workspaces | Shared `.humanlayer/workspace.json` plus local overrides and multi-repo entries | Adapt the schema behind a DIRF workspace interface |
 | Mutation | Setup can create branches/worktrees, copy secrets, run arbitrary setup commands, commit, push, and create/update PRs | Route every effect through DIRF governance and explicit authority |

@@ -19,7 +19,7 @@ if [ $# -lt 1 ]; then
     echo ""
     echo "Examples:"
     echo "  $0 https://github.com/user/repo/pull/123"
-    echo "  $0 https://github.com/gpb360/storytellers/pull/1171 --local"
+    echo "  $0 https://github.com/gpb360/sample-project/pull/1171 --local"
     exit 1
 fi
 

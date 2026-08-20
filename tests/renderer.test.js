@@ -105,7 +105,8 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.ok(readme.includes("## Next step"));
   assert.ok(readme.includes("current host"));
   assert.ok(!/codex|claude/i.test(readme));
-  assert.ok(!readme.includes("C:\\Users"));
+  const userProfileRoot = ["C:", "Users"].join("\\");
+  assert.ok(!readme.includes(userProfileRoot));
   assert.ok(readme.includes("Definition of Done"));
   assert.ok(readme.includes("agents/frontend-developer.md"));
   assert.match(readme, /Keep 5% of the model context available for handoff/);

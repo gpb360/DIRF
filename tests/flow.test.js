@@ -251,7 +251,7 @@ test("kit ships zero skills: bundled units are fallback-only and labeled", () =>
   assert.deepEqual(fallback.gaps, []);
   // Local install covers it -> the host skill wins, bundled never consulted.
   const local = buildFlow(selection, { bundledIndex }, {
-    ponytail: { path: "/home/skills/ponytail", description: "minimalism ladder", capabilities: ["minimalism"], provider: "claude" },
+    ponytail: { path: "/fixtures/skills/ponytail", description: "minimalism ladder", capabilities: ["minimalism"], provider: "claude" },
   });
   assert.equal(local.steps[0].skill, "ponytail");
   assert.equal(local.steps[0].status, "installed");
@@ -418,7 +418,7 @@ test("schema v5 requires portable attempt metadata and lifecycle guidance", () =
     name: "demo", task: "build", playbook: "fullstack-feature", playbook_description: "Build",
     agents: [], baseline_skills: [], questions: [], capability_gaps: [], policy: "policies/workflow-policy.md",
     skill_flow: { label: "build", steps: [] },
-    attempt: { id: "demo", path: "C:\\tmp\\demo" },
+    attempt: { id: "demo", path: "Z:\\fixtures\\demo" },
     lifecycle: {},
   }, "demo");
 

@@ -493,7 +493,7 @@ no SDK:
 
 ```jsonc
 // in your MCP client config
-{ "command": "node", "args": ["<path-to-amf-dirf>/src/mcp.js"] }
+{ "command": "node", "args": ["<path-to-DIRF>/src/mcp.js"] }
 ```
 
 Tools: `dirf_resolve_project`, `dirf_list_projects`, `dirf_read_handoff`,

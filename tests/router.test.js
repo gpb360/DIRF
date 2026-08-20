@@ -171,7 +171,7 @@ test("work-in-progress facts augment routing", () => {
 test("work-in-progress facts cannot override explicit PR-review intent", () => {
   const r = recommend(
     "Review pull request 23 and determine merge next steps",
-    ["changed: flowstack-build-prompt.md", "changed: AGENTS.md", "changed: cleanup-notes.md"],
+    ["changed: product-build-prompt.md", "changed: AGENTS.md", "changed: cleanup-notes.md"],
   );
   assert.equal(r.playbook, "pr-review");
 });

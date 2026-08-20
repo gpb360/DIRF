@@ -1,10 +1,9 @@
 # Writing great playbooks and agents
 
-The vocabulary that survives contact with agents — distilled from the Agent
-Skills ecosystem (mattpocock/skills, agentskills.io spec, Anthropic guidance;
-see `docs/research/matt-pocock-skills-dirf-review-2026-08-07.md`) and applied
-to DIRF's own authoring surface: playbook `config` frontmatter, `agents/*.md`
-definitions, and the workflow policy.
+The vocabulary that survives contact with agents — informed by the Agent Skills
+ecosystem (mattpocock/skills, the agentskills.io specification, and Anthropic's
+guidance) and applied to DIRF's own authoring surface: playbook `config`
+frontmatter, `agents/*.md` definitions, and the workflow policy.
 
 A skill/playbook exists to wrangle determinism out of a stochastic system.
 **Predictability** — the agent taking the same *process* every run, not

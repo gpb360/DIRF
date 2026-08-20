@@ -22,7 +22,7 @@
     "security-scan",
     "code-quality"
   ],
-  "author": "Gary Boyd <garypboyd@rogers.com>",
+  "author": "DIRF contributors",
   "license": "MIT",
   "engines": {
     "node": ">=14.0.0"

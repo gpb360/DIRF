@@ -1,10 +1,10 @@
-# AGENTS.md — amf-dirf
+# AGENTS.md — DIRF
 
-Agent Spec Kit. **AMF** = Agent Marketing Factory · **DIRF** = Do It Right First.
+DIRF (Do It Right First) is a zero-runtime-dependency Node.js project-settlement kit.
 
 > **Using DIRF against a project** — read
 > [`docs/AGENT_GUIDE.md`](docs/AGENT_GUIDE.md) instead. This file is for agents
-> **contributing to the amf-dirf repo itself.**
+> **contributing to the DIRF repo itself.**
 
 ## What this is
 
@@ -22,7 +22,7 @@ same store entry. State cannot drift between checkouts.
 1. **Agnostic skill mapping.** Never hardcode skills. Scan the host repo's skill
    folders, index what's installed, resolve references. Referenced-but-absent =
    flagged "recommended, not installed" — never fatal.
-2. **Ponytail-lean output.** Smallest correct artifact first. A small
+2. **Lean output.** Smallest correct artifact first. A small
    always-loaded router + lazy-loaded detail one level deep. Unread files cost
    zero tokens. No monoliths, no prose padding.
 
@@ -32,7 +32,7 @@ same store entry. State cannot drift between checkouts.
 node src/cli.js build demo "build a landing page"
 node src/cli.js skills scan     # see installed skills + resolved refs
 node src/cli.js validate        # validate registries + workflows
-node --test                    # run the suite (123 tests)
+node --test                    # run the suite
 ```
 
 ## Where things live
@@ -70,9 +70,8 @@ node --test                    # run the suite (123 tests)
   checkable completion criteria, progressive disclosure):
   `docs/writing-great-playbooks.md`.
 
-## Specs + plans
+## Current architecture
 
-Design and implementation history for the canonical-state work:
-
-- `docs/superpowers/specs/2026-07-25-dirf-canonical-state-design.md`
-- `docs/superpowers/plans/2026-07-25-dirf-canonical-state.md`
+- `docs/design/central-state.md`
+- `docs/adr/0001-external-dirf-flow-board.md`
+- `docs/writing-great-playbooks.md`

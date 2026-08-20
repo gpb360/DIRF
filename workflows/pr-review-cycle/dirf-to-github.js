@@ -20,7 +20,7 @@ class DIRFToGitHub {
     try {
       const handoff = execSync(
         `node src/cli.js state read-handoff --slug "${this.projectName}"`,
-        { encoding: 'utf-8', cwd: '/path/to/amf-dirf' }
+        { encoding: 'utf-8', cwd: '/path/to/dirf' }
       );
       return handoff;
     } catch (error) {
@@ -32,7 +32,7 @@ class DIRFToGitHub {
     try {
       const attempt = execSync(
         `node src/cli.js state get-attempt "${this.attemptName}" --slug "${this.projectName}"`,
-        { encoding: 'utf-8', cwd: '/path/to/amf-dirf' }
+        { encoding: 'utf-8', cwd: '/path/to/dirf' }
       );
       return JSON.parse(attempt);
     } catch (error) {
@@ -203,7 +203,7 @@ async function main() {
 
   if (!prUrl || !project || !attempt) {
     console.error('Usage: node dirf-to-github.js --pr-url=<url> --project=<slug> --attempt=<name>');
-    console.error('Example: node dirf-to-github.js --pr-url="https://github.com/gpb360/storytellers/pull/1171" --project=storytellers --attempt=pr-review-1171');
+    console.error('Example: node dirf-to-github.js --pr-url="https://github.com/gpb360/sample-project/pull/1171" --project=sample-project --attempt=pr-review-1171');
     process.exit(1);
   }
 

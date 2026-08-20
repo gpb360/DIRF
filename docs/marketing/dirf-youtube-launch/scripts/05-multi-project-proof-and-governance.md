@@ -24,8 +24,8 @@ thumbnail supplies the research-day scale snapshot.
 Replace the project names below with approved public names or anonymized labels
 before recording:
 
-- Storytellers → Project A
-- FlowStack/GuvFlow → Project B
+- A previously named client engagement → Project A
+- A second client engagement → Project B
 - Challenge Builder → Project C
 - Lowlands → Project D
 

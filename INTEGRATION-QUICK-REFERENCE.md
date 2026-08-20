@@ -110,7 +110,7 @@ dirf record-progress "Tests pass" --next "Approve"
 
 **Command not found?**
 ```bash
-alias dirf='C:\path\to\amf-dirf\src\cli.js'
+alias dirf='C:\path\to\dirf\src\cli.js'
 ```
 
 **Handoff not updating?**
@@ -121,12 +121,12 @@ dirf validate  # Check setup integrity
 
 **Need to update DIRF?**
 ```bash
-cd C:\path\to\amf-dirf
+cd C:\path\to\dirf
 git pull
 ```
 
 ---
 
-**DIRF Location:** `C:\path\to\amf-dirf`
+**DIRF Location:** `C:\path\to\dirf`
 **Integration Status:** ✅ Ready for multi-repo use
 **Version:** fix/stack-aware-routing (with progressive handoff)
