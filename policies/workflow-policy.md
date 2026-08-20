@@ -28,6 +28,22 @@ Use this policy in every generated workflow prompt.
 - Do not promote project process, planning, governance, approval, attestation, provenance, or release language into product scope unless the user explicitly requested it or it is the minimum control required for safety.
 - When repository guidance conflicts with the requested outcome, preserve the necessary constraint, name the conflict, and continue the unblocked task instead of building new workflow machinery.
 
+
+## Model Referential Integrity
+- Before implementing or reviewing model-registry work, identify the authoritative requirement source, the exact registry model and intended capability, and the approved provider abstraction or contract.
+- Required preflight: when a model- or provider-specific skill or contract exists, read and cite it before implementation, review, testing, or a merge-readiness claim.
+- Reconcile the exact registry identifier, capability or type (for example, chat versus TTS), approved provider route, request payload, expected response or callback shape, pricing, and lifecycle status (active or retired).
+- Never infer those facts from name similarity, legacy code, an old issue, or a fallback map. If authoritative sources conflict, stop and report the conflict instead of changing code or calling a PR ready.
+- Act and validate only against that chain. Proof is valid only when it exercises the referenced contract.
+- A different model, direct-provider path, request payload, response expectation, or inferred requirement is out of scope unless the authoritative source is explicitly amended.
+- If the chain is missing or inconsistent, stop for clarification; do not substitute a model or expand the architecture.
+
+## PR Merge Readiness
+- Do not infer readiness from GitHub's mechanical mergeable or ready status, a green build, or a prior review.
+- After every final push, refresh the exact PR head; collect all review comments, unresolved threads, and checks; reconcile every P0, P1, and P2 finding; fix and verify each applicable finding; then rerun the relevant checks.
+- Re-fetch that exact head's reviews, unresolved threads, checks, mergeability, and diff. Report "ready to merge" only when no unresolved review findings remain and all required gates pass.
+- Identify every waived or dismissed finding and obtain explicit user approval. Otherwise report "not ready" and state the exact remaining action.
+
 ## Communication
 - Write user-facing updates in simple, ordinary English. Keep internal workflow
   terms such as exact-head, fixed-point, remediation, gate, convergence, and
