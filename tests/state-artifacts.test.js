@@ -73,12 +73,12 @@ test("recordAttemptArtifact adds portable metadata through attempt.json", () => 
 test("record persists only the portable artifact metadata contract", () => {
   const { slug, attempt } = fixture();
   const updated = recordAttemptArtifact(slug, attempt.id, plan(attempt, "plan-portable", {
-    host_path: "C:\\Users\\garyp\\private-plan.md",
+    host_path: "/fixtures/private-plan.md",
     provider_id: "runtime-provider-123",
   }), CREATED);
   assert.deepEqual(Object.keys(updated.artifacts[0]).sort(), ["created_at", "id", "path", "supersedes", "type"]);
   const persisted = readFileSync(join(attempt.folder, "attempt.json"), "utf8");
-  assert.doesNotMatch(persisted, /host_path|provider_id|C:\\\\Users/);
+  assert.doesNotMatch(persisted, /host_path|provider_id|\/fixtures\/private-plan\.md/);
 });
 
 test("canonical attempt loads fail closed with deterministic artifact graph errors", () => {

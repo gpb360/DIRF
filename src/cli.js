@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// amf-dirf — Agent Spec Kit (Do It Right First). Unified CLI. Node built-ins only.
+// DIRF — Do It Right First. Unified CLI. Node built-ins only.
 //
 //   dirf setup [path] [--reserve-percent N]              configure a target repository
 //   dirf build  <name> "<task>" [--path DIR] [--open] [--no-focused-output] [--playbooks DIR]
@@ -1204,7 +1204,7 @@ function parse(argv) {
   return { cmd, args: out };
 }
 
-const HELP = `amf-dirf — Agent Spec Kit (Do It Right First)
+const HELP = `DIRF — Do It Right First
 
 Usage:
   dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]

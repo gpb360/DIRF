@@ -525,7 +525,7 @@ function readAttemptHandoffFile(slug, attemptId) {
 }
 
 // Completion evidence an attempt HANDOFF.md can carry. Two deliberately
-// conservative signals: the storytellers-style explicit status line, or a
+// conservative signals: an explicit handoff status line, or a
 // filled-in "## Completed" section (the workflow template writes that section
 // with "(none yet)" as a placeholder, so an empty section is NOT evidence).
 export function handoffHasCompletionEvidence(markdown) {
@@ -643,7 +643,7 @@ export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now
   return writeAttempt(slug, { ...attempt, updated_at: timestamp });
 }
 
-// Guarded auto-advance (HumanLayer F4: covered transitions auto-start the next
+// Guarded auto-advance: covered transitions auto-start the next
 // session; the user-owned handoffs always wait). Advances through non-gated
 // phases and stops AT any unsatisfied gate, reporting it. Never crosses a
 // gate — the loop runs the same single-fire enforcement as `advance`.
@@ -1279,7 +1279,7 @@ export function setProjectStatus(slug, status) {
 }
 
 // The completion signal a project handoff can carry when it was closed by hand
-// (storytellers-style) rather than through the attempt lifecycle.
+// through handoff evidence rather than through the attempt lifecycle.
 const HANDOFF_COMPLETE_RE = /^##\s*Status:\s*Complete\.?\s*$/m;
 
 // Classification ladder (first match wins):

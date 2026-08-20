@@ -114,7 +114,7 @@ test("repository mandates bind the exact owner, repository, and ref", () => {
 
 test("action digests bind the trusted adapter identity", () => {
   const first = writeRequest();
-  first.source = { adapter: "flowstack", version: "1" };
+  first.source = { adapter: "sample-host", version: "1" };
   const second = structuredClone(first);
   second.source.version = "2";
   assert.notEqual(digestAction(first), digestAction(second));

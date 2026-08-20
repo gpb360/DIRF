@@ -88,7 +88,7 @@ test("trusted sources come from host configuration", () => {
 });
 
 test("provider hint follows the nearest skill namespace, not an enclosing worktree", () => {
-  assert.equal(skills.providerForPath("C:/Users/example/.codex/worktrees/123/repo/.agents/skills/review"), "agents");
+  assert.equal(skills.providerForPath("X:/fixtures/.codex/worktrees/123/repo/.agents/skills/review"), "agents");
 });
 
 test("discover never indexes the kit's own bundled skills", () => {

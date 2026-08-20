@@ -76,7 +76,7 @@ export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
       for (const field of ["stage", "reason"]) {
         if (!step[field]) errors.push(`playbook ${name}: step ${index + 1} missing ${field}`);
       }
-      // Optional per-step output contract (humanlayer F4: a step's output is
+      // Optional per-step output contract (a step's output is
       // checkable, not just invoked). When present it must be a non-empty
       // string so the rendered checkpoint is meaningful.
       if (step.output !== undefined && (typeof step.output !== "string" || !step.output.trim())) {

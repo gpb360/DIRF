@@ -95,6 +95,7 @@ test('"save the handoff --file F" matches "state write-handoff --file F"', () =>
 test('"what can i do" prints the help', () => {
   const home = freshHome();
   const out = run(["what", "can", "i", "do"], { DIRF_HOME: home });
+  assert.match(out, /^DIRF — Do It Right First/m);
   assert.match(out, /Usage:/);
   assert.match(out, /start work on/i);
 });

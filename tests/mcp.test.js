@@ -55,7 +55,7 @@ test("initialize handshake returns server info + protocol version", async () => 
     send(child, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test", version: "1" } } });
     const res = await once(child);
     assert.equal(res.id, 1);
-    assert.ok(res.result.serverInfo.name);
+    assert.equal(res.result.serverInfo.name, "dirf");
     assert.equal(res.result.serverInfo.version, packageJson.version);
     send(child, { jsonrpc: "2.0", method: "notifications/initialized" });
   } finally { child.kill(); }

@@ -222,7 +222,7 @@ test("pre-commit rule 2 (machine-specific paths) still fires alongside the gate"
   // Assembled at runtime: writing the marker as a literal would make this
   // file trip the very rule it is testing.
   const marker = ["s7s", "projects"].join("-");
-  writeFileSync(join(root, "notes.md"), `see E:/${marker}/amf-dirf/src\n`);
+  writeFileSync(join(root, "notes.md"), `see E:/${marker}/dirf/src\n`);
   git(root, "add", "notes.md");
   const { code, out } = tryGit(root, "commit", "-m", "add notes");
   assert.notEqual(code, 0);

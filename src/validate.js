@@ -7,6 +7,7 @@ import { loadPlaybookFolders, resolveGraph } from "./folders.js";
 import { bundledSkills, lintSkillMetadata } from "./skills.js";
 import { ISSUE_POLICY_SCHEMA_VERSION } from "./issue-governance.js";
 import { ARTIFACT_TYPES } from "./artifacts.js";
+import { validatePublicationBoundary } from "./publication-boundary.js";
 
 const FM_RE = /^([A-Za-z0-9_-]+):\s*(.*)$/;
 
@@ -249,6 +250,7 @@ export function main() {
   }
 
   if (!existsSync(POLICY)) errors.push("policies/workflow-policy.md missing");
+  errors.push(...validatePublicationBoundary(ROOT));
 
   if (errors.length) {
     console.log("Validation failed:");
