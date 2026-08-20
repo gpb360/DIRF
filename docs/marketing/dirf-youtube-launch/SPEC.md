@@ -20,7 +20,7 @@ and makes completion evidence explicit.
 
 - Five 16:9 videos at 8–12 minutes each
 - 1440p or 4K screen capture, delivered at 1080p or higher
-- Founder voice preferred; approved existing narrator is the fallback
+- Approved narration; all recordings remain local and ignored by Git
 - Chapters on every episode
 - Captions generated from the final voice track and manually corrected for
   DIRF, Codex, Claude, Cursor, BMAD, GSD, MCP, AGENTS.md, and command names
@@ -161,7 +161,7 @@ right side should feel calm and inspectable.
 
 ## Audio system
 
-- Founder narration at a natural 135–155 words per minute
+- Narration at a natural 135–155 words per minute
 - Minimal music, if any, under terminal explanations
 - Short, consistent sound marks for route selection, verified evidence, and a
   context switch

@@ -2,7 +2,7 @@
 
 ## Recommended production route
 
-Record the founder voice first, then let the real narration define timing.
+Record narration locally first, then let the approved track define timing.
 Capture live terminal evidence in a clean recording worktree at one exact DIRF
 commit. Build only the explanatory motion sections in HyperFrames or the chosen
 motion tool. Assemble voice, terminal, diagram, motion, captions, and music in
@@ -36,15 +36,9 @@ recording worktree after Gate A/B approval. Do not mix release and main output.
 
 ## Phase 1 — voice test
 
-Record the first 60 seconds of episode one three ways if available:
-
-- Gary reading naturally
-- Kai using the approved voice path
-- one other existing approved narrator only if it adds a real option
-
-Compare intelligibility, warmth, pace, editability, and trust. Prefer Gary
-unless a production constraint makes the founder track unusable. Do not spend
-credits until the script and voice choice are approved.
+Record the first 60 seconds of episode one locally. Check intelligibility,
+warmth, pace, editability, and trust. Keep all audio outside Git; commit only
+the text script and timing notes.
 
 ## Phase 2 — narration
 

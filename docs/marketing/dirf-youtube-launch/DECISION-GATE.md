@@ -29,9 +29,9 @@ authorize voice credits, rendering, upload, scheduling, or publication.
    - Do not show Project A–D by real name, client data, private repository
      names, local user paths, or secrets until
      each name is separately approved for publication.
-5. **Voice — Gary first; Kai is the fallback.**
-   - Record the test below in Gary's voice before spending voice credits.
-   - Compare Kai only after the final script wording is approved.
+5. **Narration — local-only.**
+   - Record the test locally and commit only the text script and timing notes.
+   - Audio files remain private and ignored by Git.
 6. **Recording baseline — exact current `main`, labeled honestly.**
    - Candidate SHA: `886a7627f471bf03f7b1db454fbdaf16c4e38cbc`.
    - Package metadata still says `0.26.1`; describe this as “current DIRF main,”
@@ -43,7 +43,7 @@ authorize voice credits, rendering, upload, scheduling, or publication.
      run the complete validation gate, and replace the candidate with the
      verified recording SHA in every episode manifest.
 
-## 60-second founder voice test
+## 60-second narration test
 
 > Most AI agent work does not fail because the model cannot write code. It
 > fails between the moments of work. The task changes, the next session loses
@@ -64,4 +64,3 @@ authorize voice credits, rendering, upload, scheduling, or publication.
 - Local checkout: four commits behind, with unrelated untracked files present
 - Latest public release: v0.26.1, published 2026-08-08
 - PR #28 merged into current main: tracker-neutral, local-first issue governance
-

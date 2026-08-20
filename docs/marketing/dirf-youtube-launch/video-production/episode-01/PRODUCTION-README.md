@@ -2,12 +2,12 @@
 
 ## What is ready
 
-- HyperFrames 3:21.12 narrated landscape cut: `index.html`
+- HyperFrames provisional 3:21.12 visual landscape cut: `index.html`
 - HyperFrames five-variant 9:16 template: `shorts/index.html`
 - Short data set and future batch-render manifest: `shorts/rows.json`
 - Remotion 8:00 master plus five registered Short compositions: `remotion/src/`
 - Two custom ChatGPT-generated atmospheric plates with recorded provenance
-- Registered, loudness-normalized long-form narration and Short recording copy
+- Narration and Short recording copy ready for local recording
 
 ## HyperFrames review
 
@@ -23,9 +23,9 @@ cd docs/marketing/dirf-youtube-launch/video-production/episode-01/shorts
 npm run dev
 ```
 
-The previous silent compositions passed `hyperframes check --snapshots`. The
-narrated master must pass that gate again after audio synchronization. MP4
-rendering is deliberately held until the narrated preview is approved.
+The silent compositions passed `hyperframes check --snapshots`. The final
+master must pass that gate again after approved local narration is recorded
+and synchronized. MP4 rendering is held until that preview is approved.
 
 ## Remotion review
 
@@ -40,13 +40,9 @@ composition enumeration.
 
 ## Voice integration
 
-The supplied voice track is integrated into HyperFrames at 48 kHz stereo and
-3:21.12. The production copy is normalized to -16 LUFS integrated and -1.5 dBTP.
-See `AUDIO.md` for provenance, treatment, and the waveform-aligned cut map.
-
-The Remotion mirror remains at its original 8:00 timing and is intentionally
-unchanged because this pass targets the HyperFrames screens. Short voiceovers
-remain ready to record from `VOICEOVER.md`.
+No narration asset is committed. Record the test from `VOICEOVER.md` locally,
+approve it at Gate C, then synchronize both HyperFrames and the Remotion mirror.
+`AUDIO.md` records the local-only boundary.
 
 ## Current boundary
 

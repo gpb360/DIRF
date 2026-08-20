@@ -1,3 +1,2 @@
 {"id":"image_001","type":"image","path":"assets/generated/context-archaeology-landscape.png","source":"existing","description":"context archaeology landscape","provenance":{"provider":"local","adopted":true}}
 {"id":"image_002","type":"image","path":"assets/generated/context-archaeology-portrait.png","source":"existing","description":"context archaeology portrait","provenance":{"provider":"local","adopted":true}}
-{"id":"voice_001","type":"voice","path":".media/audio/voice/voice_001.mp3","source":"ingested","description":"dirf-episode-01-voice.mp3","provenance":{"provider":"local","from":"assets/audio/dirf-episode-01-voice.mp3"}}

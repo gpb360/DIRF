@@ -18,6 +18,8 @@ Awaiting one grouped approval before recording-baseline validation.
 - Dependency-ordered tickets and reusable DIRF diagram source/preview
 - Polished 1920 × 1080 Operational Precision master plus a 48-element editable
   Excalidraw technical companion
+- Removed the private narration asset and its waveform cache from Git; Episode
+  1 is a silent visual preview pending approved local narration
 
 ## Decisions required
 
@@ -25,7 +27,7 @@ Awaiting one grouped approval before recording-baseline validation.
 - Confirm DIRF pronunciation for narration
 - Approve public repository/install command for recording day
 - Approve named or anonymized real-project examples
-- Select founder voice or approved existing voice after a 60-second test
+- Approve the local-only narration approach after a 60-second test
 - Approve exact current `main` as an unreleased recording baseline, or remove
   the governed-action segment and use released v0.26.1
 
@@ -46,6 +48,8 @@ All task-owned files are under `docs/marketing/dirf-youtube-launch/`.
 ## Blockers
 
 - Production gates above are user-owned.
+- Episode 1 final timing remains provisional until local narration is approved
+  and synchronized.
 - The dirty local checkout remains at
   `86347bb49706a87e798231d7826418e29b3ab292`; `origin/main` advanced four
   commits to `886a7627f471bf03f7b1db454fbdaf16c4e38cbc`.

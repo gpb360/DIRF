@@ -21,7 +21,7 @@ finish line.
 
 ## Contents
 
-- `DECISION-GATE.md` — grouped recommended approvals and founder voice test
+- `DECISION-GATE.md` — grouped recommended approvals and narration test
 - `CONTEXT.md` — audience, constraints, success criteria, and settled decisions
 - `RESEARCH.md` — market, competitor, audience, and YouTube evidence
 - `ADR-001-positioning.md` — the positioning decision and rejected alternatives

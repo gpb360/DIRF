@@ -37,11 +37,11 @@ to T02 evidence.
 
 **Depends on:** T03
 
-**Produces:** founder/Kai comparison, selected voice, pace, music decision, and
+**Produces:** approved local narration test, pace, music decision, and
 sound-mark palette.
 
-**Done when:** Gate C is accepted before any paid or credit-consuming voice
-generation.
+**Done when:** Gate C accepts the narration approach; all audio remains outside
+Git and any paid generation remains a separate decision.
 
 ## T05 — Finalize reusable visual package
 
@@ -128,4 +128,3 @@ next batch of topics.
 
 **Done when:** recommendations use the channel's own appeal, engagement,
 satisfaction, search, and conversion evidence rather than generic benchmarks.
-

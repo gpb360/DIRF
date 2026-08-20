@@ -23,9 +23,8 @@ next action.
 | 07 — First command | CTA · 3:08.99–3:21.12 | One command types in, then resolves to “task → verified handoff.” | Ends with the smallest useful next action. |
 
 Style: Operational Precision — midnight control room, cobalt active route,
-green earned proof, amber human decisions. Runtime: 3:21.12. The supplied
-narration is wired into HyperFrames; scene cuts land inside measured breaths
-nearest the authored Episode 1 chapter proportions.
+green earned proof, amber human decisions. Runtime: provisional 3:21.12 visual
+cut. Final scene timing follows the approved local narration.
 
 ## Frame 1
 

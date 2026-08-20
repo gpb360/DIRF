@@ -1,10 +1,8 @@
 # Episode 1 voiceover recording sheet
 
-The supplied 3:21.12 long-form voiceover is wired into the HyperFrames master.
-Its normalized, registered production copy is
-`.media/audio/voice/voice_001.mp3`; the audio treatment and cut map are recorded
-in `AUDIO.md`. The Remotion mirror still uses its original 8:00 visual timing
-and has not been retimed in this pass.
+No long-form voiceover is committed or wired into the masters. Record the
+60-second test locally; after Gate C approval, record the full script and commit
+only the final cue map in `AUDIO.md`.
 
 For any pickup, use a calm operator voice: confident, specific, and slightly
 skeptical of big claims. Leave a short breath after each hook and before each

@@ -10,7 +10,7 @@ language: en
 audience: technical founders, developers, and multi-agent operators
 message: Agent work fails between sessions when the agreement, evidence, and exact next action disappear; DIRF preserves all three.
 angle: context-loss walkthrough
-narration: yes, supplied founder track wired
+narration: pending local recording
 ---
 
 # Episode 1 production brief
@@ -22,11 +22,11 @@ evidence.
 
 ## Deliverables
 
-- One 3:21.12, 1920 × 1080 narrated Episode 1 cut.
+- One provisional 3:21.12, 1920 × 1080 visual Episode 1 cut.
 - Five 20–35 second, 1080 × 1920 Shorts derived from Episode 1.
 - HyperFrames-native editable compositions.
 - Remotion mirror compositions using the same campaign data and image assets.
-- Narrated HyperFrames review preview with waveform-aligned scene cuts.
+- HyperFrames visual review preview; final timing follows approved narration.
 
 ## Source material
 
@@ -35,7 +35,6 @@ evidence.
 - `../../visuals/dirf-operational-precision-master.png`
 - `assets/generated/context-archaeology-landscape.png`
 - `assets/generated/context-archaeology-portrait.png`
-- `.media/audio/voice/voice_001.mp3`
 
 ## Production boundary
 

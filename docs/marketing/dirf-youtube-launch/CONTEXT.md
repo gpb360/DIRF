@@ -9,7 +9,7 @@ long-form episode into a string of disconnected hooks.
 
 ## User-visible success criteria
 
-The package is ready when Gary can open any script, record the narration in one
+The package is ready when the narrator can open any script, record it in one
 session, follow the matching capture instructions, and hand the assets to an
 editor without another strategy meeting.
 
@@ -55,10 +55,8 @@ claims, fake urgency, and vague claims such as “revolutionary” or “seamles
 ## Settled production decisions
 
 - Five 16:9 episodes, each targeting 8–12 minutes.
-- Gary's recorded voice is the preferred launch voice because founder-led proof
-  is stronger than an anonymous synthetic narrator.
-- Kai or an existing approved voice system is a fallback after script approval;
-  voice generation remains a separate, cost-aware action.
+- Narration recordings are private, local-only production inputs. Git contains
+  text scripts and timing notes, never the audio files.
 - Visual language: live terminal capture, restrained motion graphics, and one
   reusable Excalidraw system map. Product truth leads; decoration supports it.
 - Each episode supplies five Shorts candidates, for 25 total before performance
@@ -91,8 +89,7 @@ the exceptions.
   five seconds of episode one.
 - Choose the public repository URL and the one installation command that will
   be current on recording day.
-- Choose founder voice, Kai, or another already-approved narrator after a
-  60-second read test.
+- Approve the narration approach after a local 60-second read test.
 - Decide whether each candidate project (Project A–D) may be named publicly or
   should remain anonymized.
 - Approve exact current `main` as an explicitly unreleased recording baseline,
