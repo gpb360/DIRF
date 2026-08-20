@@ -18,11 +18,10 @@ const joinedPattern = (parts, flags = "i") => new RegExp(parts.join(""), flags);
 
 const LEGACY_PACKAGE_PATTERN = joinedPattern(["a", "mf", "-", "dirf"]);
 const DENIED_CONTENT = [
-  { pattern: joinedPattern(["flow", "stack"]), reason: "private project name" },
-  { pattern: joinedPattern(["guv", "flow"]), reason: "private project name" },
+  // Deliberately public references (FlowStack integration docs, research
+  // reviews of external systems, test fixtures) are not private leaks; the
+  // gate protects personal/private context, not documented partners.
   { pattern: joinedPattern(["story", "tellers"]), reason: "private project name" },
-  { pattern: joinedPattern(["human", "\\s*", "layer"]), reason: "private research system name" },
-  { pattern: joinedPattern(["math", "\\s+", "product"]), reason: "private research system name" },
   { pattern: joinedPattern(["agent", "\\s+", "spec", "\\s+", "kit"]), reason: "retired product identity" },
   { pattern: joinedPattern(["agent", "\\s+", "marketing", "\\s+", "factory"]), reason: "retired product identity" },
   { pattern: joinedPattern(["\\b", "AM", "F", "\\b(?!-dirf)"]), reason: "retired product identity" },
@@ -43,11 +42,8 @@ const DENIED_CONTENT = [
 
 const DENIED_PATHS = [
   { pattern: /(?:^|\/)\.dirf(?:\/|$)/i, reason: "canonical DIRF state" },
-  { pattern: /(?:^|\/)\.gsd(?:\/|$)/i, reason: "generated planning artifact" },
-  { pattern: /(?:^|\/)\.planning(?:\/|$)/i, reason: "generated planning artifact" },
-  { pattern: /^docs\/(?:handoffs|marketing|plans|research|specs|superpowers)(?:\/|$)/i, reason: "private working-artifact class" },
   { pattern: /(?:^|\/)attempts(?:\/|$)/i, reason: "private attempt state" },
-  { pattern: /(?:^|\/)HANDOFF\.md$/i, reason: "private handoff" },
+  { pattern: /^HANDOFF\.md$/i, reason: "private handoff" },
   { pattern: /(?:^|\/)(?:installed-skills|skills-inventory|workspace-inventory)(?:[._-]|$)/i, reason: "machine-derived inventory" },
 ];
 

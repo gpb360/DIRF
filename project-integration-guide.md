@@ -8,7 +8,7 @@ This guide shows how to integrate DIRF into your projects and keep it updated.
 
 ```bash
 # Add to your .bashrc, .zshrc, or run:
-alias dirf='/path/to/amf-dirf/src/cli.js'
+alias dirf='/path/to/dirf/src/cli.js'
 
 # Use in any project:
 cd /path/to/your-project
@@ -21,8 +21,8 @@ dirf build feature "Implement user authentication"
 
 ```bash
 # In your project:
-/path/to/amf-dirf/src/cli.js setup .
-/path/to/amf-dirf/src/cli.js build auth "Add login"
+/path/to/dirf/src/cli.js setup .
+/path/to/dirf/src/cli.js build auth "Add login"
 ```
 
 ### Option 3: MCP Integration
@@ -34,7 +34,7 @@ Add to your project's `.mcp.json` or Claude Code settings:
   "mcpServers": {
     "dirf": {
       "command": "node",
-      "args": ["/path/to/amf-dirf/src/mcp.js"]
+      "args": ["/path/to/dirf/src/mcp.js"]
     }
   }
 }
@@ -168,7 +168,7 @@ dirf resume
 
 ```bash
 # Check for updates
-cd /path/to/amf-dirf
+cd /path/to/dirf
 git pull origin main
 git log --oneline -5  # See what's new
 ```
@@ -178,7 +178,7 @@ git log --oneline -5  # See what's new
 DIRF follows semantic versioning. Check for breaking changes:
 
 ```bash
-cd /path/to/amf-dirf
+cd /path/to/dirf
 git tag  # See versions
 git log v1.0.0..HEAD --oneline  # See changes since last version
 ```
@@ -186,7 +186,7 @@ git log v1.0.0..HEAD --oneline  # See changes since last version
 ### Rollback if Needed
 
 ```bash
-cd /path/to/amf-dirf
+cd /path/to/dirf
 git log --oneline  # Find previous working version
 git checkout <commit-hash>  # Rollback
 ```
@@ -212,7 +212,7 @@ git commit -m "Lock DIRF to v1.2.3"
 
 ```bash
 # Create .dirf-version in your project
-echo "amf-dirf@fix/stack-aware-routing" > .dirf-version
+echo "dirf@fix/stack-aware-routing" > .dirf-version
 git add .dirf-version
 git commit -m "Track DIRF version"
 
@@ -230,7 +230,7 @@ DIRF_VERSION=$(cat .dirf-version)
 type dirf
 
 # If not found, add to shell:
-echo "alias dirf='/path/to/amf-dirf/src/cli.js'" >> ~/.bashrc
+echo "alias dirf='/path/to/dirf/src/cli.js'" >> ~/.bashrc
 source ~/.bashrc
 ```
 
@@ -238,7 +238,7 @@ source ~/.bashrc
 
 ```bash
 # Check MCP server is running
-node /path/to/amf-dirf/src/mcp.js
+node /path/to/dirf/src/mcp.js
 
 # Check .mcp.json configuration
 cat .mcp.json
@@ -289,7 +289,7 @@ Create project-specific wrappers:
 # ~/bin/my-dirf (make executable)
 #!/bin/bash
 DIRF_PROJECT="/path/to/your-project"
-/path/to/amf-dirf/src/cli.js "$@" --path "$DIRF_PROJECT"
+/path/to/dirf/src/cli.js "$@" --path "$DIRF_PROJECT"
 ```
 
 ### Pre-commit Hooks
@@ -321,7 +321,7 @@ jobs:
 
 ## Support and Documentation
 
-- Main README: `amf-dirf/README.md`
+- Main README: `dirf/README.md`
 - CLI Help: `dirf --help`
 - State Commands: `dirf state --help`
 - MCP Tools: See MCP server schema

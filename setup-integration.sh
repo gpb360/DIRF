@@ -46,7 +46,7 @@ ALIAS_LINE="alias $DIRF_ALIAS='$DIRF_SOURCE/src/cli.js'"
 if ! grep -q "alias $DIRF_ALIAS=" "$SHELL_CONFIG" 2>/dev/null; then
   echo "➕ Adding DIRF alias to $SHELL_CONFIG"
   echo "" >> "$SHELL_CONFIG"
-  echo "# DIRF - Agent Spec Kit (Do It Right First)" >> "$SHELL_CONFIG"
+  echo "# DIRF (Do It Right First)" >> "$SHELL_CONFIG"
   echo "$ALIAS_LINE" >> "$SHELL_CONFIG"
   echo "✅ Alias added. Run 'source $SHELL_CONFIG' or restart your shell"
 else

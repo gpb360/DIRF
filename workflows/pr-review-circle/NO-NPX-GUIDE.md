@@ -28,7 +28,7 @@ git review
 ### Method 3: System-Wide Alias
 ```bash
 # Add to your PATH and create alias
-echo 'alias pr-review="node /path/to/amf-dirf/workflows/pr-review-cycle/pr-review-cli.js"' >> ~/.bashrc
+echo 'alias pr-review="node /path/to/dirf/workflows/pr-review-cycle/pr-review-cli.js"' >> ~/.bashrc
 source ~/.bashrc
 
 # Now you can run from anywhere:
@@ -39,7 +39,7 @@ pr-review --local
 ```bash
 # Create pr-review.bat
 @echo off
-node "C:\path\to\amf-dirf\workflows\pr-review-cycle\pr-review-cli.js" %*
+node "C:\path\to\dirf\workflows\pr-review-cycle\pr-review-cli.js" %*
 
 # Use anywhere:
 pr-review --local
@@ -72,7 +72,7 @@ git review
 ```bash
 # Create pr-review.bat in your project
 echo @echo off > pr-review.bat
-echo node "C:\path\to\amf-dirf\workflows\pr-review-cycle\pr-review-cli.js" %%* >> pr-review.bat
+echo node "C:\path\to\dirf\workflows\pr-review-cycle\pr-review-cli.js" %%* >> pr-review.bat
 
 # Use it
 pr-review --local
@@ -177,7 +177,7 @@ fi
 # Add to $PROFILE
 function pr-review {
   param($args)
-  node "C:\path\to\amf-dirf\workflows\pr-review-cycle\pr-review-cli.js" $args
+  node "C:\path\to\dirf\workflows\pr-review-cycle\pr-review-cli.js" $args
 }
 
 # Use
@@ -187,7 +187,7 @@ pr-review --local
 ### CMD Alias
 ```cmd
 # Add to registry or use doskey
-doskey pr-review=node "C:\path\to\amf-dirf\workflows\pr-review-cycle\pr-review-cli.js" $*
+doskey pr-review=node "C:\path\to\dirf\workflows\pr-review-cycle\pr-review-cli.js" $*
 
 # Use
 pr-review --local

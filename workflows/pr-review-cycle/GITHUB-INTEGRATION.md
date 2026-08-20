@@ -26,14 +26,14 @@ export GITHUB_TOKEN=your_token_here
 
 ### Step 2: Run Full Workflow
 ```bash
-cd /path/to/storytellers
+cd /path/to/sample-project
 
 # Step 1: Run review and generate report
 ./pr-review --local
 
 # Step 2: Post findings to GitHub PR
 node pr-review-cycle/github-pr-commenter.js \
-  --pr-url="https://github.com/gpb360/storytellers/pull/1171" \
+  --pr-url="https://github.com/gpb360/sample-project/pull/1171" \
   --report=.pr-review-report.json
 ```
 
@@ -102,8 +102,8 @@ This PR requires attention before merging:
 ## **Complete Workflow Example**
 
 ```bash
-# In Storytellers project
-cd /path/to/storytellers
+# In the sample project
+cd /path/to/sample-project
 
 # Make your changes
 git checkout fix/dashboard-mobile-card-layout
@@ -115,7 +115,7 @@ git commit -am "Improve dashboard layout"
 
 # Post professional findings to GitHub
 node pr-review-cycle/github-pr-commenter.js \
-  --pr-url="https://github.com/gpb360/storytellers/pull/1171" \
+  --pr-url="https://github.com/gpb360/sample-project/pull/1171" \
   --report=.pr-review-report.json
 
 # Result: Professional review comment posted on PR!
@@ -155,7 +155,7 @@ Create `review-and-comment.sh`:
 #!/bin/bash
 # Automated review + GitHub comment workflow
 
-PR_URL="https://github.com/gpb360/storytellers/pull/1171"
+PR_URL="https://github.com/gpb360/sample-project/pull/1171"
 
 echo "🔍 Running PR review..."
 ./pr-review --local

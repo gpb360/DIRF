@@ -93,7 +93,7 @@ the exceptions.
   be current on recording day.
 - Choose founder voice, Kai, or another already-approved narrator after a
   60-second read test.
-- Decide whether Storytellers, FlowStack/GuvFlow, Challenge Builder, and
-  Lowlands may be named publicly or should appear as anonymized Project A–D.
+- Decide whether each candidate project (Project A–D) may be named publicly or
+  should remain anonymized.
 - Approve exact current `main` as an explicitly unreleased recording baseline,
   or remove the governed-action section and record the v0.26.1 release.

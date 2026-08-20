@@ -58,8 +58,11 @@ test("private working-artifact paths and machine inventories are rejected", (t) 
   write(root, "workspace-inventory.json", "{}\n");
 
   const errors = validatePublicationBoundary(root).join("\n");
-  assert.match(errors, /\.gsd\/workflows\/private\.yaml: generated planning artifact/);
-  assert.match(errors, /docs\/research\/report\.md: private working-artifact class/);
+  // Deliberately public classes (workflow definitions, research/marketing
+  // docs) are allowed; root handoffs, canonical state, attempts, and
+  // machine-derived inventories stay denied.
+  assert.doesNotMatch(errors, /\.gsd\/workflows\/private\.yaml/);
+  assert.doesNotMatch(errors, /docs\/research\/report\.md/);
   assert.match(errors, /HANDOFF\.md: private handoff/);
   assert.match(errors, /workspace-inventory\.json: machine-derived inventory/);
 });

@@ -50,14 +50,14 @@ and **CAST** linked-scene rail. Above the cast grid is a
 ## Acceptance gate
 
 - ✅ Mock parity at the 1440px+ breakpoint for items 1, 2, 3, 4
-- ✅ Canonical Storytellers hex tokens only — no raw Tailwind palette
+- ✅ Canonical design-token hex values only — no raw Tailwind palette
 - ✅ Existing tests still pass; new regression tests for the new menu + form
 - ✅ No console errors, no TypeScript errors
 
 ## Handoff
 
 ```bash
-node ../amf-dirf/src/cli.js run ../amf-dirf/workflows/cast-panel-polish
+node ../dirf/src/cli.js run ../dirf/workflows/cast-panel-polish
 ```
 
 (`dirf run` does not accept `--slug`; the path is the only argument.)

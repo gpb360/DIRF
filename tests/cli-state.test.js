@@ -167,26 +167,26 @@ test("dirf resume composes project context and gives the active attempt preceden
 
 test("dirf resume never composes attempts or context from another project", () => {
   const home = freshHome();
-  const storytellers = mkdtempSync(join(tmpdir(), "storytellers-brain-"));
-  const guvflow = mkdtempSync(join(tmpdir(), "guvflow-brain-"));
-  for (const root of [storytellers, guvflow]) {
+  const alphaProject = mkdtempSync(join(tmpdir(), "alpha-project-brain-"));
+  const betaProject = mkdtempSync(join(tmpdir(), "beta-project-brain-"));
+  for (const root of [alphaProject, betaProject]) {
     execFileSync("git", ["init", "-q"], { cwd: root, timeout: TIMEOUT });
     run(["setup", root], { DIRF_HOME: home }, root);
   }
-  writeFileSync(join(storytellers, "docs", "agents", "domain", "CONTEXT.md"), "Storytellers-only-context\n");
-  writeFileSync(join(guvflow, "docs", "agents", "domain", "CONTEXT.md"), "GuvFlow-private-context\n");
+  writeFileSync(join(alphaProject, "docs", "agents", "domain", "CONTEXT.md"), "alpha-only-context\n");
+  writeFileSync(join(betaProject, "docs", "agents", "domain", "CONTEXT.md"), "beta-private-context\n");
   const storyAttempt = JSON.parse(run([
-    "build", "story-lane", "Storytellers-only-task", "--path", storytellers, "--json",
-  ], { DIRF_HOME: home }, storytellers));
-  run(["build", "guv-lane", "GuvFlow-private-task", "--path", guvflow, "--json"], { DIRF_HOME: home }, guvflow);
+    "build", "alpha-lane", "alpha-only-task", "--path", alphaProject, "--json",
+  ], { DIRF_HOME: home }, alphaProject));
+  run(["build", "beta-lane", "beta-private-task", "--path", betaProject, "--json"], { DIRF_HOME: home }, betaProject);
 
   const resumed = JSON.parse(run([
-    "resume", storyAttempt.attempt.id, "--path", storytellers, "--json",
-  ], { DIRF_HOME: home }, storytellers));
+    "resume", storyAttempt.attempt.id, "--path", alphaProject, "--json",
+  ], { DIRF_HOME: home }, alphaProject));
   const brain = JSON.stringify(resumed.project_brain);
-  assert.match(brain, /Storytellers-only-context/);
-  assert.match(brain, /story-lane/);
-  assert.doesNotMatch(brain, /GuvFlow-private/);
+  assert.match(brain, /alpha-only-context/);
+  assert.match(brain, /alpha-lane/);
+  assert.doesNotMatch(brain, /beta-private-context/);
   assert.equal(resumed.project_brain.attempts.length, 1);
 });
 

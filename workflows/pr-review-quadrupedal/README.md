@@ -61,7 +61,7 @@ already chains `rtk` → `minimal-implementation` → `fullstack-feature`
 playbook → this workflow. Run:
 
 ```bash
-node ../amf-dirf/src/cli.js run ../amf-dirf/workflows/pr-review-quadrupedal
+node ../dirf/src/cli.js run ../dirf/workflows/pr-review-quadrupedal
 ```
 
 (`dirf run` does not accept `--slug`; the path is the only argument.
