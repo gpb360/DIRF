@@ -3,44 +3,75 @@
     {
       "name": "grill-with-docs",
       "category": "planning",
-      "applies_to": ["workflow-orchestrator", "knowledge-synthesizer"],
+      "applies_to": [
+        "workflow-orchestrator",
+        "knowledge-synthesizer"
+      ],
       "summary": "Stateful discovery that resolves decisions while maintaining the project glossary and justified ADRs",
-      "capabilities": ["stateful discovery", "plan interview"]
+      "capabilities": [
+        "stateful discovery",
+        "plan interview"
+      ]
     },
     {
       "name": "domain-modeling",
       "category": "planning",
-      "applies_to": ["workflow-orchestrator", "knowledge-synthesizer"],
+      "applies_to": [
+        "workflow-orchestrator",
+        "knowledge-synthesizer"
+      ],
       "summary": "Sharpen domain terminology and record only durable, hard-to-reverse decisions",
-      "capabilities": ["domain modeling"]
+      "capabilities": [
+        "domain modeling"
+      ]
     },
     {
       "name": "research",
       "category": "research",
-      "applies_to": ["research-analyst", "knowledge-synthesizer"],
+      "applies_to": [
+        "research-analyst",
+        "knowledge-synthesizer"
+      ],
       "summary": "Primary-source investigation captured as a cited repository artifact",
-      "capabilities": ["primary source research"]
+      "capabilities": [
+        "primary source research"
+      ]
     },
     {
       "name": "to-spec",
       "category": "planning",
-      "applies_to": ["workflow-orchestrator", "documentation-engineer"],
+      "applies_to": [
+        "workflow-orchestrator",
+        "documentation-engineer"
+      ],
       "summary": "Synthesize approved decisions into a build-ready specification",
-      "capabilities": ["specification synthesis"]
+      "capabilities": [
+        "specification synthesis"
+      ]
     },
     {
       "name": "to-tickets",
       "category": "planning",
-      "applies_to": ["workflow-orchestrator", "agent-organizer"],
+      "applies_to": [
+        "workflow-orchestrator",
+        "agent-organizer"
+      ],
       "summary": "Split an approved specification into tracer-bullet tickets with blocking edges",
-      "capabilities": ["dependency ticketing"]
+      "capabilities": [
+        "dependency ticketing"
+      ]
     },
     {
       "name": "handoff",
       "category": "orchestration",
-      "applies_to": ["workflow-orchestrator", "knowledge-synthesizer"],
+      "applies_to": [
+        "workflow-orchestrator",
+        "knowledge-synthesizer"
+      ],
       "summary": "Compact active work into a redacted continuation document for a fresh session",
-      "capabilities": ["session handoff"]
+      "capabilities": [
+        "session handoff"
+      ]
     },
     {
       "name": "ponytail",
@@ -56,79 +87,140 @@
     {
       "name": "grill-me",
       "category": "planning",
-      "applies_to": ["rapid-prototyper", "workflow-orchestrator"],
+      "applies_to": [
+        "rapid-prototyper",
+        "workflow-orchestrator"
+      ],
       "summary": "Structured questioning that resolves requirements and decisions before implementation",
-      "capabilities": ["plan interview"]
+      "capabilities": [
+        "plan interview"
+      ]
     },
     {
       "name": "grill-with-docs",
       "category": "planning",
-      "applies_to": ["workflow-orchestrator", "knowledge-synthesizer"],
+      "applies_to": [
+        "workflow-orchestrator",
+        "knowledge-synthesizer"
+      ],
       "summary": "Stateful discovery that resolves decisions while maintaining the project glossary and justified ADRs",
-      "capabilities": ["stateful discovery", "plan interview"]
+      "capabilities": [
+        "stateful discovery",
+        "plan interview"
+      ]
     },
     {
       "name": "domain-modeling",
       "category": "planning",
-      "applies_to": ["workflow-orchestrator", "knowledge-synthesizer"],
+      "applies_to": [
+        "workflow-orchestrator",
+        "knowledge-synthesizer"
+      ],
       "summary": "Sharpen domain terminology and record only durable, hard-to-reverse decisions",
-      "capabilities": ["domain modeling"]
+      "capabilities": [
+        "domain modeling"
+      ]
     },
     {
       "name": "research",
       "category": "research",
-      "applies_to": ["research-analyst", "knowledge-synthesizer"],
+      "applies_to": [
+        "research-analyst",
+        "knowledge-synthesizer"
+      ],
       "summary": "Primary-source investigation captured as a cited repository artifact",
-      "capabilities": ["primary source research"]
+      "capabilities": [
+        "primary source research"
+      ]
     },
     {
       "name": "to-spec",
       "category": "planning",
-      "applies_to": ["workflow-orchestrator", "documentation-engineer"],
+      "applies_to": [
+        "workflow-orchestrator",
+        "documentation-engineer"
+      ],
       "summary": "Synthesize approved decisions into a build-ready specification",
-      "capabilities": ["specification synthesis"]
+      "capabilities": [
+        "specification synthesis"
+      ]
     },
     {
       "name": "to-tickets",
       "category": "planning",
-      "applies_to": ["workflow-orchestrator", "agent-organizer"],
+      "applies_to": [
+        "workflow-orchestrator",
+        "agent-organizer"
+      ],
       "summary": "Split an approved specification into tracer-bullet tickets with blocking edges",
-      "capabilities": ["dependency ticketing"]
+      "capabilities": [
+        "dependency ticketing"
+      ]
     },
     {
       "name": "handoff",
       "category": "orchestration",
-      "applies_to": ["workflow-orchestrator", "knowledge-synthesizer"],
+      "applies_to": [
+        "workflow-orchestrator",
+        "knowledge-synthesizer"
+      ],
       "summary": "Compact active work into a redacted continuation document for a fresh session",
-      "capabilities": ["session handoff"]
+      "capabilities": [
+        "session handoff"
+      ]
     },
     {
       "name": "code-review",
       "category": "quality",
-      "applies_to": ["test-engineer", "security-auditor", "workflow-orchestrator"],
+      "applies_to": [
+        "test-engineer",
+        "security-auditor",
+        "workflow-orchestrator"
+      ],
       "summary": "Exact-head review with provable failure scenarios, confidence-scored findings, verification evidence, and a deterministic merge gate",
-      "capabilities": ["code review"]
+      "capabilities": [
+        "code review"
+      ]
     },
     {
       "name": "document-artifact-ingestion",
       "category": "ingestion",
-      "applies_to": ["knowledge-synthesizer", "research-analyst", "workflow-orchestrator"],
+      "applies_to": [
+        "knowledge-synthesizer",
+        "research-analyst",
+        "workflow-orchestrator"
+      ],
       "summary": "Locally normalize explicitly authorized documents into provenance-bound Markdown artifacts without retaining source bytes",
-      "capabilities": ["document normalization", "evidence ingestion", "artifact provenance"]
+      "capabilities": [
+        "document normalization",
+        "evidence ingestion",
+        "artifact provenance"
+      ]
     },
     {
       "name": "agent-organizer",
       "category": "orchestration",
-      "applies_to": ["agent-organizer", "workflow-orchestrator"],
+      "applies_to": [
+        "agent-organizer",
+        "workflow-orchestrator"
+      ],
       "summary": "Agent selection, delegation boundaries, and coordinated execution",
-      "capabilities": ["agent orchestration"]
+      "capabilities": [
+        "agent orchestration"
+      ]
     },
     {
       "name": "api-tester",
       "category": "testing",
-      "applies_to": ["api-tester", "backend-architect", "test-engineer"],
+      "applies_to": [
+        "api-tester",
+        "backend-architect",
+        "test-engineer"
+      ],
       "summary": "API contract, integration, failure-path, and regression testing",
-      "capabilities": ["api testing"]
+      "capabilities": [
+        "api testing"
+      ]
     },
     {
       "name": "impeccable",
@@ -476,6 +568,19 @@
         "electron desktop",
         "electron ipc",
         "electron security"
+      ]
+    },
+    {
+      "name": "filing-cabinet",
+      "category": "maintenance",
+      "applies_to": [
+        "workflow-orchestrator",
+        "dx-optimizer"
+      ],
+      "summary": "Inventory excessive Git worktrees, review branch history, and recommend archive/remove/retain behind a single-use approval contract",
+      "capabilities": [
+        "worktree hygiene",
+        "governed maintenance"
       ]
     }
   ]
