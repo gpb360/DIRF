@@ -9,7 +9,9 @@ import { resolve } from "node:path";
 
 function git(repo, args) {
   try {
-    return execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", windowsHide: true }).trimEnd();
+    return execFileSync("git", ["-C", repo, ...args], {
+      encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"],
+    }).trimEnd();
   } catch {
     return "";
   }
@@ -44,8 +46,11 @@ function defaultBranch(repo) {
   return git(repo, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]) || "main";
 }
 
-function branchState(repo, branch) {
-  const merged = git(repo, ["branch", "--merged", "HEAD", "--list", branch]) === branch;
+function branchState(repo, branch, base) {
+  // `git branch --merged` prefixes entries ("* " current, "+ " checked out
+  // in a linked worktree, "  " plain) — match on the suffix.
+  const listing = git(repo, ["branch", "--merged", base, "--list", branch]);
+  const merged = listing.endsWith(branch);
   let aheadBehind = "";
   const counts = git(repo, ["rev-list", "--left-right", "--count", `${branch}...origin/${branch}`]);
   const match = /^(\d+)\s+(\d+)$/.exec(counts.trim());
@@ -76,10 +81,25 @@ export function inventory(repoRoot) {
   const items = [];
   for (const wt of parseWorktrees(repo)) {
     const branch = wt.branch || wt.head || (wt.detached ? "(detached)" : "(unknown)");
-    const dirty = isDirty(repo, wt.path);
+    const pathExists = existsSync(wt.path);
+    const dirty = pathExists && isDirty(repo, wt.path);
+    if (!pathExists) {
+      items.push({
+        path: wt.path,
+        branch,
+        detached: !!wt.detached,
+        dirty: false,
+        merged: false,
+        aheadBehind: "",
+        lastCommit: null,
+        recommendation: "remove",
+        reason: "worktree path no longer exists (prunable)",
+      });
+      continue;
+    }
     const state = branch === "(detached)" || branch === "(unknown)"
       ? { merged: false, aheadBehind: "", lastCommit: null }
-      : branchState(repo, branch);
+      : branchState(repo, branch, base);
     const rec = recommend({ detached: !!wt.detached, branch, merged: state.merged, dirty, lastCommit: state.lastCommit, aheadBehind: state.aheadBehind });
     items.push({
       path: wt.path,

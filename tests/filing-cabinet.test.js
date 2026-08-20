@@ -67,3 +67,14 @@ test("inventory is read-only", () => {
   const after = git(fx.root, ["worktree", "list", "--porcelain"]);
   assert.equal(after, before);
 });
+
+test("a branch merged into the default branch is detected as merged", () => {
+  const fx = fixture();
+  addWorktree(fx, "merged-wt");
+  git(fx.root, ["merge", "-q", "--no-ff", "-m", "merge feature", "merged-wt"]);
+
+  const result = inventory(fx.root);
+  const merged = result.worktrees.find((wt) => wt.branch === "merged-wt");
+  assert.ok(merged);
+  assert.equal(merged.merged, true);
+});
