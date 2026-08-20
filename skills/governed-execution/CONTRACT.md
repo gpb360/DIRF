@@ -60,6 +60,6 @@ An adapter translates a host action into the request contract and translates the
 Two adapters make this seam real:
 
 - the CLI/file adapter in `dirf govern` for local automation and CI;
-- a persistence-backed host adapter, such as FlowStack's server-side authorization RPC.
+- a persistence-backed host adapter for server-side authorization.
 
 The production adapter owns atomic consumption, credential retrieval, side effects, and durable persistence. Tests use an in-memory ledger and fixed clock.

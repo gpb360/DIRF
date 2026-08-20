@@ -35,6 +35,11 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   integration, setup scripts and guides), integration guides and setup
   script, the DIRF YouTube launch strategy and episode-01 production assets,
   and research/QA notes now ship in the repository for triage.
+- **Publication boundary gate** — deterministic check (`npm run check:publication`,
+  wired into `dirf validate`) keeping private project context, workstation
+  identity, retired branding, canonical state, and planning artifacts out of
+  the publishable tree; public documentation standardized on the DIRF identity
+  while keeping the `amf-dirf` package name as a compatibility surface.
 
 ## [0.26.1] — 2026-08-08
 
@@ -73,8 +78,8 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   Contract, Decision Ownership, Handoff-Before-Switch.
 - **`docs/writing-great-playbooks.md`** — authoring guidance for playbooks
   and agents.
-- **Research reports** in `docs/research/`; the `research` playbook now
-  requires typed-source tracing and decision restatement.
+- **Research-informed routing and handoff improvements**; the `research`
+  playbook now requires typed-source tracing and decision restatement.
 - **Bundled-skill lint in `dirf validate`** — dogfoods the authoring
   guidance on the kit itself.
 
@@ -191,8 +196,7 @@ store entry and state can no longer drift between checkouts.
 ### Known limitations (pre-1.0)
 - **TypeScript conversion is mid-flight** (Stage 0 only). Source is still `.js`;
   types are scaffolded but not yet applied. The `buildPlan` signature (the
-  class of bug that motivated the conversion) is still untyped. See
-  `docs/superpowers/specs/2026-07-27-typescript-conversion-design.md`.
+  class of bug that motivated the conversion) is still untyped.
 - **`dirf flow`/`create` regression test is a contract guard, not a
   reproduction**: the routing divergence only manifests on a genuinely
   fact-heavy repo (real branch + many changes + planning state) and could not
