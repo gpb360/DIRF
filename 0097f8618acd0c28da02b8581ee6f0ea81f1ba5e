@@ -1,0 +1,6 @@
+score: 9/10
+
+Dogfood-driven fix: git branch --merged prefix padding broke merge detection
+(suffix match + default-branch ref); prunable worktrees recommend remove;
+stderr suppressed for expected-missing refs. Regression test added; full
+suite 384/382/0; validate + boundary pass.
