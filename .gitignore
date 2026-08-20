@@ -17,11 +17,6 @@ workflows/user/
 *.html
 /graphify-out/
 
-# Private recording assets (scripts stay text-only in Git)
-/docs/marketing/dirf-youtube-launch/video-production/**/assets/audio/
-/docs/marketing/dirf-youtube-launch/video-production/**/.media/audio/
-/docs/marketing/dirf-youtube-launch/video-production/**/.waveform-cache/
-
 # rtk runtime state (machine-generated command history; never tracked)
 /rtk/
 
