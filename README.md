@@ -39,6 +39,23 @@ checks. A later session or a different agent can continue from the same state.
 - **Better handoffs:** another person, model, or session can see what changed,
   what passed, what is blocked, and what happens next.
 
+## What's new in 0.28.0
+
+This release tightens routing and verification without adding runtime
+dependencies:
+
+- **Scoped capability profiles:** pass `--profile FILE` to limit one command to
+  an explicit skill allowlist while keeping unavailable names visible as gaps.
+- **Stricter verification:** evidence for a gate must match the command declared
+  before work began.
+- **Smoother learning:** a connected agent carries `dirf learn` through
+  read-only analysis in the same turn and stops for the user's decision.
+- **Correct human-only routing:** skill discovery honors both Claude and Codex
+  invocation metadata.
+- **Clearer explanations:** [Unslop](skills/unslop/README.md) removes filler from
+  human-facing prose, while [Wait, what?](skills/wait-what/README.md) restores
+  missing context when an explanation does not land.
+
 ## What DIRF is not
 
 - It is not an AI model and does not replace your coding agent.
