@@ -237,9 +237,9 @@ done-when checklist.
 ```
 # building workflows
 dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
-dirf build  <name> "<task>" [--path DIR] [--open]   full pipeline: route -> JSON -> md + html
-dirf plan   <name> "<task>" [--path DIR] [--research] discovery through handoff, without implementation
-dirf create <name> "<task>" [--path DIR]             route -> workflow JSON only
+dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--open]   full pipeline: route -> JSON -> md + html
+dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--research] discovery through handoff, without implementation
+dirf create <name> "<task>" [--path DIR] [--profile FILE]             route -> workflow JSON only
 dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
 dirf list [--path DIR]                               list a project's attempts
 dirf resume <name-or-id> [--path DIR]                load one attempt's workflow + HANDOFF.md
@@ -271,7 +271,7 @@ dirf export graphify [--out DIR] [--skip-render]     export the portfolio as a g
 # inspection + registries
 dirf skills scan [--path DIR]                        scan host, show installed skills + resolved refs
 dirf inspect [<path>]                                detect a project's optimization stack + suggest gaps
-dirf flow "<task>" [--path DIR]                      show the ordered skill flow for a task
+dirf flow "<task>" [--path DIR] [--profile FILE]     show the ordered skill flow for a task
 dirf validate                                        validate registries + workflows
 dirf validate <folder>                               validate one folder DAG
 dirf graph <folder>                                  show deterministic execution order
@@ -339,6 +339,16 @@ reference:
 
 - **installed** — found in a scanned root (path included)
 - **capability gap** — no installed match; DIRF asks before suggesting or creating anything
+
+Use an explicit JSON profile to limit one routing invocation to named skills:
+
+```json
+{"skills":["tdd","code-review"]}
+```
+
+Pass it with `--profile FILE` to `build`, `plan`, `create`, `flow`, or `learn`.
+Unavailable names remain visible gaps. `dirf skills scan` still shows the full
+installed inventory. Profiles have no automatic project default or layering.
 
 **Scan roots** (all optional): `~/.agents/skills/`, `~/.codex/skills/`,
 `~/.claude/skills/`, `~/.zcode/.../skills/`, plus project-local equivalents.
