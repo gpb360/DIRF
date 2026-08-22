@@ -127,6 +127,8 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.match(policy, /reconcile every P0, P1, and P2 finding/);
   assert.match(policy, /Re-fetch that exact head's reviews, unresolved threads, checks, mergeability, and diff/);
   assert.match(policy, /Identify every waived or dismissed finding and obtain explicit user approval/);  assert.match(readme, /## Issue governance/);
+  assert.match(policy, /Apply one final Unslop pass to every human-facing output/);
+  assert.match(policy, /Do not rewrite code, machine-readable data, commands, logs, citations/);
   assert.match(readme, /Findings stay local by default/);
   assert.deepEqual(resolveGraph(outDir, { allowedRoots: [outDir] }).map((unit) => unit.meta.kind), ["skill", "playbook", "workflow"]);
   const detail = readFileSync(join(outDir, "agents", "frontend-developer.md"), "utf-8");

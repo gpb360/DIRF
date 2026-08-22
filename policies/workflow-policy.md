@@ -61,6 +61,20 @@ Use this policy in every generated workflow prompt.
 - Pull requests created during the workflow carry a description: what
   changed, why, and how it was verified — never a title-only PR.
 
+## Unslop Pass
+- Apply one final Unslop pass to every human-facing output: documentation,
+  plans, reports, reviews, pull-request and issue text, status updates,
+  handoffs, and interface copy.
+- Remove filler, puffery, vague attribution, repeated ideas, generic
+  conclusions, forced lists, synonym cycling, and formulaic framing.
+- Prefer concrete actors, actions, evidence, and ordinary words. Preserve the
+  intended meaning, audience, and tone.
+- Do not invent evidence or polish an unverified claim into certainty. State
+  the uncertainty plainly.
+- Do not rewrite code, machine-readable data, commands, logs, citations,
+  quotations, or verbatim source. Preserve required formats and contracts.
+- Self-audit once before delivery.
+
 ## Side observations
 - Park anything noticed that is NOT the current task (a side bug, a doc staleness, a "fix later") via `dirf notice "<note>"`. Default target: the current attempt.
 - Never put side observations in HANDOFF.md — they are not status, decisions, or blockers.

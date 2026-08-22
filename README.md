@@ -80,10 +80,12 @@ With no source argument, paste text and send EOF (`Ctrl+D` on macOS/Linux;
 `Ctrl+Z`, then Enter, on Windows). DIRF stores normalized content and provenance
 inside the canonical attempt, then prepares an analysis brief for the connected
 agent. It treats embedded code and instructions as untrusted text. Intake,
-comparison, and recommendation do not edit DIRF or the host repository. Resume
-the printed attempt to produce an evidence-backed recommendation. DIRF requires
-the recommendation artifact and decision gate to be explicitly accepted before
-the same attempt may implement at most one named, reversible experiment.
+comparison, and recommendation do not edit DIRF or the host repository. A
+connected agent continues the new attempt immediately through those read-only
+steps and stops at the decision gate. The printed resume command is only for
+recovery in a later session. DIRF requires the recommendation artifact and
+decision gate to be explicitly accepted before the same attempt may implement
+at most one named, reversible experiment.
 
 For YouTube, DIRF first reads public caption tracks directly. If YouTube exposes
 a track but returns an empty caption body, DIRF can use an already-installed

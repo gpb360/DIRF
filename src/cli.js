@@ -473,6 +473,7 @@ async function cmdLearn(args) {
         request: learningArtifactRelativePath(requestPath),
       },
       repository_modified: false,
+      agent_action: "continue_to_decision_gate",
       next: `dirf resume ${attempt.id} --path ${JSON.stringify(target)}`,
     };
     if (args.json) console.log(JSON.stringify(result, null, 2));
@@ -480,7 +481,8 @@ async function cmdLearn(args) {
       console.log(`Learning source saved: ${source.title}`);
       console.log(`Attempt: ${attempt.id}`);
       console.log("Repository changes: none");
-      console.log(`Next: ${result.next}`);
+      console.log("Agent action: continue this attempt now and stop at its decision gate");
+      console.log(`Resume later: ${result.next}`);
     }
   } catch (error) {
     updateAttemptLifecycle(slug, attempt.id, "block", { reason: `Learning intake failed: ${error.message}` });
