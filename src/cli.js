@@ -2,10 +2,10 @@
 // DIRF — Do It Right First. Unified CLI. Node built-ins only.
 //
 //   dirf setup [path] [--reserve-percent N]              configure a target repository
-//   dirf build  <name> "<task>" [--path DIR] [--open] [--no-focused-output] [--playbooks DIR]
-//   dirf plan   <name> "<task>" [--path DIR] [--research] [--playbooks DIR]  lifecycle planning attempt
-//   dirf create <name> "<task>" [--path DIR] [--playbooks DIR]  route -> attempt workflow JSON only
-//   dirf learn [URL|FILE|TEXT] [--path DIR] [--file FILE] create a read-only learning review
+//   dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--open] [--no-focused-output] [--playbooks DIR]
+//   dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--research] [--playbooks DIR]  lifecycle planning attempt
+//   dirf create <name> "<task>" [--path DIR] [--profile FILE] [--playbooks DIR]  route -> attempt workflow JSON only
+//   dirf learn [URL|FILE|TEXT] [--path DIR] [--profile FILE] [--file FILE] create a read-only learning review
 //   dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
 //   dirf list [--path DIR]                               list saved attempts
 //   dirf status [--path DIR]                             show project and repository state
@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { ROOT, REGISTRY, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, fileHash, folderHash, loadJson } from "./paths.js";
 import { collectRoutingFacts, loadPlaybooks, recommend } from "./router.js";
-import { discover, discoverAgents, enrichDiscovered, lintSkillMetadata, loadRegistry, loadTrustedSources, providerForPath, resolveAgentSkills, tokenBudget } from "./skills.js";
+import { bundledSkills, discover, discoverAgents, enrichDiscovered, lintSkillMetadata, loadRegistry, loadTrustedSources, providerForPath, resolveAgentSkills, tokenBudget } from "./skills.js";
 import { FOCUSED_OUTPUT_RULES, buildInstructions, buildHtml } from "./renderer.js";
 import { main as validateMain } from "./validate.js";
 import { inspect, detectStackProfile } from "./inspect.js";
@@ -113,13 +113,16 @@ function castAgents(agents, hostAgents) {
 }
 
 function buildPlan(name, task, path, reservePercent = 5, compaction = null, focusedOutput = true, routing = {}) {
-  const { selection, skillFlow, discovered, hostAgents, facts } = assembleTaskRouting(task, path, routing);
+  const { selection, skillFlow, discovered, hostAgents, facts, capabilityProfile } = assembleTaskRouting(task, path, routing);
   skillFlow.steps = skillFlow.steps.map((step) => ({ ...step, instructions: readSkillInstructions(step.path) }));
   const agents = castAgents(enrichAgents(selection.agents), hostAgents).map((agent) => ({
     ...agent,
     skills: resolveAgentSkills(agent.name, agent.skills, [], discovered).filter((skill) => skill.status === "installed"),
   }));
   const questions = [...(selection.questions || [])];
+  if (capabilityProfile?.missing.length) {
+    questions.push(`Capability profile entries are not available on this host: ${capabilityProfile.missing.join(", ")}. They remain visible gaps and are not selected.`);
+  }
   if (agents.length && !Object.keys(hostAgents).length) {
     questions.unshift("No installed agents were found on this host. Use DIRF's bundled default agents for this workflow, or point DIRF at your own agents folder and re-run?");
   }
@@ -141,6 +144,7 @@ function buildPlan(name, task, path, reservePercent = 5, compaction = null, focu
     routing_facts: facts,
     skill_flow: skillFlow,
     capability_gaps: skillFlow.gaps,
+    ...(capabilityProfile ? { capability_profile: capabilityProfile } : {}),
     agents,
     baseline_skills: [],
     questions,
@@ -159,6 +163,26 @@ function buildPlan(name, task, path, reservePercent = 5, compaction = null, focu
     compaction,
     focused_output: focusedOutput,
   };
+}
+
+function readCapabilityProfile(file) {
+  if (!file) return null;
+  let profile;
+  try {
+    profile = JSON.parse(readFileSync(resolve(file), "utf8"));
+  } catch (error) {
+    throw new Error(`Capability profile must be readable JSON: ${error.message}`);
+  }
+  if (!profile || typeof profile !== "object" || Array.isArray(profile) || !Array.isArray(profile.skills)) {
+    throw new Error('Capability profile must be an object with a "skills" array');
+  }
+  if (profile.skills.some((name) => typeof name !== "string" || !name.trim())) {
+    throw new Error("Capability profile skills must be non-empty strings");
+  }
+  if (profile.skills.some((name) => isAbsolute(name.trim()) || /[\\/]/.test(name))) {
+    throw new Error("Capability profile skills must be names, not paths");
+  }
+  return { skills: [...new Set(profile.skills.map((name) => name.trim()))] };
 }
 
 function readSkillInstructions(path) {
@@ -252,16 +276,31 @@ function assembleTaskRouting(task, path, options = {}) {
       recovery: "if a load-bearing decision remains unresolved, stop in discovery and record the blocker instead of producing speculative tickets",
     };
   }
-  const discovered = enrichDiscovered(discover(targetRoot));
+  const capabilityProfile = readCapabilityProfile(options.profile);
+  const allDiscovered = enrichDiscovered(discover(targetRoot));
+  const allowed = capabilityProfile ? new Set(capabilityProfile.skills) : null;
+  const discovered = allowed
+    ? Object.fromEntries(Object.entries(allDiscovered).filter(([name]) => allowed.has(name)))
+    : allDiscovered;
   const hostAgents = discoverAgents(targetRoot);
   const trustedSources = loadTrustedSources(targetRoot);
-  const skillFlow = buildFlow(selection, { task, trustedSources, branches: options.branches }, discovered);
+  const bundledIndex = capabilityProfile ? bundledSkills() : undefined;
+  const skillFlow = buildFlow(selection, {
+    task,
+    trustedSources,
+    branches: options.branches,
+    ...(capabilityProfile ? { allowedSkills: capabilityProfile.skills, bundledIndex } : {}),
+  }, discovered);
+  const profileSnapshot = capabilityProfile ? {
+    skills: capabilityProfile.skills,
+    missing: capabilityProfile.skills.filter((name) => !allDiscovered[name] && !bundledIndex[name]),
+  } : null;
   if (options.planningOnly) {
     const planningStages = new Set(["discover", "model", "research", "specify", "slice", "handoff"]);
     skillFlow.steps = skillFlow.steps.filter((step) => planningStages.has(step.stage));
     skillFlow.gaps = skillFlow.gaps.filter((gap) => planningStages.has(gap.stage));
   }
-  return { selection, discovered, hostAgents, facts, skillFlow };
+  return { selection, discovered, hostAgents, facts, skillFlow, capabilityProfile: profileSnapshot };
 }
 
 function savePlan(plan, attempt) {
@@ -305,6 +344,7 @@ function cmdBuild(args) {
   const config = loadProjectConfig(target);
   const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction, args.focusedOutput !== false, {
     projectPlaybooks: args.playbooks,
+    profile: args.profile,
   });
   const attempt = createAttempt(target, args.name);
   const planPath = savePlan(plan, attempt);
@@ -314,7 +354,7 @@ function cmdBuild(args) {
 }
 
 function cmdPlan(args) {
-  if (!args.name || !args.task) throw new Error('usage: dirf plan <name> "<task>" [--path DIR] [--research]');
+  if (!args.name || !args.task) throw new Error('usage: dirf plan <name> "<task>" [--path DIR] [--profile FILE] [--research]');
   const target = projectRoot(args.path);
   const config = loadProjectConfig(target);
   const branches = ["multi-session", ...(args.research ? ["research"] : [])];
@@ -323,6 +363,7 @@ function cmdPlan(args) {
     branches,
     planningOnly: true,
     projectPlaybooks: args.playbooks,
+    profile: args.profile,
   });
   const attempt = createAttempt(target, args.name);
   const planPath = savePlan(plan, attempt);
@@ -336,6 +377,7 @@ function cmdCreate(args) {
   const config = loadProjectConfig(target);
   const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction, args.focusedOutput !== false, {
     projectPlaybooks: args.playbooks,
+    profile: args.profile,
   });
   const attempt = createAttempt(target, args.name);
   savePlan(plan, attempt);
@@ -399,6 +441,7 @@ async function cmdLearn(args) {
   const plan = buildPlan(name, task, target, config.context.reserve_percent, config.compaction, true, {
     playbook: "methodology-learning",
     branches: ["research"],
+    profile: args.profile,
   });
   const attempt = createAttempt(target, name);
   savePlan(plan, attempt);
@@ -430,6 +473,7 @@ async function cmdLearn(args) {
         request: learningArtifactRelativePath(requestPath),
       },
       repository_modified: false,
+      agent_action: "continue_to_decision_gate",
       next: `dirf resume ${attempt.id} --path ${JSON.stringify(target)}`,
     };
     if (args.json) console.log(JSON.stringify(result, null, 2));
@@ -437,7 +481,8 @@ async function cmdLearn(args) {
       console.log(`Learning source saved: ${source.title}`);
       console.log(`Attempt: ${attempt.id}`);
       console.log("Repository changes: none");
-      console.log(`Next: ${result.next}`);
+      console.log("Agent action: continue this attempt now and stop at its decision gate");
+      console.log(`Resume later: ${result.next}`);
     }
   } catch (error) {
     updateAttemptLifecycle(slug, attempt.id, "block", { reason: `Learning intake failed: ${error.message}` });
@@ -1167,6 +1212,12 @@ function parse(argv) {
     if (a === "--name") { out.name = rest[++i]; continue; }
     if (a === "--language") { out.language = rest[++i]; continue; }
     if (a === "--playbooks") { out.playbooks = rest[++i]; continue; }
+    if (a === "--profile") {
+      const file = rest[++i];
+      if (!file || file.startsWith("--")) throw new Error("--profile requires FILE");
+      out.profile = file;
+      continue;
+    }
     if (a === "--force") { out.force = true; continue; }
     if (a === "--project") { out.project = true; continue; }
     if (a === "--slug") { out.slug = rest[++i]; continue; }
@@ -1208,10 +1259,10 @@ const HELP = `DIRF — Do It Right First
 
 Usage:
   dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
-  dirf build  <name> "<task>" [--path DIR] [--open] [--no-focused-output] [--playbooks DIR]
-  dirf plan   <name> "<task>" [--path DIR] [--research] [--open] [--no-focused-output] [--playbooks DIR]
-  dirf create <name> "<task>" [--path DIR] [--playbooks DIR]   JSON only
-  dirf learn [URL|FILE|TEXT] [--path DIR] [--file FILE] [--language CODE] [--name NAME] [--json]
+  dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--open] [--no-focused-output] [--playbooks DIR]
+  dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--research] [--open] [--no-focused-output] [--playbooks DIR]
+  dirf create <name> "<task>" [--path DIR] [--profile FILE] [--playbooks DIR]   JSON only
+  dirf learn [URL|FILE|TEXT] [--path DIR] [--profile FILE] [--file FILE] [--language CODE] [--name NAME] [--json]
                                                       ingest a source; implementation requires an accepted recommendation and decision
   dirf render <name-or-id> [--path DIR] [--open]       re-render an attempt
   dirf validate <folder>                              validate a folder DAG
@@ -1240,7 +1291,7 @@ Usage:
   dirf export obsidian [--out DIR]                     export portfolio into an Obsidian vault (notes + canvas)
   dirf export graphify [--out DIR] [--skip-render]    export portfolio as a graphify graph (+ HTML render)
   dirf inspect [<path>]                                detect a project's optimization stack + suggest gaps
-  dirf flow "<task>" [--path DIR]                      show the ordered skill flow for a task (ask-matt style)
+  dirf flow "<task>" [--path DIR] [--profile FILE]     show the ordered skill flow for a task (ask-matt style)
   dirf govern <digest|evaluate|append|verify> [...]    decide actions and maintain a hash-linked evidence ledger
   dirf state which [--path DIR]                       what project am I in? (slug + store path)
   dirf state list                                      list all registered projects
@@ -1273,10 +1324,14 @@ Plain language (natural-English aliases for the same commands):
 
 function cmdFlow(args) {
   const task = args._.join(" ");
-  if (!task) { console.error("usage: dirf flow \"<task>\" [--path DIR]"); process.exit(2); }
-  const { skillFlow: flow } = assembleTaskRouting(task, projectRoot(args.path));
+  if (!task) { console.error("usage: dirf flow \"<task>\" [--path DIR] [--profile FILE]"); process.exit(2); }
+  const { skillFlow: flow, capabilityProfile } = assembleTaskRouting(task, projectRoot(args.path), { profile: args.profile });
   console.log(`Flow: ${flow.label}`);
   console.log(`Playbook: ${flow.playbook}${flow.branches.length ? ` (branches: ${flow.branches.join(", ")})` : ""}\n`);
+  if (capabilityProfile) {
+    console.log(`Profile skills: ${capabilityProfile.skills.join(", ") || "(none)"}`);
+    if (capabilityProfile.missing.length) console.log(`Profile gaps: ${capabilityProfile.missing.join(", ")}`);
+  }
   let lastStage = "";
   for (const s of flow.steps) {
     if (s.stage !== lastStage) { console.log(`\n[${s.stage}]`); lastStage = s.stage; }

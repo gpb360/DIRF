@@ -44,7 +44,7 @@ function attemptFixture() {
       phases: ["define", "design", "build", "verify", "ship"],
       gates: {
         "design": { kind: "decision" },
-        "build": { kind: "verify" },
+        "build": { kind: "verify", verify: "node --test" },
         "verify": { kind: "soft" },
       },
     },
@@ -102,6 +102,10 @@ test("verify gates block advance until evidence is recorded", () => {
   // gate record alone does NOT satisfy a verify gate — evidence does
   updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "build", decision: "accept", comment: "not how verify works" });
   assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "advance"), /verify gate/);
+  assert.throws(
+    () => updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "npm test" } }),
+    /evidence command must match its declared verify command/,
+  );
   current = updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "node --test", output: "tests.log" } });
   assert.equal(current.current_phase, "verify");
   assert.equal(current.evidence.build.command, "node --test");

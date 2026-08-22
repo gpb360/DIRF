@@ -17,6 +17,10 @@ _Avoid_: Runtime fallback, conflict resolution
 The decision that selects a playbook from task intent and assembles that playbook's ordered skill flow. Triage represents an unclassified task; an incomplete playbook definition is invalid.
 _Avoid_: Classification, recommendation
 
+**Capability Profile**:
+An explicit invocation-scoped allowlist of skill names that narrows Task Routing candidates without changing the discovered inventory. Unavailable names remain visible capability gaps.
+_Avoid_: Skill registry, project default, profile layer
+
 **DIRF Flow Board**:
 A project and Attempt view of canonical DIRF coordination state. It does not monitor or manage live agent processes.
 _Avoid_: Agent monitor, issue tracker

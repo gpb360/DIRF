@@ -460,7 +460,13 @@ function gateRequirement(gates, records, evidence, attempt, phase, strict = fals
     }
     return null;
   }
-  if (evidence[phase]) return null;
+  if (evidence[phase]) {
+    const declared = String(gate.verify || "").trim();
+    if (declared && evidence[phase].command !== declared) {
+      return { kind, reason: `Phase "${phase}" evidence command must match its declared verify command: ${JSON.stringify(declared)}` };
+    }
+    return null;
+  }
   if (kind === "soft" && !strict) return null;
   return { kind, reason: `Phase "${phase}" is a ${kind} gate — record its evidence first (dirf attempt advance --evidence "<command>")` };
 }

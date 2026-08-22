@@ -61,6 +61,20 @@ Use this policy in every generated workflow prompt.
 - Pull requests created during the workflow carry a description: what
   changed, why, and how it was verified — never a title-only PR.
 
+## Final Prose Pass
+- When the workflow includes a prose-editing capability, apply it once to
+  human-facing output such as documentation, reports, pull-request text,
+  handoffs, and interface copy.
+- Remove filler, puffery, vague attribution, repeated ideas, generic
+  conclusions, forced lists, synonym cycling, and formulaic framing.
+- Prefer concrete actors, actions, evidence, and ordinary words. Preserve the
+  intended meaning, audience, and tone.
+- Do not invent evidence or polish an unverified claim into certainty. State
+  the uncertainty plainly.
+- Do not rewrite code, machine-readable data, commands, logs, citations,
+  quotations, or verbatim source. Preserve required formats and contracts.
+- Self-audit once before delivery.
+
 ## Side observations
 - Park anything noticed that is NOT the current task (a side bug, a doc staleness, a "fix later") via `dirf notice "<note>"`. Default target: the current attempt.
 - Never put side observations in HANDOFF.md — they are not status, decisions, or blockers.

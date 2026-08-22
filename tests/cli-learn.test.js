@@ -48,6 +48,7 @@ test("dirf learn creates canonical learning artifacts without changing the host 
   const result = JSON.parse(output);
   assert.equal(result.source.kind, "paste");
   assert.equal(result.repository_modified, false);
+  assert.equal(result.agent_action, "continue_to_decision_gate");
   assert.match(result.next, /^dirf resume /);
 
   const after = execFileSync("git", ["status", "--short", "--untracked-files=all"], { cwd: root, encoding: "utf8" });

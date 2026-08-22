@@ -169,7 +169,7 @@ Reference existing specs/tickets/decisions rather than restating them.
 | `dirf state list-attempts` | prior runs for this project |
 | `dirf state get-attempt <id>` | one attempt's detail |
 | `dirf build <name> "<task>"` | route a task → instruction set in the store |
-| `dirf learn [URL\|FILE\|TEXT]` | ingest one authorized source, prepare an approvable recommendation, then allow at most one accepted reversible experiment |
+| `dirf learn [URL\|FILE\|TEXT]` | ingest one authorized source; a connected agent continues through read-only analysis to the decision gate without another user command |
 | `dirf resume <name-or-id>` | load one attempt's workflow + handoff (lists pending gates) |
 | `dirf attempt advance <id> [--evidence "CMD"] [--output F] [--strict] [--auto]` | advance one phase (gates enforced); `--auto` crosses covered phases and stops at gates |
 | `dirf attempt gate <id> <phase> accept\|deny [--comment "…"]` | record a user-owned decision on a decision-gated phase (deny requires a comment) |

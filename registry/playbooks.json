@@ -884,6 +884,11 @@
           "capability": "minimalism"
         },
         {
+          "stage": "prose",
+          "reason": "Remove filler and vague claims while preserving meaning and tone.",
+          "capability": "prose editing"
+        },
+        {
           "stage": "verify",
           "reason": "Review commands, claims, and scope against source.",
           "capability": "code review"

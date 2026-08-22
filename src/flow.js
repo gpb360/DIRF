@@ -173,6 +173,12 @@ function selectCapability(requirement, selection, context, skillIndex) {
   };
 }
 
+function scopedSkillIndex(index, allowedSkills) {
+  if (!Array.isArray(allowedSkills)) return index;
+  const allowed = new Set(allowedSkills);
+  return Object.fromEntries(Object.entries(index || {}).filter(([name]) => allowed.has(name)));
+}
+
 export function buildFlow(selection, context = {}, skillIndex = {}) {
   const flow = selection?.skill_flow;
   if (!flow?.steps) throw new Error(`playbook ${selection?.playbook || "?"}: missing skill_flow`);
@@ -183,14 +189,15 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
     .map(({ branch: _branch, skill: _legacySkill, ...step }) => ({ ...step, capability: step.capability || step.stage }));
   const steps = [];
   const gaps = [];
+  const installed = scopedSkillIndex(skillIndex, context.allowedSkills);
   // The kit ships zero installed skills; its bundled skills/ folder is a
   // fallback consulted ONLY when the local install has nothing for a
   // capability, and the step is labeled so — never passed off as installed.
   let bundled;
   for (const requirement of requirements) {
-    const selected = selectCapability(requirement, selection, context, skillIndex);
+    const selected = selectCapability(requirement, selection, context, installed);
     const fallback = selected ? null : selectCapability(
-      requirement, selection, context, (bundled ??= context.bundledIndex || bundledSkills()));
+      requirement, selection, context, (bundled ??= scopedSkillIndex(context.bundledIndex || bundledSkills(), context.allowedSkills)));
     if (selected) steps.push(selected);
     else if (fallback) steps.push({
       ...fallback,
