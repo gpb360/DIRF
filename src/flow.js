@@ -128,10 +128,9 @@ function selectCapability(requirement, selection, context, skillIndex) {
   // User-invoked skills (`disable-model-invocation`) are human-only: their
   // descriptions are written for a person, not for routing, so scoring them
   // misroutes. They stay indexed and visible in `skills scan`, but are not
-  // candidates for autonomous selection. Fall back to the full set when every
-  // candidate is user-invoked — a host may route only by hand.
+  // candidates for autonomous selection.
   const entries = Object.entries(skillIndex);
-  const pool = entries.some(([, item]) => item.invocation !== "user") ? entries.filter(([, item]) => item.invocation !== "user") : entries;
+  const pool = entries.filter(([, item]) => item.invocation !== "user");
   const ranked = pool.map(([name, item]) => {
     const candidate = words([name, item.description, item.summary, item.category, ...(item.applies_to || []), ...(item.tags || [])].join(" "));
     const declared = Array.isArray(item.capabilities) ? item.capabilities : String(item.capabilities || "").split(",").map((value) => value.trim()).filter(Boolean);
@@ -163,10 +162,6 @@ function selectCapability(requirement, selection, context, skillIndex) {
     status: "installed",
     provider: chosen.item.provider || "project",
     path: chosen.item.path,
-    // Emitted only when meaningful, so plain model-invoked steps keep their
-    // historical shape: a user-invoked pick (fallback routing) is labeled so
-    // consumers know it is human-only; disclosures are lazy-load pointers.
-    ...(chosen.item.invocation === "user" ? { invocation: "user" } : {}),
     ...(chosen.item.disclosures?.length ? { disclosures: chosen.item.disclosures } : {}),
     selection_reason: `best installed match (${chosen.score}) for ${requirement.capability || requirement.stage}`,
     rejected_candidates: ranked.slice(1, 4).map(({ name, score }) => ({ name, score })),

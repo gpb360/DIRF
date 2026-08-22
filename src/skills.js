@@ -152,9 +152,11 @@ function parseBool(value) {
 }
 
 function codexAllowsImplicitInvocation(folder) {
+  const policyFile = join(folder, "agents", "openai.yaml");
+  if (!existsSync(policyFile)) return undefined;
   let text;
   try {
-    text = readFileSync(join(folder, "agents", "openai.yaml"), "utf-8");
+    text = readFileSync(policyFile, "utf-8");
   } catch {
     return undefined;
   }
@@ -172,6 +174,11 @@ function codexAllowsImplicitInvocation(folder) {
     if (match) return parseBool(match[1]);
   }
   return undefined;
+}
+
+function skillInvocation(folder, metadata) {
+  const claudeHumanOnly = parseBool(typeof metadata === "object" ? metadata["disable-model-invocation"] : undefined) === true;
+  return claudeHumanOnly || codexAllowsImplicitInvocation(folder) === false ? "user" : "model";
 }
 
 function collectDisclosures(folder, indexFile) {
@@ -308,9 +315,7 @@ function indexOne(path, index) {
   const file = normalized.split("/").pop();
   // Claude and Codex declare human-only skills differently. Either declaration
   // keeps the skill out of automatic routing; absent flags keep the default.
-  const claudeHumanOnly = parseBool(typeof fm === "object" ? fm["disable-model-invocation"] : undefined) === true;
-  const codexHumanOnly = codexAllowsImplicitInvocation(folder) === false;
-  const invocation = claudeHumanOnly || codexHumanOnly ? "user" : "model";
+  const invocation = skillInvocation(folder, fm);
   // Self-references (a skill's help text mentioning its own /name) are not
   // dependencies — drop them so the reference graph stays meaningful.
   const references = backtickSkillRefs(body).filter((ref) => ref !== name);
@@ -429,6 +434,7 @@ export function bundledSkills() {
         description: unit.meta.description || "",
         capabilities: unit.meta.capabilities || [],
         provider: "dirf",
+        invocation: skillInvocation(unit.folder, unit.meta),
         body_lines: unit.body.split(/\r?\n/).length,
       };
     } catch { /* a malformed bundled unit is validate's problem, not discovery's */ }
