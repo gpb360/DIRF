@@ -1,0 +1,5 @@
+interface:
+  display_name: Wait, what?
+  short_description: Re-explain a point with its missing context.
+policy:
+  allow_implicit_invocation: false

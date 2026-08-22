@@ -61,9 +61,9 @@ Use this policy in every generated workflow prompt.
 - Pull requests created during the workflow carry a description: what
   changed, why, and how it was verified — never a title-only PR.
 
-## Unslop Pass
-- Apply one final Unslop pass to every human-facing output: documentation,
-  plans, reports, reviews, pull-request and issue text, status updates,
+## Final Prose Pass
+- When the workflow includes a prose-editing capability, apply it once to
+  human-facing output such as documentation, reports, pull-request text,
   handoffs, and interface copy.
 - Remove filler, puffery, vague attribution, repeated ideas, generic
   conclusions, forced lists, synonym cycling, and formulaic framing.
