@@ -88,14 +88,11 @@ export function collectRoutingFacts(projectRoot) {
 }
 
 function matchedKeywords(haystack, playbook) {
-  // Long keywords and phrases match as substrings. Short ones ("pr", "api",
-  // "bug") must appear as whole words — else "pr" hits inside "reproduce" and
-  // the playbook wins by name, not by what the task asks for. A trailing "s"
-  // is tolerated so plurals ("bugs", "prs") still count.
+  // Match complete words and phrases. Single-word keywords tolerate a trailing
+  // "s" so plurals ("bugs", "prs") still count without matching inflections.
   return (playbook.keywords || []).filter((kw) => {
     const k = kw.toLowerCase();
-    if (k.length > 3) return haystack.includes(k);
-    return new RegExp(`\\b${k.replace(/[^a-z0-9]/g, "\\$&")}(?:s\\b|\\b)`).test(haystack);
+    return matchesCue(haystack, k) || (/^[a-z0-9]+$/.test(k) && matchesCue(haystack, `${k}s`));
   });
 }
 

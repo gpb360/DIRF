@@ -17,6 +17,10 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   active owner there. Session guidance uses this bounded state instead of
   loading the full handoff and attempt portfolio unconditionally.
 
+### Fixed
+- Task Routing matches keywords and phrases at word boundaries, so `bundle`
+  still matches `bundles` but no longer misroutes tasks that say `bundled`.
+
 ## [0.28.0] — 2026-08-22
 
 ### Added
