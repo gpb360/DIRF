@@ -12,16 +12,21 @@ project-settlement kit. DIRF turns a task into a lean instruction set
 `~/.dirf/projects/<slug>/`, keyed by the repo's git common dir so every
 worktree shares one store.
 
-## Session start — always, in order
+## Session start
 
-1. `dirf state which` — confirm the project slug and store path.
-2. `dirf state read-handoff` — read the **canonical handoff first**. It is
-   authoritative: objective, current phase, completed work, decisions,
-   blockers, and the exact next action.
-3. `dirf state list-attempts` — see prior runs before starting anything new.
-4. When the user says "DIRF next" (or asks what to do next): resume the
-   pending attempt with `dirf resume <id>` and follow its exact next action.
-   Do not invent new work while a pending attempt exists.
+1. Run `dirf state active` (or install `dirf state active --hook` as the host's
+   `SessionStart` command).
+2. If it reports **active**, reuse that attempt. Do not build a duplicate or
+   enumerate the portfolio. Load only the reported workflow and attempt handoff
+   paths when their details are not already in context.
+3. If it reports **idle**, DIRF is still available: route genuinely new work
+   through `dirf build`, `plan`, or `create` as appropriate.
+4. If it reports **conflict**, stop and ask which attempt owns the checkout.
+   Never select the latest automatically.
+5. Use `state which`, `read-handoff`, and `list-attempts` only for diagnosis or
+   recovery. They are not the normal bootstrap.
+6. When the user says "DIRF next" (or asks what to do next), resume the named or
+   active attempt and follow its exact next action.
 
 ## Creating work
 
@@ -74,7 +79,8 @@ worktree shares one store.
 ## Quick reference
 
 ```bash
-dirf state which | read-handoff | list-attempts   # orient
+dirf state active [--json|--hook]                 # resolve checkout responsibility
+dirf state which | read-handoff | list-attempts   # diagnosis and recovery
 dirf resume <id>                                   # continue exactly where it stopped
 dirf build|plan|create <name> "<task>" [--playbooks DIR]
 dirf learn <url|file|text>                         # provenance-bound study

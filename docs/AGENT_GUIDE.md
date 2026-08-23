@@ -32,22 +32,33 @@ node /path/to/DIRF/src/cli.js state which
 
 ## Session lifecycle
 
-### 1. Orient (start of every session)
+### 1. Resolve responsibility (start of every session)
 
 ```bash
-dirf state which              # confirm which project this checkout resolves to
-dirf state read-handoff       # the canonical handoff — read this FIRST
-dirf state list-attempts      # see prior runs
+dirf state active
 ```
 
-`dirf state which` tells you the slug and store path. The slug is derived from
-`git rev-parse --git-common-dir`, so **the main tree and any worktree resolve to
-the same store entry** — you'll get the same handoff regardless of which
-checkout you start in. That's the point.
+This bounded query reports one of three states without loading the portfolio or
+full handoffs:
 
-`dirf state read-handoff` prints the canonical handoff. This is your starting
-context: objective, current phase, what's done, decisions, blockers, the exact
-next action. Treat it as authoritative.
+- **idle** — DIRF is available and new work can be routed normally;
+- **active** — one in-progress attempt owns this checkout; reuse it instead of
+  building a duplicate;
+- **conflict** — multiple attempts claim the checkout; stop and select one
+  explicitly instead of choosing the latest.
+
+`dirf resume <id>` is the claim operation. It starts a planned attempt and
+binds it to the current Git worktree. Blocking or completing it makes the
+checkout idle again.
+
+Use `dirf state which`, `state read-handoff`, and `state list-attempts` for
+diagnosis or recovery, not as an unconditional session bootstrap. The project
+slug still comes from `git rev-parse --git-common-dir`, so every worktree shares
+canonical project state while responsibility remains checkout-scoped.
+
+Hosts with session hooks can run `dirf state active --hook`. The command emits
+the small `SessionStart` context envelope directly; it contains the active
+phase, exact next action, and lazy paths to the workflow and attempt handoff.
 
 ### 2. Plan / start a workflow
 
@@ -168,6 +179,7 @@ Reference existing specs/tickets/decisions rather than restating them.
 | `dirf state write-handoff --file F` | write the canonical handoff (end of session) |
 | `dirf state list-attempts` | prior runs for this project |
 | `dirf state get-attempt <id>` | one attempt's detail |
+| `dirf state active [--json\|--hook]` | checkout-scoped idle, active, or conflict state |
 | `dirf build <name> "<task>"` | route a task → instruction set in the store |
 | `dirf learn [URL\|FILE\|TEXT]` | ingest one authorized source; a connected agent continues through read-only analysis to the decision gate without another user command |
 | `dirf resume <name-or-id>` | load one attempt's workflow + handoff (lists pending gates) |

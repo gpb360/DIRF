@@ -273,6 +273,7 @@ dirf state read-handoff [--path DIR|--slug S]        print the canonical project
 dirf state write-handoff --file FILE|- [...]         write the canonical project handoff
 dirf state list-attempts [--path DIR|--slug S]       list attempts for a project
 dirf state get-attempt <id> [...]                    show one attempt
+dirf state active [--path DIR] [--json|--hook]       report checkout-scoped responsibility
 dirf state import-handoff [--path DIR] [--force]     promote a local HANDOFF.md into the store
 dirf state migrate-cleanup [--path DIR]              remove migration backup(s) once the store works
 
@@ -513,6 +514,26 @@ nodes with typed edges (`references`, `conceptually_related_to`), built
 deterministically, no LLM or API key required. If the graphify CLI is
 installed, it re-clusters and renders `graph.html` + `GRAPH_REPORT.md`
 (`graphify cluster-only … --no-label`); otherwise the exact command is printed.
+
+### Optional session hook
+
+Codex- and Claude-style command hooks can resolve DIRF responsibility without
+loading the portfolio or full handoffs at every session start:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{
+      "hooks": [{ "type": "command", "command": "dirf state active --hook" }]
+    }]
+  }
+}
+```
+
+The hook keeps DIRF available for idle checkouts, reuses the one in-progress
+attempt bound to an active checkout, and reports conflicts instead of choosing
+the latest. Other hosts can consume `dirf state active --json` and adapt the
+same three-state contract.
 
 ### Optional MCP server
 

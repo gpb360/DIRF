@@ -132,6 +132,7 @@ test("dirf_record_progress requires and honors an explicit attempt when several 
     assert.equal(JSON.parse(recorded.result.content[0].text).ok, true);
 
     const resumedOlder = JSON.parse(cli("resume", older.attempt.id, "--path", dir, "--json"));
+    cli("attempt", "block", older.attempt.id, "--reason", "switch attempts", "--path", dir);
     const resumedNewer = JSON.parse(cli("resume", newer.attempt.id, "--path", dir, "--json"));
     assert.match(resumedOlder.attempt_handoff, /older MCP progress/);
     assert.doesNotMatch(resumedNewer.attempt_handoff, /older MCP progress/);

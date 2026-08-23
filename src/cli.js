@@ -10,6 +10,7 @@
 //   dirf list [--path DIR]                               list saved attempts
 //   dirf status [--path DIR]                             show project and repository state
 //   dirf resume <name-or-id> [--path DIR]                load the workflow handoff
+//   dirf state active [--path DIR] [--json|--hook]       report checkout-scoped responsibility
 //   dirf validate                                        validate registries + workflows
 //   dirf skills scan [--path DIR]                        scan host, print installed skills + resolved refs
 //   dirf validate|graph|run|render <folder>               operate an Eve-style folder DAG
@@ -29,7 +30,7 @@ import { inspect, detectStackProfile } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGateState, pendingGates, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact } from "./state.js";
+import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGateState, attemptResponsibility, pendingGates, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact } from "./state.js";
 import { ARTIFACT_TYPES, explainGoverningArtifact } from "./artifacts.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 import {
@@ -541,6 +542,10 @@ function gitOutput(target, args) {
   }
 }
 
+function checkoutRoot(target) {
+  return gitOutput(target, ["rev-parse", "--show-toplevel"]) || target;
+}
+
 function cmdStatus(args) {
   const target = projectRoot(args.path);
   let attempts = [];
@@ -574,7 +579,7 @@ function cmdResume(args) {
   // Resume is the "work is starting" signal: a planned attempt auto-starts so
   // the lifecycle can't drift (no phases in its workflow → stays planned).
   let autoStarted = false;
-  const stored = getAttemptState(project.slug, attempt.id);
+  const stored = claimAttemptCheckout(project.slug, attempt.id, checkoutRoot(target));
   if (stored?.tracked && stored.status === "planned") {
     try { updateAttemptLifecycle(project.slug, attempt.id, "start"); autoStarted = true; }
     catch { /* attempt workflow has no phases — leave planned */ }
@@ -617,7 +622,7 @@ function cmdResume(args) {
   if (args.json) {
     const prompt = `Resume DIRF attempt "${attempt.id}" for "${project?.slug || "project"}" at "${args.path || projectRoot(args.path)}".\nResolve the project brain before any global fallback. The active attempt takes precedence over the canonical project handoff if they conflict.\nContinue from the exact next action; do not restart completed work.`;
     // Re-read after auto-start so the emitted attempt reflects the store.
-    const current = autoStarted ? getAttemptState(project.slug, attempt.id) : attempt;
+    const current = getAttemptState(project.slug, attempt.id);
     console.log(JSON.stringify({
       attempt: publicAttemptForSlug(project.slug, current),
       workflow_path: workflow,
@@ -847,6 +852,70 @@ function cmdStateGetAttempt(args) {
   console.log(`name: ${a.name}`);
   console.log(`created_at: ${a.created_at}`);
   console.log(`folder: ${a.folder}`);
+}
+
+function cmdStateActive(args) {
+  const target = projectRoot(args.path || ".");
+  const project = resolveProject(target);
+  const checkout = checkoutRoot(target);
+  if (!project) {
+    const result = { schema_version: 1, state: "idle", configured: false, project: null, checkout };
+    if (args.hook) {
+      console.log(JSON.stringify({ hookSpecificOutput: {
+        hookEventName: "SessionStart",
+        additionalContext: "DIRF is available, but this checkout is not configured. Run dirf setup before routing new work; do not borrow attempts or context from another project.",
+      } }));
+    } else if (args.json) console.log(JSON.stringify(result, null, 2));
+    else console.log("DIRF idle: this checkout is not configured. Run dirf setup before routing new work.");
+    return;
+  }
+  const responsibility = attemptResponsibility(project.slug, checkout);
+  const attempts = responsibility.attempts.map((attempt) => ({
+    id: attempt.id,
+    name: attempt.name,
+    current_phase: attempt.current_phase || null,
+    responsibility_path: attempt.responsibility_path,
+  }));
+  const active = responsibility.attempt ? {
+    ...attempts[0],
+    next_action: attemptNextAction(project.slug, responsibility.attempt.id),
+    workflow_path: existsSync(join(responsibility.attempt.folder, "README.md"))
+      ? join(responsibility.attempt.folder, "README.md")
+      : join(responsibility.attempt.folder, "workflow.json"),
+    handoff_path: join(responsibility.attempt.folder, "HANDOFF.md"),
+  } : null;
+  const result = {
+    schema_version: 1,
+    state: responsibility.state,
+    configured: true,
+    project: project.slug,
+    checkout,
+    ...(active ? { attempt: active } : {}),
+    ...(responsibility.state === "conflict" ? { attempts } : {}),
+  };
+
+  if (args.hook) {
+    let additionalContext;
+    if (result.state === "active") {
+      additionalContext = `DIRF already governs this checkout. Reuse attempt ${active.id} (${active.name}); do not build a duplicate or enumerate the portfolio. Current phase: ${active.current_phase || "not recorded"}. Next action: ${active.next_action || "continue the current phase"}. Load ${active.workflow_path} and ${active.handoff_path} only if their details are not already in context.`;
+    } else if (result.state === "conflict") {
+      additionalContext = `DIRF responsibility conflict in this checkout: ${attempts.map(({ id }) => id).join(", ")}. Stop and select the intended attempt explicitly; do not choose the latest.`;
+    } else {
+      additionalContext = "DIRF is available in this checkout, but no in-progress attempt is bound here. Route genuinely new work through DIRF; do not resume or duplicate unrelated planned, blocked, or other-checkout attempts.";
+    }
+    console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext } }));
+    return;
+  }
+  if (args.json) { console.log(JSON.stringify(result, null, 2)); return; }
+  if (result.state === "active") {
+    console.log(`DIRF active: ${active.id} (${active.name})`);
+    console.log(`Phase: ${active.current_phase || "not recorded"}`);
+    console.log(`Next: ${active.next_action || "continue the current phase"}`);
+  } else if (result.state === "conflict") {
+    console.log(`DIRF conflict: ${attempts.map(({ id }) => id).join(", ")}`);
+  } else {
+    console.log("DIRF idle: available for new work; no in-progress attempt is bound to this checkout.");
+  }
 }
 
 function artifactProjection(slug, id) {
@@ -1234,6 +1303,7 @@ function parse(argv) {
     if (a === "--confirm") { out.confirm = true; continue; }
     if (a === "--approved") { out.approved = true; continue; }
     if (a === "--json") { out.json = true; continue; }
+    if (a === "--hook") { out.hook = true; continue; }
     if (a === "--research") { out.research = true; continue; }
     if (a === "--no-focused-output") { out.focusedOutput = false; continue; }
     if (a === "--phase") { out.phase = rest[++i]; continue; }
@@ -1300,6 +1370,7 @@ Usage:
   dirf state write-handoff --file FILE|- [...]        write the canonical handoff
   dirf state list-attempts [--path DIR|--slug S]      list attempts for a project
   dirf state get-attempt <id> [...]                   show one attempt
+  dirf state active [--path DIR] [--json|--hook]      report idle, active, or conflicting checkout responsibility
   dirf state import-handoff [--path DIR] [--force]    promote a local HANDOFF.md into the store
   dirf state migrate-cleanup [--path DIR]            remove migration backup(s) after confirming the store works
 
@@ -1511,6 +1582,7 @@ async function main() {
     else if (sub === "write-handoff") cmdStateWriteHandoff(subArgs);
     else if (sub === "list-attempts") cmdStateListAttempts(subArgs);
     else if (sub === "get-attempt") cmdStateGetAttempt(subArgs);
+    else if (sub === "active") cmdStateActive(subArgs);
     else if (sub === "import-handoff") cmdStateImportHandoff(subArgs);
     else if (sub === "migrate-cleanup") cmdStateMigrateCleanup(subArgs);
     else { console.error(`unknown state subcommand: ${sub}\n\n${HELP}`); process.exit(2); }

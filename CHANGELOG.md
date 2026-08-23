@@ -7,6 +7,16 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+### Added
+- **Checkout responsibility hook** — `dirf state active` reports whether DIRF
+  is idle, already governing the current worktree, or has conflicting claims;
+  `--hook` emits a bounded `SessionStart` context envelope.
+
+### Changed
+- `dirf resume` now claims the current worktree and refuses to create a second
+  active owner there. Session guidance uses this bounded state instead of
+  loading the full handoff and attempt portfolio unconditionally.
+
 ## [0.28.0] — 2026-08-22
 
 ### Added
