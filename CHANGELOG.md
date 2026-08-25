@@ -7,6 +7,42 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+### Added
+- **Checkout responsibility hook** — `dirf state active` reports whether DIRF
+  is idle, already governing the current worktree, or has conflicting claims;
+  `--hook` emits a bounded `SessionStart` context envelope.
+
+### Changed
+- `dirf resume` now claims the current worktree and refuses to create a second
+  active owner there. Session guidance uses this bounded state instead of
+  loading the full handoff and attempt portfolio unconditionally.
+
+### Fixed
+- Task Routing matches keywords and phrases at word boundaries, so `bundle`
+  still matches `bundles` but no longer misroutes tasks that say `bundled`.
+
+## [0.28.0] — 2026-08-22
+
+### Added
+- **Scoped capability profiles** — `build`, `plan`, `create`, `flow`, and
+  `learn` accept `--profile FILE` with an exact skill-name allowlist. Missing
+  names remain visible as capability gaps; the full skills scan is unchanged.
+- **Human-facing workflow helpers** — Unslop removes filler without changing
+  meaning, and the user-invoked Wait-What fallback restores missing context
+  when an explanation does not land.
+
+### Changed
+- A connected agent now carries `dirf learn` through read-only analysis in the
+  same turn and stops at the decision gate. The printed resume command is for
+  later recovery.
+- Skill discovery honors human-only invocation metadata from Claude and Codex.
+- Documentation workflows and authoring guidance use a final plain-language
+  prose pass while preserving commands, evidence, and machine-readable text.
+
+### Fixed
+- Verify and soft gates with a declared verification command reject evidence
+  recorded for a different command.
+
 ## [0.27.0] — 2026-08-19
 
 ### Added

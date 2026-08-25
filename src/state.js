@@ -460,7 +460,13 @@ function gateRequirement(gates, records, evidence, attempt, phase, strict = fals
     }
     return null;
   }
-  if (evidence[phase]) return null;
+  if (evidence[phase]) {
+    const declared = String(gate.verify || "").trim();
+    if (declared && evidence[phase].command !== declared) {
+      return { kind, reason: `Phase "${phase}" evidence command must match its declared verify command: ${JSON.stringify(declared)}` };
+    }
+    return null;
+  }
   if (kind === "soft" && !strict) return null;
   return { kind, reason: `Phase "${phase}" is a ${kind} gate — record its evidence first (dirf attempt advance --evidence "<command>")` };
 }
@@ -556,6 +562,17 @@ export function attemptNextAction(slug, idOrName) {
   const match = handoff.match(/^## Exact next action\s*\r?\n+([\s\S]*?)(?=^## |\s*$)/m);
   const value = match?.[1]?.trim();
   return value && !/^_\(.*\)_$/.test(value) ? value : null;
+}
+
+export function attemptResponsibility(slug, worktreePath) {
+  const key = normalizeIdentityKey(worktreePath);
+  const attempts = listAttempts(slug).filter((attempt) =>
+    attempt.status === "in_progress" &&
+    attempt.responsibility_path &&
+    normalizeIdentityKey(attempt.responsibility_path) === key);
+  if (!attempts.length) return { state: "idle", attempts: [] };
+  if (attempts.length === 1) return { state: "active", attempt: attempts[0], attempts };
+  return { state: "conflict", attempts };
 }
 
 export function startTrackingAttempt(slug, idOrName, now = new Date()) {
@@ -680,6 +697,28 @@ export function linkAttemptWorktree(slug, idOrName, worktreePath, now = new Date
   const match = inspectProjectWorktrees(slug, now).find((entry) => normalizeIdentityKey(entry.path) === normalizeIdentityKey(resolvedPath));
   if (!match) throw new Error("worktree must belong to the attempt's registered project");
   return writeAttempt(slug, { ...attempt, worktree_path: portable(resolvedPath), updated_at: now.toISOString() });
+}
+
+export function claimAttemptCheckout(slug, idOrName, worktreePath, now = new Date()) {
+  const attempt = getAttempt(slug, idOrName);
+  if (!attempt.tracked) return attempt;
+  const resolvedPath = resolve(String(worktreePath || ""));
+  const key = normalizeIdentityKey(resolvedPath);
+  const match = inspectProjectWorktrees(slug, now).some((entry) => normalizeIdentityKey(entry.path) === key);
+  if (!match) throw new Error("checkout must belong to the attempt's registered project");
+  const owner = listAttempts(slug).find((candidate) =>
+    candidate.id !== attempt.id &&
+    candidate.status === "in_progress" &&
+    candidate.responsibility_path &&
+    normalizeIdentityKey(candidate.responsibility_path) === key);
+  if (owner) throw new Error(`checkout is already governed by ${owner.id}`);
+  if (!attempt.responsibility_path) {
+    return writeAttempt(slug, { ...attempt, responsibility_path: portable(resolvedPath), updated_at: now.toISOString() });
+  }
+  if (normalizeIdentityKey(attempt.responsibility_path) !== key) {
+    throw new Error(`attempt ${attempt.id} is already responsible for ${attempt.responsibility_path}`);
+  }
+  return attempt;
 }
 
 // Backfill: promote handoff completion evidence into the lifecycle. Only

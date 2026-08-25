@@ -165,6 +165,67 @@ test("dirf resume composes project context and gives the active attempt preceden
   assert.notEqual(resumedJson.project_handoff, resumedJson.attempt_handoff);
 });
 
+test("dirf state active keeps DIRF available and reuses the attempt claimed by this checkout", () => {
+  const home = freshHome();
+  const main = mkdtempSync(join(tmpdir(), "active-checkout-"));
+  execFileSync("git", ["init", "-q"], { cwd: main, timeout: TIMEOUT });
+
+  const unconfigured = JSON.parse(run(["state", "active", "--path", main, "--hook"], { DIRF_HOME: home }, main));
+  assert.match(unconfigured.hookSpecificOutput.additionalContext, /not configured.*dirf setup/i);
+
+  run(["setup", main], { DIRF_HOME: home }, main);
+
+  const first = JSON.parse(run([
+    "build", "first", "fix the first behavior", "--path", main, "--json",
+  ], { DIRF_HOME: home }, main)).attempt;
+
+  const idle = JSON.parse(run(["state", "active", "--path", main, "--json"], { DIRF_HOME: home }, main));
+  assert.equal(idle.state, "idle");
+  assert.ok(idle.project, "idle still resolves the DIRF project");
+
+  run(["resume", first.id, "--path", main], { DIRF_HOME: home }, main);
+  const active = JSON.parse(run(["state", "active", "--path", main, "--json"], { DIRF_HOME: home }, main));
+  assert.equal(active.state, "active");
+  assert.equal(active.attempt.id, first.id);
+  assert.equal(active.attempt.responsibility_path.replaceAll("\\", "/").toLowerCase(), main.replaceAll("\\", "/").toLowerCase());
+  assert.match(active.attempt.workflow_path, /README\.md$/);
+  assert.match(active.attempt.handoff_path, /HANDOFF\.md$/);
+  const stored = JSON.parse(run(["state", "get-attempt", first.id, "--path", main, "--json"], { DIRF_HOME: home }, main));
+  assert.equal(stored.worktree_path, null, "responsibility must not create durable cleanup linkage");
+
+  const hook = JSON.parse(run(["state", "active", "--path", main, "--hook"], { DIRF_HOME: home }, main));
+  assert.equal(hook.hookSpecificOutput.hookEventName, "SessionStart");
+  assert.match(hook.hookSpecificOutput.additionalContext, /DIRF already governs this checkout/);
+  assert.match(hook.hookSpecificOutput.additionalContext, new RegExp(first.id));
+  assert.doesNotMatch(hook.hookSpecificOutput.additionalContext, /Project attempts|Canonical project handoff/);
+
+  const second = JSON.parse(run([
+    "build", "second", "fix the second behavior", "--path", main, "--json",
+  ], { DIRF_HOME: home }, main)).attempt;
+  const duplicate = spawnSync(process.execPath, [CLI, "resume", second.id, "--path", main], {
+    cwd: main, encoding: "utf8", timeout: TIMEOUT, env: { ...process.env, DIRF_HOME: home },
+  });
+  assert.notEqual(duplicate.status, 0);
+  assert.match(duplicate.stderr, new RegExp(`already governed by ${first.id}`));
+
+  run(["attempt", "block", first.id, "--reason", "waiting", "--path", main], { DIRF_HOME: home }, main);
+  const available = JSON.parse(run(["state", "active", "--path", main, "--hook"], { DIRF_HOME: home }, main));
+  assert.match(available.hookSpecificOutput.additionalContext, /DIRF is available.*no in-progress attempt is bound/i);
+
+  run(["resume", second.id, "--path", main], { DIRF_HOME: home }, main);
+  const third = JSON.parse(run([
+    "build", "third", "fix the third behavior", "--path", main, "--json",
+  ], { DIRF_HOME: home }, main)).attempt;
+  run(["attempt", "start", third.id, "--path", main], { DIRF_HOME: home }, main);
+  // Simulate a legacy/concurrent duplicate claim that bypassed the guarded resume path.
+  const thirdStatePath = join(home, "projects", active.project, "attempts", third.id, "attempt.json");
+  const thirdState = JSON.parse(readFileSync(thirdStatePath, "utf8"));
+  writeFileSync(thirdStatePath, JSON.stringify({ ...thirdState, responsibility_path: main }, null, 2) + "\n");
+  const conflict = JSON.parse(run(["state", "active", "--path", main, "--json"], { DIRF_HOME: home }, main));
+  assert.equal(conflict.state, "conflict");
+  assert.deepEqual(conflict.attempts.map(({ id }) => id), [second.id, third.id]);
+});
+
 test("dirf resume never composes attempts or context from another project", () => {
   const home = freshHome();
   const alphaProject = mkdtempSync(join(tmpdir(), "alpha-project-brain-"));
@@ -224,6 +285,7 @@ test("record-progress requires an explicit attempt when several exist and preser
   const resumedOlder = JSON.parse(run([
     "resume", older.attempt.id, "--path", main, "--json",
   ], { DIRF_HOME: home }, main));
+  run(["attempt", "block", older.attempt.id, "--reason", "switch attempts", "--path", main], { DIRF_HOME: home }, main);
   const resumedNewer = JSON.parse(run([
     "resume", newer.attempt.id, "--path", main, "--json",
   ], { DIRF_HOME: home }, main));

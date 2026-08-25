@@ -120,6 +120,16 @@ test("short keywords only match whole words, not inside other words", () => {
   assert.equal(recommend("review the prs for regressions").playbook, "pr-review");
 });
 
+test("keywords match complete words and simple plurals, not inflections or embedded phrases", () => {
+  assert.ok(recommend("measure the bundle").matched_keywords.includes("bundle"));
+  assert.ok(recommend("measure the bundles").matched_keywords.includes("bundle"));
+  assert.notEqual(recommend("use bundled defaults").playbook, "performance-pass");
+  assert.notEqual(recommend("inspect score web vitals").playbook, "performance-pass");
+
+  const auditedTask = "Keep DIRF unopinionated and complete with zero-install bundled defaults, prefer relevant capabilities already enabled on the host when they help with context rot or output quality, and offer provenance-bound optional source suggestions when capabilities are missing without hardcoding products, auto-installing anything, or positioning DIRF as a token-savings tool.";
+  assert.notEqual(recommend(auditedTask).playbook, "performance-pass");
+});
+
 test("falls back to triage when nothing matches", () => {
   const r = recommend("xyzzy qwerty nothing matches here");
   assert.equal(r.playbook, "triage");

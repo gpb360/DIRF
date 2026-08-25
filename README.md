@@ -39,6 +39,23 @@ checks. A later session or a different agent can continue from the same state.
 - **Better handoffs:** another person, model, or session can see what changed,
   what passed, what is blocked, and what happens next.
 
+## What's new in 0.28.0
+
+This release tightens routing and verification without adding runtime
+dependencies:
+
+- **Scoped capability profiles:** pass `--profile FILE` to limit one command to
+  an explicit skill allowlist while keeping unavailable names visible as gaps.
+- **Stricter verification:** evidence for a gate must match the command declared
+  before work began.
+- **Smoother learning:** a connected agent carries `dirf learn` through
+  read-only analysis in the same turn and stops for the user's decision.
+- **Correct human-only routing:** skill discovery honors both Claude and Codex
+  invocation metadata.
+- **Clearer explanations:** [Unslop](skills/unslop/README.md) removes filler from
+  human-facing prose, while [Wait, what?](skills/wait-what/README.md) restores
+  missing context when an explanation does not land.
+
 ## What DIRF is not
 
 - It is not an AI model and does not replace your coding agent.
@@ -80,10 +97,12 @@ With no source argument, paste text and send EOF (`Ctrl+D` on macOS/Linux;
 `Ctrl+Z`, then Enter, on Windows). DIRF stores normalized content and provenance
 inside the canonical attempt, then prepares an analysis brief for the connected
 agent. It treats embedded code and instructions as untrusted text. Intake,
-comparison, and recommendation do not edit DIRF or the host repository. Resume
-the printed attempt to produce an evidence-backed recommendation. DIRF requires
-the recommendation artifact and decision gate to be explicitly accepted before
-the same attempt may implement at most one named, reversible experiment.
+comparison, and recommendation do not edit DIRF or the host repository. A
+connected agent continues the new attempt immediately through those read-only
+steps and stops at the decision gate. The printed resume command is only for
+recovery in a later session. DIRF requires the recommendation artifact and
+decision gate to be explicitly accepted before the same attempt may implement
+at most one named, reversible experiment.
 
 For YouTube, DIRF first reads public caption tracks directly. If YouTube exposes
 a track but returns an empty caption body, DIRF can use an already-installed
@@ -237,9 +256,9 @@ done-when checklist.
 ```
 # building workflows
 dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
-dirf build  <name> "<task>" [--path DIR] [--open]   full pipeline: route -> JSON -> md + html
-dirf plan   <name> "<task>" [--path DIR] [--research] discovery through handoff, without implementation
-dirf create <name> "<task>" [--path DIR]             route -> workflow JSON only
+dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--open]   full pipeline: route -> JSON -> md + html
+dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--research] discovery through handoff, without implementation
+dirf create <name> "<task>" [--path DIR] [--profile FILE]             route -> workflow JSON only
 dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
 dirf list [--path DIR]                               list a project's attempts
 dirf resume <name-or-id> [--path DIR]                load one attempt's workflow + HANDOFF.md
@@ -254,6 +273,7 @@ dirf state read-handoff [--path DIR|--slug S]        print the canonical project
 dirf state write-handoff --file FILE|- [...]         write the canonical project handoff
 dirf state list-attempts [--path DIR|--slug S]       list attempts for a project
 dirf state get-attempt <id> [...]                    show one attempt
+dirf state active [--path DIR] [--json|--hook]       report checkout-scoped responsibility
 dirf state import-handoff [--path DIR] [--force]     promote a local HANDOFF.md into the store
 dirf state migrate-cleanup [--path DIR]              remove migration backup(s) once the store works
 
@@ -271,7 +291,7 @@ dirf export graphify [--out DIR] [--skip-render]     export the portfolio as a g
 # inspection + registries
 dirf skills scan [--path DIR]                        scan host, show installed skills + resolved refs
 dirf inspect [<path>]                                detect a project's optimization stack + suggest gaps
-dirf flow "<task>" [--path DIR]                      show the ordered skill flow for a task
+dirf flow "<task>" [--path DIR] [--profile FILE]     show the ordered skill flow for a task
 dirf validate                                        validate registries + workflows
 dirf validate <folder>                               validate one folder DAG
 dirf graph <folder>                                  show deterministic execution order
@@ -339,6 +359,16 @@ reference:
 
 - **installed** — found in a scanned root (path included)
 - **capability gap** — no installed match; DIRF asks before suggesting or creating anything
+
+Use an explicit JSON profile to limit one routing invocation to named skills:
+
+```json
+{"skills":["tdd","code-review"]}
+```
+
+Pass it with `--profile FILE` to `build`, `plan`, `create`, `flow`, or `learn`.
+Unavailable names remain visible gaps. `dirf skills scan` still shows the full
+installed inventory. Profiles have no automatic project default or layering.
 
 **Scan roots** (all optional): `~/.agents/skills/`, `~/.codex/skills/`,
 `~/.claude/skills/`, `~/.zcode/.../skills/`, plus project-local equivalents.
@@ -484,6 +514,26 @@ nodes with typed edges (`references`, `conceptually_related_to`), built
 deterministically, no LLM or API key required. If the graphify CLI is
 installed, it re-clusters and renders `graph.html` + `GRAPH_REPORT.md`
 (`graphify cluster-only … --no-label`); otherwise the exact command is printed.
+
+### Optional session hook
+
+Codex- and Claude-style command hooks can resolve DIRF responsibility without
+loading the portfolio or full handoffs at every session start:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{
+      "hooks": [{ "type": "command", "command": "dirf state active --hook" }]
+    }]
+  }
+}
+```
+
+The hook keeps DIRF available for idle checkouts, reuses the one in-progress
+attempt bound to an active checkout, and reports conflicts instead of choosing
+the latest. Other hosts can consume `dirf state active --json` and adapt the
+same three-state contract.
 
 ### Optional MCP server
 

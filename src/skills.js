@@ -145,10 +145,40 @@ function backtickSkillRefs(body) {
 // Claude Code convention). Returns undefined when absent or unparseable.
 function parseBool(value) {
   if (value === undefined || value === null) return undefined;
-  const v = String(value).trim().toLowerCase();
+  const v = String(value).trim().replace(/^(["'])(.*)\1$/, "$2").toLowerCase();
   if (["yes", "on", "1", "true"].includes(v)) return true;
   if (["no", "off", "0", "false"].includes(v)) return false;
   return undefined;
+}
+
+function codexAllowsImplicitInvocation(folder) {
+  const policyFile = join(folder, "agents", "openai.yaml");
+  if (!existsSync(policyFile)) return undefined;
+  let text;
+  try {
+    text = readFileSync(policyFile, "utf-8");
+  } catch {
+    return undefined;
+  }
+  let policyIndent;
+  for (const line of text.split(/\r?\n/)) {
+    const content = line.trim();
+    if (!content || content.startsWith("#")) continue;
+    const indent = line.length - line.trimStart().length;
+    if (policyIndent === undefined) {
+      if (/^policy:\s*(?:#.*)?$/.test(content)) policyIndent = indent;
+      continue;
+    }
+    if (indent <= policyIndent) return undefined;
+    const match = /^allow_implicit_invocation:\s*([^#]+?)(?:\s+#.*)?$/.exec(content);
+    if (match) return parseBool(match[1]);
+  }
+  return undefined;
+}
+
+function skillInvocation(folder, metadata) {
+  const claudeHumanOnly = parseBool(typeof metadata === "object" ? metadata["disable-model-invocation"] : undefined) === true;
+  return claudeHumanOnly || codexAllowsImplicitInvocation(folder) === false ? "user" : "model";
 }
 
 function collectDisclosures(folder, indexFile) {
@@ -283,12 +313,9 @@ function indexOne(path, index) {
   const normalized = path.replace(/\\/g, "/");
   const folder = normalized.replace(/\/[^/]+$/, "");
   const file = normalized.split("/").pop();
-  // Invocation class (the ecosystem's master routing attribute). A skill that
-  // declares `disable-model-invocation` is user-invoked: its description is
-  // written for a person, NOT a routing hint — flow.js must not score it.
-  // Absent flag ⇒ model-invoked (the default). DIRF only reads the skill's
-  // own declaration; it never imposes one.
-  const invocation = parseBool(typeof fm === "object" ? fm["disable-model-invocation"] : undefined) === true ? "user" : "model";
+  // Claude and Codex declare human-only skills differently. Either declaration
+  // keeps the skill out of automatic routing; absent flags keep the default.
+  const invocation = skillInvocation(folder, fm);
   // Self-references (a skill's help text mentioning its own /name) are not
   // dependencies — drop them so the reference graph stays meaningful.
   const references = backtickSkillRefs(body).filter((ref) => ref !== name);
@@ -407,6 +434,7 @@ export function bundledSkills() {
         description: unit.meta.description || "",
         capabilities: unit.meta.capabilities || [],
         provider: "dirf",
+        invocation: skillInvocation(unit.folder, unit.meta),
         body_lines: unit.body.split(/\r?\n/).length,
       };
     } catch { /* a malformed bundled unit is validate's problem, not discovery's */ }

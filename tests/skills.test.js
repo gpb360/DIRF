@@ -107,7 +107,7 @@ test("bundledSkills exposes kit units with declared capabilities", () => {
   assert.ok(bundled["minimal-implementation"].body_lines > 0, "bundled entries carry body size for the lint");
 });
 
-test("discover indexes invocation class from disable-model-invocation", () => {
+test("discover indexes invocation class from Claude and Codex metadata", () => {
   const root = makeRoot();
   write(join(root, "skills", "user-skill"), "SKILL.md",
     "---\nname: user-skill\ndescription: A one-line summary for a person.\ndisable-model-invocation: true\n---\nRun a session.");
@@ -115,11 +115,21 @@ test("discover indexes invocation class from disable-model-invocation", () => {
     "---\nname: model-skill\ndescription: Use when the user mentions X or Y.\n---\nbody");
   write(join(root, "skills", "yes-skill"), "SKILL.md",
     "---\nname: yes-skill\ndescription: d\nuser-invocable: false\ndisable-model-invocation: yes\n---\nbody");
+  write(join(root, "skills", "codex-user"), "SKILL.md",
+    "---\nname: codex-user\ndescription: Human-only in Codex.\n---\nbody");
+  write(join(root, "skills", "codex-user", "agents"), "openai.yaml",
+    "interface:\n  display_name: Codex User\npolicy:\n  allow_implicit_invocation: false\n");
+  write(join(root, "skills", "codex-model"), "SKILL.md",
+    "---\nname: codex-model\ndescription: Model-routable in Codex.\n---\nbody");
+  write(join(root, "skills", "codex-model", "agents"), "openai.yaml",
+    "policy:\n  allow_implicit_invocation: true\n");
   const idx = skills.discover(root);
   assert.equal(idx["user-skill"].invocation, "user");
   assert.equal(idx["model-skill"].invocation, "model");
   // tolerant boolean: "yes" counts as true
   assert.equal(idx["yes-skill"].invocation, "user");
+  assert.equal(idx["codex-user"].invocation, "user");
+  assert.equal(idx["codex-model"].invocation, "model");
 });
 
 test("discover indexes progressive-disclosure files and body size", () => {

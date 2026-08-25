@@ -128,10 +128,9 @@ function selectCapability(requirement, selection, context, skillIndex) {
   // User-invoked skills (`disable-model-invocation`) are human-only: their
   // descriptions are written for a person, not for routing, so scoring them
   // misroutes. They stay indexed and visible in `skills scan`, but are not
-  // candidates for autonomous selection. Fall back to the full set when every
-  // candidate is user-invoked — a host may route only by hand.
+  // candidates for autonomous selection.
   const entries = Object.entries(skillIndex);
-  const pool = entries.some(([, item]) => item.invocation !== "user") ? entries.filter(([, item]) => item.invocation !== "user") : entries;
+  const pool = entries.filter(([, item]) => item.invocation !== "user");
   const ranked = pool.map(([name, item]) => {
     const candidate = words([name, item.description, item.summary, item.category, ...(item.applies_to || []), ...(item.tags || [])].join(" "));
     const declared = Array.isArray(item.capabilities) ? item.capabilities : String(item.capabilities || "").split(",").map((value) => value.trim()).filter(Boolean);
@@ -163,14 +162,16 @@ function selectCapability(requirement, selection, context, skillIndex) {
     status: "installed",
     provider: chosen.item.provider || "project",
     path: chosen.item.path,
-    // Emitted only when meaningful, so plain model-invoked steps keep their
-    // historical shape: a user-invoked pick (fallback routing) is labeled so
-    // consumers know it is human-only; disclosures are lazy-load pointers.
-    ...(chosen.item.invocation === "user" ? { invocation: "user" } : {}),
     ...(chosen.item.disclosures?.length ? { disclosures: chosen.item.disclosures } : {}),
     selection_reason: `best installed match (${chosen.score}) for ${requirement.capability || requirement.stage}`,
     rejected_candidates: ranked.slice(1, 4).map(({ name, score }) => ({ name, score })),
   };
+}
+
+function scopedSkillIndex(index, allowedSkills) {
+  if (!Array.isArray(allowedSkills)) return index;
+  const allowed = new Set(allowedSkills);
+  return Object.fromEntries(Object.entries(index || {}).filter(([name]) => allowed.has(name)));
 }
 
 export function buildFlow(selection, context = {}, skillIndex = {}) {
@@ -183,14 +184,15 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
     .map(({ branch: _branch, skill: _legacySkill, ...step }) => ({ ...step, capability: step.capability || step.stage }));
   const steps = [];
   const gaps = [];
+  const installed = scopedSkillIndex(skillIndex, context.allowedSkills);
   // The kit ships zero installed skills; its bundled skills/ folder is a
   // fallback consulted ONLY when the local install has nothing for a
   // capability, and the step is labeled so — never passed off as installed.
   let bundled;
   for (const requirement of requirements) {
-    const selected = selectCapability(requirement, selection, context, skillIndex);
+    const selected = selectCapability(requirement, selection, context, installed);
     const fallback = selected ? null : selectCapability(
-      requirement, selection, context, (bundled ??= context.bundledIndex || bundledSkills()));
+      requirement, selection, context, (bundled ??= scopedSkillIndex(context.bundledIndex || bundledSkills(), context.allowedSkills)));
     if (selected) steps.push(selected);
     else if (fallback) steps.push({
       ...fallback,

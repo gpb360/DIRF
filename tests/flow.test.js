@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildFlow, findCapabilityGaps, reconcile } from "../src/flow.js";
+import { bundledSkills } from "../src/skills.js";
 import { validateSnapshot } from "../src/validate.js";
 
 const WORKFLOW = {
@@ -152,7 +153,7 @@ test("user-invoked skills are not routing candidates when model-invoked ones exi
   assert.equal(flow.steps[0].invocation, undefined);
 });
 
-test("user-invoked-only hosts fall back and label the pick", () => {
+test("user-invoked-only hosts leave an automatic routing gap", () => {
   const selection = {
     playbook: "demo", agents: [],
     skill_flow: { label: "demo", steps: [{ stage: "write", capability: "copywriting", reason: "Write the copy" }] },
@@ -160,10 +161,8 @@ test("user-invoked-only hosts fall back and label the pick", () => {
   const flow = buildFlow(selection, {}, {
     "copywriter-coach": { path: "/u", description: "Professional copywriting coach with frameworks", capabilities: ["copywriting"], provider: "project", invocation: "user", disclosures: ["mocking.md", "tests.md"] },
   });
-  assert.equal(flow.steps[0].skill, "copywriter-coach");
-  assert.equal(flow.steps[0].invocation, "user");
-  // disclosures ride along when present
-  assert.deepEqual(flow.steps[0].disclosures, ["mocking.md", "tests.md"]);
+  assert.deepEqual(flow.steps, []);
+  assert.equal(flow.gaps[0].capability, "copywriting");
 });
 
 test("multi-session feature activates spec, ticket, and handoff branches", () => {
@@ -255,6 +254,18 @@ test("kit ships zero skills: bundled units are fallback-only and labeled", () =>
   });
   assert.equal(local.steps[0].skill, "ponytail");
   assert.equal(local.steps[0].status, "installed");
+});
+
+test("bundled human-only skills stay out of automatic routing", () => {
+  const selection = {
+    playbook: "demo", agents: [],
+    skill_flow: { label: "demo", steps: [{ stage: "explain", capability: "plain-language repair", reason: "Clarify" }] },
+  };
+  const bundled = bundledSkills();
+  assert.equal(bundled["wait-what"].invocation, "user");
+  const flow = buildFlow(selection, { bundledIndex: bundled, allowedSkills: ["wait-what"] }, {});
+  assert.deepEqual(flow.steps, []);
+  assert.equal(flow.gaps[0].capability, "plain-language repair");
 });
 
 test("buildFlow rejects incidental one-word overlap", () => {
