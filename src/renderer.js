@@ -1,6 +1,6 @@
 // Renders workflow Markdown and its self-contained HTML view.
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { AGENTS_DIR, ROOT } from "./paths.js";
 
 const GOVERNANCE_MARKER = "<!-- governance:v1 -->";
@@ -229,7 +229,7 @@ function inline(text) {
 // --------------------------------------------------------------------------- //
 // Lean markdown instruction set (router + per-agent detail)
 // --------------------------------------------------------------------------- //
-export function buildInstructions(workflow, outDir) {
+export function buildInstructions(workflow, outDir, skillBindings = []) {
   assertSnapshot(workflow);
   // Write a lean instruction set: README.md router + per-agent detail files.
   // Returns the list of written file paths. Discovery is scoped to the
@@ -362,7 +362,7 @@ export function buildInstructions(workflow, outDir) {
   lines.push(
     "",
     "## Capabilities",
-    "DIRF selected the best installed capability for each stage. Resolve each capability by name in the current host; provider values in the snapshot are discovery hints, not runtime requirements. Absent capabilities are never placed in the executable flow.",
+    "DIRF linked each step to the installed skill selected on this machine. Open the step link to see its current file path.",
     "",
     "## Skill flow",
     "Reach for skills in this order — each has a reason for its place in the sequence:",
@@ -370,14 +370,14 @@ export function buildInstructions(workflow, outDir) {
   );
   if (!flow?.steps) throw new Error(`workflow ${workflow.name || "?"}: missing persisted skill_flow`);
   let lastStage = "";
-  for (const s of flow.steps) {
+  for (const [index, s] of flow.steps.entries()) {
     if (s.stage !== lastStage) { lines.push(`**${s.stage}**`); lastStage = s.stage; }
-    const mark = s.status === "installed" ? "✅" : "⚠️";
-    lines.push(`- ${mark} \`${s.skill}\` — ${s.reason}`);
+    const status = skillBindings[index]?.status || s.status;
+    const mark = status === "installed" ? "✅" : "⚠️";
+    const unit = skillUnits[index];
+    const label = unit ? `[\`${s.skill}\`](skills/${unit.folder}/README.md)` : `\`${s.skill}\``;
+    lines.push(`- ${mark} ${label} — ${s.reason}`);
     if (s.output) lines.push(`  - **Done at this step when:** ${s.output}`);
-    // Progressive disclosure: the selected skill's co-located reference files
-    // are loaded on demand, never eagerly (unread files cost zero tokens).
-    if (s.disclosures?.length) lines.push(`  - 📄 Reference files (in the skill's folder — load on demand): ${s.disclosures.join(", ")}`);
   }
   if (flow.gaps?.length) {
     lines.push("", "## Capability gaps", "");
@@ -408,25 +408,25 @@ export function buildInstructions(workflow, outDir) {
   ].join("\n"), "utf-8");
   written.push(playbookReadme);
 
-  for (const step of skillUnits) {
-    const skillDir = join(outDir, "skills", step.folder);
+  const skillsDir = resolve(outDir, "skills");
+  if (dirname(skillsDir) !== resolve(outDir)) throw new Error("invalid generated skills path");
+  rmSync(skillsDir, { recursive: true, force: true });
+  for (const [index, step] of skillUnits.entries()) {
+    const skillDir = join(skillsDir, step.folder);
     mkdirSync(skillDir, { recursive: true });
     const skillReadme = join(skillDir, "README.md");
-    const sourceName = step.instructions ? "SOURCE.md" : null;
+    const binding = skillBindings[index];
+    const location = binding?.status === "installed" && binding.entry
+      ? `Open the installed skill at \`${binding.entry}\`.`
+      : "This skill is not installed now. Stop before this step and ask the user what to use.";
     writeFileSync(skillReadme, [
       "---", `name: ${JSON.stringify(step.skill)}`, "kind: skill", `description: ${JSON.stringify(step.reason)}`,
-      "uses: []", `details: ${JSON.stringify(sourceName ? [sourceName] : [])}`, `inputs: ${JSON.stringify([step.stage])}`,
+      "uses: []", "details: []", `inputs: ${JSON.stringify([step.stage])}`,
       `outputs: ${JSON.stringify(step.output ? [step.output] : ["stage result"])}`,
       `capabilities: ${JSON.stringify(step.capability ? [step.capability] : [])}`, "---", "",
-      `# ${step.skill}`, "", step.reason,
-      ...(sourceName ? ["", `Read [${sourceName}](${sourceName}) completely before using this skill.`] : []),
+      `# ${step.skill}`, "", step.reason, "", location,
     ].join("\n"), "utf-8");
     written.push(skillReadme);
-    if (sourceName) {
-      const sourcePath = join(skillDir, sourceName);
-      writeFileSync(sourcePath, step.instructions, "utf-8");
-      written.push(sourcePath);
-    }
   }
 
   const policySrc = resolve(ROOT, workflow.policy || "policies/workflow-policy.md");
@@ -463,7 +463,7 @@ function writeAgentDetail(agentRef, agentsSub) {
   if (fm.tools && agentRef.status !== "installed") lines.push(`**Tools:** ${fm.tools}`, "");
 
   lines.push("## Skills", "");
-  lines.push("You can discover and invoke any installed skill (the host provides global skill lookup). These are relevance hints for your role — a starting point, not a limit:");
+  lines.push("These skills may help with this role. Installed ones are ready to use. Missing ones are suggestions only:");
   lines.push("");
   if (resolved.length) {
     for (const s of resolved) {
@@ -473,7 +473,7 @@ function writeAgentDetail(agentRef, agentsSub) {
       lines.push(`- ${mark} \`${s.name}\`${summ}${note}`);
     }
   } else {
-    lines.push("_(no role-specific hints — use global skill discovery as needed)_");
+    lines.push("_(no extra skill suggestions)_");
   }
   if (agentRef.status === "installed") {
     // The host has its own agent for this role — point at it instead of
@@ -539,7 +539,7 @@ function chip(skill) {
   return `<span class="${classes}">${escapeHtml(skill.name)}${note}</span>`;
 }
 
-export function buildHtml(workflow) {
+export function buildHtml(workflow, skillBindings = []) {
   assertSnapshot(workflow);
   const wf = workflow.workflow || {};
   const agents = workflow.agents || [];
@@ -612,10 +612,14 @@ export function buildHtml(workflow) {
   }
   parts.push(`<div class='gate'>⛔ Do not start the next phase until the current is verifiably done. Validation: ${escapeHtml(wf.validation || "—")}</div>`);
 
-  parts.push("<h2>Skill flow</h2><ol>");
-  for (const step of workflow.skill_flow.steps) {
-    const status = step.status === "installed" ? "installed" : "recommended";
+  parts.push("<h2>Skill flow</h2>");
+  parts.push("<p class='mute'>Each step points to the installed skill selected on this machine.</p><ol>");
+  for (const [index, step] of workflow.skill_flow.steps.entries()) {
+    const status = (skillBindings[index]?.status || step.status) === "installed" ? "installed" : "recommended";
     parts.push(`<li><span class='chip ${status}'>${escapeHtml(step.skill)}</span> ${escapeHtml(step.reason)}`);
+    const binding = skillBindings[index];
+    if (binding?.status === "installed" && binding.entry) parts.push(`<br><code>${escapeHtml(binding.entry)}</code>`);
+    else parts.push("<br><span class='mute'>not installed now</span>");
     if (step.output) parts.push(`<br><span class='mute'><strong>Done at this step when:</strong> ${escapeHtml(step.output)}</span>`);
     parts.push("</li>");
   }
@@ -650,7 +654,7 @@ export function buildHtml(workflow) {
     parts.push("</summary>");
     parts.push("<h3>Skills</h3>");
     parts.push("<p class='mute'>Global skill discovery is available — these are relevance hints for this role, not a limit.</p><p>");
-    parts.push(resolved.length ? resolved.map(chip).join("") : "<span class='mute'>no role-specific hints — use global discovery</span>");
+    parts.push(resolved.length ? resolved.map(chip).join("") : "<span class='mute'>no extra skill suggestions</span>");
     parts.push("</p>");
     parts.push("<h3>Your job</h3>");
     if (a.status === "installed") {

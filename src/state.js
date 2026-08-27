@@ -242,6 +242,22 @@ export function storeAttemptDir(slug, attemptId) {
   return join(storeProjectDir(slug), "attempts", storeSegment(attemptId, "attempt id"));
 }
 
+const SKILL_BINDINGS_FILE = "skill-bindings.json";
+
+export function readAttemptSkillBindings(slug, attemptId) {
+  const attempt = getAttempt(slug, attemptId);
+  const path = join(attempt.folder, SKILL_BINDINGS_FILE);
+  if (!existsSync(path)) return [];
+  const value = JSON.parse(readFileSync(path, "utf8"));
+  return Array.isArray(value.bindings) ? value.bindings : [];
+}
+
+export function writeAttemptSkillBindings(slug, attemptId, bindings) {
+  const attempt = getAttempt(slug, attemptId);
+  const path = join(attempt.folder, SKILL_BINDINGS_FILE);
+  atomicWrite(path, JSON.stringify({ schema_version: 1, bindings }, null, 2) + "\n");
+}
+
 // Create an attempt inside the store. Mirrors project.js createAttempt semantics
 // (timestamp id, collision suffix, attempt.json) but writes to the store.
 export function createAttemptInStore(slug, name, now = new Date()) {
