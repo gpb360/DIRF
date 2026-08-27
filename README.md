@@ -39,22 +39,20 @@ checks. A later session or a different agent can continue from the same state.
 - **Better handoffs:** another person, model, or session can see what changed,
   what passed, what is blocked, and what happens next.
 
-## What's new in 0.28.0
+## What's new in 0.28.1
 
-This release tightens routing and verification without adding runtime
-dependencies:
+This patch fixes skill activation in Git worktrees without copying installed
+skills:
 
-- **Scoped capability profiles:** pass `--profile FILE` to limit one command to
-  an explicit skill allowlist while keeping unavailable names visible as gaps.
-- **Stricter verification:** evidence for a gate must match the command declared
-  before work began.
-- **Smoother learning:** a connected agent carries `dirf learn` through
-  read-only analysis in the same turn and stops for the user's decision.
-- **Correct human-only routing:** skill discovery honors both Claude and Codex
-  invocation metadata.
-- **Clearer explanations:** [Unslop](skills/unslop/README.md) removes filler from
-  human-facing prose, while [Wait, what?](skills/wait-what/README.md) restores
-  missing context when an explanation does not land.
+- **Small skill pointers:** DIRF saves the name, provider, and current location
+  of each selected skill outside the repository.
+- **Fast resume:** DIRF checks those saved locations first and scans installed
+  skills only when a saved file is missing or has moved.
+- **Safe worktree handling:** repository skills resolve inside the active
+  worktree, and resume checks ownership before changing shared attempt state.
+- **Clear missing-skill failures:** a required skill that is no longer installed
+  is reported accurately and prevents the workflow from starting.
+- **No setup breakage:** existing `dirf setup` behavior is unchanged.
 
 ## What DIRF is not
 
