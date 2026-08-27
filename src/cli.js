@@ -118,7 +118,7 @@ function buildPlan(name, task, path, reservePercent = 5, compaction = null, focu
   skillFlow.steps = skillFlow.steps.map((step) => ({
     ...step,
     instructions: readSkillInstructions(step.path),
-    resources: readSkillResources(step.path, step.disclosures),
+    files: readSkillFiles(step.path, step.disclosures),
   }));
   const agents = castAgents(enrichAgents(selection.agents), hostAgents).map((agent) => ({
     ...agent,
@@ -202,11 +202,11 @@ function readSkillInstructions(path) {
   return "";
 }
 
-function readSkillResources(skillPath, disclosures = []) {
+function readSkillFiles(skillPath, disclosures = []) {
   if (!skillPath || !Array.isArray(disclosures) || !disclosures.length) return [];
   let root;
   try { root = statSync(skillPath).isFile() ? dirname(skillPath) : skillPath; } catch { return []; }
-  const resources = [];
+  const files = [];
   const capture = (absolute, relative) => {
     const stat = lstatSync(absolute, { throwIfNoEntry: false });
     if (!stat) return;
@@ -215,10 +215,10 @@ function readSkillResources(skillPath, disclosures = []) {
       for (const name of readdirSync(absolute)) capture(join(absolute, name), join(relative, name));
       return;
     }
-    if (stat.isFile()) resources.push({ path: relative.replaceAll("\\", "/"), content_base64: readFileSync(absolute).toString("base64") });
+    if (stat.isFile()) files.push({ path: relative.replaceAll("\\", "/"), base64: readFileSync(absolute).toString("base64") });
   };
   for (const disclosure of disclosures) capture(join(root, disclosure), disclosure.replace(/[\\/]$/, ""));
-  return resources;
+  return files;
 }
 
 function repositoryContext(root) {

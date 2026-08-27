@@ -362,7 +362,7 @@ export function buildInstructions(workflow, outDir) {
   lines.push(
     "",
     "## Capabilities",
-    "DIRF captured each selected capability as a local workflow skill. Load the linked `SKILL.md` for the active stage; no global skill installation or name lookup is required.",
+    "DIRF saved each skill inside this workflow. Open its linked `SKILL.md` when you reach that step. Nothing else needs to be installed or found.",
     "",
     "## Skill flow",
     "Reach for skills in this order — each has a reason for its place in the sequence:",
@@ -427,15 +427,15 @@ export function buildInstructions(workflow, outDir) {
       : ["---", `name: ${JSON.stringify(step.skill)}`, `description: ${JSON.stringify(step.reason)}`, "---", "", instructions || step.reason, ""].join("\n");
     writeFileSync(skillPath, skillBody, "utf-8");
     written.push(skillPath);
-    for (const resource of step.resources || []) {
-      const relative = String(resource.path || "").replaceAll("\\", "/");
+    for (const file of step.files || []) {
+      const relative = String(file.path || "").replaceAll("\\", "/");
       if (!relative || relative.startsWith("/") || relative.split("/").includes("..")) {
-        throw new Error(`workflow ${workflow.name || "?"}: invalid skill resource path ${JSON.stringify(resource.path)}`);
+        throw new Error(`workflow ${workflow.name || "?"}: invalid skill file path ${JSON.stringify(file.path)}`);
       }
-      const resourcePath = join(skillDir, ...relative.split("/"));
-      mkdirSync(dirname(resourcePath), { recursive: true });
-      writeFileSync(resourcePath, Buffer.from(String(resource.content_base64 || ""), "base64"));
-      written.push(resourcePath);
+      const filePath = join(skillDir, ...relative.split("/"));
+      mkdirSync(dirname(filePath), { recursive: true });
+      writeFileSync(filePath, Buffer.from(String(file.base64 || ""), "base64"));
+      written.push(filePath);
     }
   }
 
@@ -473,7 +473,7 @@ function writeAgentDetail(agentRef, agentsSub) {
   if (fm.tools && agentRef.status !== "installed") lines.push(`**Tools:** ${fm.tools}`, "");
 
   lines.push("## Skills", "");
-  lines.push("You can discover and invoke any installed skill (the host provides global skill lookup). These are relevance hints for your role — a starting point, not a limit:");
+  lines.push("These skills may help with this role. Installed ones are ready to use. Missing ones are suggestions only:");
   lines.push("");
   if (resolved.length) {
     for (const s of resolved) {
@@ -483,7 +483,7 @@ function writeAgentDetail(agentRef, agentsSub) {
       lines.push(`- ${mark} \`${s.name}\`${summ}${note}`);
     }
   } else {
-    lines.push("_(no role-specific hints — use global skill discovery as needed)_");
+    lines.push("_(no extra skill suggestions)_");
   }
   if (agentRef.status === "installed") {
     // The host has its own agent for this role — point at it instead of
@@ -623,7 +623,7 @@ export function buildHtml(workflow) {
   parts.push(`<div class='gate'>⛔ Do not start the next phase until the current is verifiably done. Validation: ${escapeHtml(wf.validation || "—")}</div>`);
 
   parts.push("<h2>Skill flow</h2>");
-  parts.push("<p class='mute'>Each selected capability is a local workflow skill; load its generated SKILL.md when that stage begins.</p><ol>");
+  parts.push("<p class='mute'>Each skill is saved here. Open its SKILL.md when you reach that step.</p><ol>");
   for (const step of workflow.skill_flow.steps) {
     const status = step.status === "installed" ? "installed" : "recommended";
     parts.push(`<li><span class='chip ${status}'>${escapeHtml(step.skill)}</span> ${escapeHtml(step.reason)}`);
@@ -661,7 +661,7 @@ export function buildHtml(workflow) {
     parts.push("</summary>");
     parts.push("<h3>Skills</h3>");
     parts.push("<p class='mute'>Global skill discovery is available — these are relevance hints for this role, not a limit.</p><p>");
-    parts.push(resolved.length ? resolved.map(chip).join("") : "<span class='mute'>no role-specific hints — use global discovery</span>");
+    parts.push(resolved.length ? resolved.map(chip).join("") : "<span class='mute'>no extra skill suggestions</span>");
     parts.push("</p>");
     parts.push("<h3>Your job</h3>");
     if (a.status === "installed") {

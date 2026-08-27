@@ -13,7 +13,7 @@ function run(command, args, cwd, env = process.env) {
   return execFileSync(command, args, { cwd, env, encoding: "utf8", timeout: TIMEOUT });
 }
 
-test("a linked worktree receives self-contained local workflow skills", () => {
+test("a linked worktree receives each skill and its files", () => {
   const home = mkdtempSync(join(tmpdir(), "dirf-worktree-skill-home-"));
   const primary = mkdtempSync(join(tmpdir(), "dirf-worktree-skill-primary-"));
   const linked = join(dirname(primary), `${primary.split(/[\\/]/).pop()}-linked`);
@@ -25,8 +25,8 @@ test("a linked worktree receives self-contained local workflow skills", () => {
   const fixtureSkill = join(primary, ".agents", "skills", "testing");
   mkdirSync(join(fixtureSkill, "references"), { recursive: true });
   writeFileSync(join(fixtureSkill, "SKILL.md"), [
-    "---", "name: testing", "description: testing regression bugs with portable evidence", "---", "",
-    "# Fixture portable", "", "Read [the guide](references/guide.md) before testing.", "",
+    "---", "name: testing", "description: test bug fixes", "---", "",
+    "# Testing", "", "Read [the guide](references/guide.md) before testing.", "",
   ].join("\n"));
   writeFileSync(join(fixtureSkill, "references", "guide.md"), "PORTABLE-GUIDE-CONTENT\n");
   writeFileSync(join(primary, "fixture-profile.json"), JSON.stringify({ skills: ["testing"] }));

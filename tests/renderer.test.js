@@ -103,7 +103,7 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.ok(readme.includes("review a pull request"));
   assert.ok(readme.includes("persisted-only"));
   assert.ok(readme.includes("## Next step"));
-  assert.match(readme, /local workflow skill/i);
+  assert.match(readme, /saved each skill inside this workflow/i);
   assert.doesNotMatch(readme, /Resolve each capability by name in the current host/);
   assert.ok(!/codex|claude/i.test(readme));
   const userProfileRoot = ["C:", "Users"].join("\\");
@@ -139,7 +139,7 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.match(detail, /recommended — not installed/);
 });
 
-test("skill steps restore captured reference files without advertising host paths", () => {
+test("skill steps restore saved files without showing host paths", () => {
   const outDir = mkdtempSync(join(tmpdir(), "dirf-instr-disclose-"));
   const workflow = {
     name: "disclose", task: "write tests", playbook: "tdd",
@@ -148,14 +148,14 @@ test("skill steps restore captured reference files without advertising host path
       skill_flow: { label: "persisted", branches: [], steps: [{
         stage: "build", skill: "tdd", reason: "Drive one behavior", status: "installed",
         disclosures: ["tests.md", "mocking.md"],
-        resources: [{ path: "tests.md", content_base64: Buffer.from("captured test guidance\n").toString("base64") }],
+        files: [{ path: "tests.md", base64: Buffer.from("saved test guide\n").toString("base64") }],
       }] },
     policy: "policies/workflow-policy.md", schema_version: 2, context_reserve_percent: 5,
   };
   buildInstructions(workflow, outDir);
   const readme = readFileSync(join(outDir, "README.md"), "utf-8");
   assert.doesNotMatch(readme, /mocking\.md/);
-  assert.equal(readFileSync(join(outDir, "skills", "01-tdd", "tests.md"), "utf-8"), "captured test guidance\n");
+  assert.equal(readFileSync(join(outDir, "skills", "01-tdd", "tests.md"), "utf-8"), "saved test guide\n");
 });
 
 test("focused output can be disabled without changing task instructions", () => {
@@ -288,7 +288,7 @@ test("buildHtml is self-contained and collapsible", () => {
   assert.ok(html.includes("frontend-developer"));
   assert.ok(html.includes("persisted-only"));
   assert.ok(html.includes("<h2>Next step</h2>"));
-  assert.ok(html.includes("local workflow skill"));
+  assert.ok(html.includes("Each skill is saved here"));
   assert.ok(!/codex|claude/i.test(html));
   assert.ok(html.includes("Definition of Done"));
   assert.ok(!html.includes("src=") && !html.includes('href="')); // no external assets
