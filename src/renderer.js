@@ -1,6 +1,6 @@
 // Renders workflow Markdown and its self-contained HTML view.
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { AGENTS_DIR, ROOT } from "./paths.js";
 
 const GOVERNANCE_MARKER = "<!-- governance:v1 -->";
@@ -427,6 +427,16 @@ export function buildInstructions(workflow, outDir) {
       : ["---", `name: ${JSON.stringify(step.skill)}`, `description: ${JSON.stringify(step.reason)}`, "---", "", instructions || step.reason, ""].join("\n");
     writeFileSync(skillPath, skillBody, "utf-8");
     written.push(skillPath);
+    for (const resource of step.resources || []) {
+      const relative = String(resource.path || "").replaceAll("\\", "/");
+      if (!relative || relative.startsWith("/") || relative.split("/").includes("..")) {
+        throw new Error(`workflow ${workflow.name || "?"}: invalid skill resource path ${JSON.stringify(resource.path)}`);
+      }
+      const resourcePath = join(skillDir, ...relative.split("/"));
+      mkdirSync(dirname(resourcePath), { recursive: true });
+      writeFileSync(resourcePath, Buffer.from(String(resource.content_base64 || ""), "base64"));
+      written.push(resourcePath);
+    }
   }
 
   const policySrc = resolve(ROOT, workflow.policy || "policies/workflow-policy.md");
@@ -454,7 +464,7 @@ function writeAgentDetail(agentRef, agentsSub) {
   }
   const fm = parsed.frontmatter;
   const tags = agentRef.tags || [];
-  const resolved = (agentRef.skills || []).filter((skill) => skill.status === "installed");
+  const resolved = agentRef.skills || [];
 
   const lines = [`# ${name}`, ""];
   if (tags.length) lines.push(`**Tags:** ${tags.join(", ")}`, "");
@@ -641,7 +651,7 @@ export function buildHtml(workflow) {
     } catch {
       parsed = { body: "_(missing)_", frontmatter: {} };
     }
-    const resolved = (a.skills || []).filter((skill) => skill.status === "installed");
+    const resolved = a.skills || [];
     const tags = (a.tags || []).join(", ");
     const origin = a.status === "installed"
       ? ` <span class='chip installed'>installed: ${escapeHtml(a.matched || name)}</span>`

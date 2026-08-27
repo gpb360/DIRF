@@ -14,7 +14,7 @@
 //   dirf validate                                        validate registries + workflows
 //   dirf skills scan [--path DIR]                        scan host, print installed skills + resolved refs
 //   dirf validate|graph|run|render <folder>               operate an Eve-style folder DAG
-import { writeFileSync, readFileSync, existsSync, statSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, statSync, lstatSync, readdirSync } from "node:fs";
 import { dirname, join, isAbsolute, resolve } from "node:path";
 import { homedir } from "node:os";
 import { execFileSync, spawn } from "node:child_process";
@@ -115,10 +115,14 @@ function castAgents(agents, hostAgents) {
 
 function buildPlan(name, task, path, reservePercent = 5, compaction = null, focusedOutput = true, routing = {}) {
   const { selection, skillFlow, discovered, hostAgents, facts, capabilityProfile } = assembleTaskRouting(task, path, routing);
-  skillFlow.steps = skillFlow.steps.map((step) => ({ ...step, instructions: readSkillInstructions(step.path) }));
+  skillFlow.steps = skillFlow.steps.map((step) => ({
+    ...step,
+    instructions: readSkillInstructions(step.path),
+    resources: readSkillResources(step.path, step.disclosures),
+  }));
   const agents = castAgents(enrichAgents(selection.agents), hostAgents).map((agent) => ({
     ...agent,
-    skills: resolveAgentSkills(agent.name, agent.skills, [], discovered).filter((skill) => skill.status === "installed"),
+    skills: resolveAgentSkills(agent.name, agent.skills, [], discovered),
   }));
   const questions = [...(selection.questions || [])];
   if (capabilityProfile?.missing.length) {
@@ -196,6 +200,25 @@ function readSkillInstructions(path) {
     }
   } catch { /* unavailable skill source stays capability-only */ }
   return "";
+}
+
+function readSkillResources(skillPath, disclosures = []) {
+  if (!skillPath || !Array.isArray(disclosures) || !disclosures.length) return [];
+  let root;
+  try { root = statSync(skillPath).isFile() ? dirname(skillPath) : skillPath; } catch { return []; }
+  const resources = [];
+  const capture = (absolute, relative) => {
+    const stat = lstatSync(absolute, { throwIfNoEntry: false });
+    if (!stat) return;
+    if (stat.isSymbolicLink()) return;
+    if (stat.isDirectory()) {
+      for (const name of readdirSync(absolute)) capture(join(absolute, name), join(relative, name));
+      return;
+    }
+    if (stat.isFile()) resources.push({ path: relative.replaceAll("\\", "/"), content_base64: readFileSync(absolute).toString("base64") });
+  };
+  for (const disclosure of disclosures) capture(join(root, disclosure), disclosure.replace(/[\\/]$/, ""));
+  return resources;
 }
 
 function repositoryContext(root) {

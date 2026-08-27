@@ -135,21 +135,27 @@ test("buildInstructions writes router + per-agent detail", () => {
   const detail = readFileSync(join(outDir, "agents", "frontend-developer.md"), "utf-8");
   assert.ok(detail.includes("# frontend-developer"));
   assert.ok(detail.includes("## Skills"));
-  assert.doesNotMatch(detail, /ponytail/, "unavailable optional role hints should be omitted");
+  assert.match(detail, /ponytail/);
+  assert.match(detail, /recommended — not installed/);
 });
 
-test("skill steps do not advertise uncaptured host reference files", () => {
+test("skill steps restore captured reference files without advertising host paths", () => {
   const outDir = mkdtempSync(join(tmpdir(), "dirf-instr-disclose-"));
   const workflow = {
     name: "disclose", task: "write tests", playbook: "tdd",
     workflow: { phases: ["a"], output: "tests", validation: "v", recovery: "r" },
     agents: [], baseline_skills: [], questions: [],
-    skill_flow: { label: "persisted", branches: [], steps: [{ stage: "build", skill: "tdd", reason: "Drive one behavior", status: "installed", disclosures: ["tests.md", "mocking.md"] }] },
+      skill_flow: { label: "persisted", branches: [], steps: [{
+        stage: "build", skill: "tdd", reason: "Drive one behavior", status: "installed",
+        disclosures: ["tests.md", "mocking.md"],
+        resources: [{ path: "tests.md", content_base64: Buffer.from("captured test guidance\n").toString("base64") }],
+      }] },
     policy: "policies/workflow-policy.md", schema_version: 2, context_reserve_percent: 5,
   };
   buildInstructions(workflow, outDir);
   const readme = readFileSync(join(outDir, "README.md"), "utf-8");
-  assert.doesNotMatch(readme, /tests\.md|mocking\.md/);
+  assert.doesNotMatch(readme, /mocking\.md/);
+  assert.equal(readFileSync(join(outDir, "skills", "01-tdd", "tests.md"), "utf-8"), "captured test guidance\n");
 });
 
 test("focused output can be disabled without changing task instructions", () => {
