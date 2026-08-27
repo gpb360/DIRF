@@ -1,5 +1,5 @@
 // Renders workflow Markdown and its self-contained HTML view.
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { AGENTS_DIR, ROOT } from "./paths.js";
 
@@ -229,7 +229,7 @@ function inline(text) {
 // --------------------------------------------------------------------------- //
 // Lean markdown instruction set (router + per-agent detail)
 // --------------------------------------------------------------------------- //
-export function buildInstructions(workflow, outDir) {
+export function buildInstructions(workflow, outDir, skillBindings = []) {
   assertSnapshot(workflow);
   // Write a lean instruction set: README.md router + per-agent detail files.
   // Returns the list of written file paths. Discovery is scoped to the
@@ -362,7 +362,7 @@ export function buildInstructions(workflow, outDir) {
   lines.push(
     "",
     "## Capabilities",
-    "DIRF saved each skill inside this workflow. Open its linked `SKILL.md` when you reach that step. Nothing else needs to be installed or found.",
+    "DIRF linked each step to the installed skill selected on this machine. Open the step link to see its current file path.",
     "",
     "## Skill flow",
     "Reach for skills in this order — each has a reason for its place in the sequence:",
@@ -374,7 +374,7 @@ export function buildInstructions(workflow, outDir) {
     if (s.stage !== lastStage) { lines.push(`**${s.stage}**`); lastStage = s.stage; }
     const mark = s.status === "installed" ? "✅" : "⚠️";
     const unit = skillUnits[index];
-    const label = unit ? `[\`${s.skill}\`](skills/${unit.folder}/SKILL.md)` : `\`${s.skill}\``;
+    const label = unit ? `[\`${s.skill}\`](skills/${unit.folder}/README.md)` : `\`${s.skill}\``;
     lines.push(`- ${mark} ${label} — ${s.reason}`);
     if (s.output) lines.push(`  - **Done at this step when:** ${s.output}`);
   }
@@ -407,36 +407,25 @@ export function buildInstructions(workflow, outDir) {
   ].join("\n"), "utf-8");
   written.push(playbookReadme);
 
-  for (const step of skillUnits) {
-    const skillDir = join(outDir, "skills", step.folder);
+  const skillsDir = resolve(outDir, "skills");
+  if (dirname(skillsDir) !== resolve(outDir)) throw new Error("invalid generated skills path");
+  rmSync(skillsDir, { recursive: true, force: true });
+  for (const [index, step] of skillUnits.entries()) {
+    const skillDir = join(skillsDir, step.folder);
     mkdirSync(skillDir, { recursive: true });
     const skillReadme = join(skillDir, "README.md");
+    const binding = skillBindings[index];
+    const location = binding?.status === "installed" && binding.entry
+      ? `Open the installed skill at \`${binding.entry}\`.`
+      : "This skill is not installed now. Stop before this step and ask the user what to use.";
     writeFileSync(skillReadme, [
       "---", `name: ${JSON.stringify(step.skill)}`, "kind: skill", `description: ${JSON.stringify(step.reason)}`,
-      "uses: []", 'details: ["SKILL.md"]', `inputs: ${JSON.stringify([step.stage])}`,
+      "uses: []", "details: []", `inputs: ${JSON.stringify([step.stage])}`,
       `outputs: ${JSON.stringify(step.output ? [step.output] : ["stage result"])}`,
       `capabilities: ${JSON.stringify(step.capability ? [step.capability] : [])}`, "---", "",
-      `# ${step.skill}`, "", step.reason,
-      "", "Read [SKILL.md](SKILL.md) completely before using this skill.",
+      `# ${step.skill}`, "", step.reason, "", location,
     ].join("\n"), "utf-8");
     written.push(skillReadme);
-    const skillPath = join(skillDir, "SKILL.md");
-    const instructions = String(step.instructions || "").trim();
-    const skillBody = instructions.startsWith("---")
-      ? `${instructions}\n`
-      : ["---", `name: ${JSON.stringify(step.skill)}`, `description: ${JSON.stringify(step.reason)}`, "---", "", instructions || step.reason, ""].join("\n");
-    writeFileSync(skillPath, skillBody, "utf-8");
-    written.push(skillPath);
-    for (const file of step.files || []) {
-      const relative = String(file.path || "").replaceAll("\\", "/");
-      if (!relative || relative.startsWith("/") || relative.split("/").includes("..")) {
-        throw new Error(`workflow ${workflow.name || "?"}: invalid skill file path ${JSON.stringify(file.path)}`);
-      }
-      const filePath = join(skillDir, ...relative.split("/"));
-      mkdirSync(dirname(filePath), { recursive: true });
-      writeFileSync(filePath, Buffer.from(String(file.base64 || ""), "base64"));
-      written.push(filePath);
-    }
   }
 
   const policySrc = resolve(ROOT, workflow.policy || "policies/workflow-policy.md");
@@ -549,7 +538,7 @@ function chip(skill) {
   return `<span class="${classes}">${escapeHtml(skill.name)}${note}</span>`;
 }
 
-export function buildHtml(workflow) {
+export function buildHtml(workflow, skillBindings = []) {
   assertSnapshot(workflow);
   const wf = workflow.workflow || {};
   const agents = workflow.agents || [];
@@ -623,10 +612,13 @@ export function buildHtml(workflow) {
   parts.push(`<div class='gate'>⛔ Do not start the next phase until the current is verifiably done. Validation: ${escapeHtml(wf.validation || "—")}</div>`);
 
   parts.push("<h2>Skill flow</h2>");
-  parts.push("<p class='mute'>Each skill is saved here. Open its SKILL.md when you reach that step.</p><ol>");
-  for (const step of workflow.skill_flow.steps) {
+  parts.push("<p class='mute'>Each step points to the installed skill selected on this machine.</p><ol>");
+  for (const [index, step] of workflow.skill_flow.steps.entries()) {
     const status = step.status === "installed" ? "installed" : "recommended";
     parts.push(`<li><span class='chip ${status}'>${escapeHtml(step.skill)}</span> ${escapeHtml(step.reason)}`);
+    const binding = skillBindings[index];
+    if (binding?.status === "installed" && binding.entry) parts.push(`<br><code>${escapeHtml(binding.entry)}</code>`);
+    else parts.push("<br><span class='mute'>not installed now</span>");
     if (step.output) parts.push(`<br><span class='mute'><strong>Done at this step when:</strong> ${escapeHtml(step.output)}</span>`);
     parts.push("</li>");
   }

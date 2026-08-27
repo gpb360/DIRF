@@ -14,7 +14,7 @@
 //   dirf validate                                        validate registries + workflows
 //   dirf skills scan [--path DIR]                        scan host, print installed skills + resolved refs
 //   dirf validate|graph|run|render <folder>               operate an Eve-style folder DAG
-import { writeFileSync, readFileSync, existsSync, statSync, lstatSync, readdirSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { dirname, join, isAbsolute, resolve } from "node:path";
 import { homedir } from "node:os";
 import { execFileSync, spawn } from "node:child_process";
@@ -42,6 +42,7 @@ import {
   verifyEvidenceLedger,
 } from "./governance.js";
 import { DEFAULT_ISSUE_POLICY } from "./issue-governance.js";
+import { bindingsFromPlan, readSkillBindings, refreshSkillBindings, writeSkillBindings } from "./skill-bindings.js";
 
 const LIFECYCLE = {
   clarify: "Use the best installed interview capability before implementation.",
@@ -115,11 +116,6 @@ function castAgents(agents, hostAgents) {
 
 function buildPlan(name, task, path, reservePercent = 5, compaction = null, focusedOutput = true, routing = {}) {
   const { selection, skillFlow, discovered, hostAgents, facts, capabilityProfile } = assembleTaskRouting(task, path, routing);
-  skillFlow.steps = skillFlow.steps.map((step) => ({
-    ...step,
-    instructions: readSkillInstructions(step.path),
-    files: readSkillFiles(step.path, step.disclosures),
-  }));
   const agents = castAgents(enrichAgents(selection.agents), hostAgents).map((agent) => ({
     ...agent,
     skills: resolveAgentSkills(agent.name, agent.skills, [], discovered),
@@ -188,37 +184,6 @@ function readCapabilityProfile(file) {
     throw new Error("Capability profile skills must be names, not paths");
   }
   return { skills: [...new Set(profile.skills.map((name) => name.trim()))] };
-}
-
-function readSkillInstructions(path) {
-  if (!path) return "";
-  try {
-    if (statSync(path).isFile()) return readFileSync(path, "utf8");
-    for (const name of ["SKILL.md", "README.md", "skill.json"]) {
-      const candidate = join(path, name);
-      if (existsSync(candidate)) return readFileSync(candidate, "utf8");
-    }
-  } catch { /* unavailable skill source stays capability-only */ }
-  return "";
-}
-
-function readSkillFiles(skillPath, disclosures = []) {
-  if (!skillPath || !Array.isArray(disclosures) || !disclosures.length) return [];
-  let root;
-  try { root = statSync(skillPath).isFile() ? dirname(skillPath) : skillPath; } catch { return []; }
-  const files = [];
-  const capture = (absolute, relative) => {
-    const stat = lstatSync(absolute, { throwIfNoEntry: false });
-    if (!stat) return;
-    if (stat.isSymbolicLink()) return;
-    if (stat.isDirectory()) {
-      for (const name of readdirSync(absolute)) capture(join(absolute, name), join(relative, name));
-      return;
-    }
-    if (stat.isFile()) files.push({ path: relative.replaceAll("\\", "/"), base64: readFileSync(absolute).toString("base64") });
-  };
-  for (const disclosure of disclosures) capture(join(root, disclosure), disclosure.replace(/[\\/]$/, ""));
-  return files;
 }
 
 function repositoryContext(root) {
@@ -327,9 +292,10 @@ function assembleTaskRouting(task, path, options = {}) {
   return { selection, discovered, hostAgents, facts, skillFlow, capabilityProfile: profileSnapshot };
 }
 
-function savePlan(plan, attempt) {
+function savePlan(plan, attempt, target) {
   const path = join(attempt.folder, "workflow.json");
   plan.attempt = { id: attempt.id, path: attempt.relativePath };
+  writeSkillBindings(attempt.folder, bindingsFromPlan(plan, target));
   writeFileSync(path, JSON.stringify(portablePlan(plan), null, 2), "utf-8");
   const handoff = join(attempt.folder, "HANDOFF.md");
   if (!existsSync(handoff)) writeFileSync(handoff, [
@@ -346,9 +312,10 @@ function savePlan(plan, attempt) {
 function renderPlan(planPath, openBrowser = false, quiet = false) {
   const plan = JSON.parse(readFileSync(planPath, "utf-8"));
   const outDir = dirname(planPath);
-  const written = buildInstructions(plan, outDir);
+  const bindings = readSkillBindings(outDir);
+  const written = buildInstructions(plan, outDir, bindings);
   const htmlPath = join(outDir, "instructions.html");
-  writeFileSync(htmlPath, buildHtml(plan), "utf-8");
+  writeFileSync(htmlPath, buildHtml(plan, bindings), "utf-8");
   written.push(htmlPath);
   if (!quiet) console.log(`Spec kit rendered: ${htmlPath}`);
   if (openBrowser) openBrowserAt(htmlPath);
@@ -371,7 +338,7 @@ function cmdBuild(args) {
     profile: args.profile,
   });
   const attempt = createAttempt(target, args.name);
-  const planPath = savePlan(plan, attempt);
+  const planPath = savePlan(plan, attempt, target);
   if (!args.json) console.log(`Attempt saved: ${attempt.id}`);
   renderPlan(planPath, args.open, args.json);
   if (args.json) console.log(JSON.stringify({ attempt: publicAttemptForSlug(resolveProject(target).slug, attempt), workflow: planPath }, null, 2));
@@ -390,7 +357,7 @@ function cmdPlan(args) {
     profile: args.profile,
   });
   const attempt = createAttempt(target, args.name);
-  const planPath = savePlan(plan, attempt);
+  const planPath = savePlan(plan, attempt, target);
   console.log(`Plan saved: ${attempt.id}`);
   console.log(`Lifecycle: ${plan.skill_flow.steps.map((step) => step.stage).join(" -> ")}`);
   renderPlan(planPath, args.open);
@@ -404,7 +371,7 @@ function cmdCreate(args) {
     profile: args.profile,
   });
   const attempt = createAttempt(target, args.name);
-  savePlan(plan, attempt);
+  savePlan(plan, attempt, target);
   console.log(`Attempt saved: ${attempt.id}`);
   console.log(`Routed to playbook: ${plan.playbook} (score ${plan.score})`);
   const installed = (plan.agents || []).filter((agent) => agent.status === "installed");
@@ -468,7 +435,7 @@ async function cmdLearn(args) {
     profile: args.profile,
   });
   const attempt = createAttempt(target, name);
-  savePlan(plan, attempt);
+  savePlan(plan, attempt, target);
   const slug = resolveProject(target).slug;
   try {
     const source = await ingestLearningSource({
@@ -515,12 +482,15 @@ async function cmdLearn(args) {
 }
 
 function cmdRender(args) {
-  const attempt = findAttempt(projectRoot(args.path), args.name);
+  const target = projectRoot(args.path);
+  const attempt = findAttempt(target, args.name);
   const planPath = join(attempt.folder, "workflow.json");
   if (!existsSync(planPath)) {
     console.error(`Attempt ${attempt.id} has no workflow.json`);
     process.exit(2);
   }
+  const plan = JSON.parse(readFileSync(planPath, "utf8"));
+  refreshSkillBindings(plan, attempt.folder, target);
   renderPlan(planPath, args.open);
 }
 
@@ -599,6 +569,12 @@ function cmdResume(args) {
   const target = projectRoot(args.path);
   const attempt = findAttempt(target, args.name);
   const project = resolveProject(target);
+  const planPath = join(attempt.folder, "workflow.json");
+  if (existsSync(planPath)) {
+    const plan = JSON.parse(readFileSync(planPath, "utf8"));
+    refreshSkillBindings(plan, attempt.folder, target);
+    if ([2, 3, 4, 5].includes(plan.schema_version)) renderPlan(planPath, false, true);
+  }
   // Resume is the "work is starting" signal: a planned attempt auto-starts so
   // the lifecycle can't drift (no phases in its workflow → stays planned).
   let autoStarted = false;
@@ -705,7 +681,10 @@ function cmdMigrate(name, target) {
       parsed.lifecycle ??= LIFECYCLE;
       const plan = portablePlan(parsed);
       writeFileSync(path, JSON.stringify(plan, null, 2), "utf-8");
-      if (existsSync(join(dirname(path), "README.md"))) renderPlan(path);
+      if (existsSync(join(dirname(path), "README.md"))) {
+        refreshSkillBindings(plan, attempt.folder, root);
+        renderPlan(path);
+      }
       migrated += 1;
     } catch (error) {
       console.error(`Failed to migrate ${attempt.id}: ${error.message}`);

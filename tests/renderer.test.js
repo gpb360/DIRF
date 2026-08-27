@@ -103,7 +103,7 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.ok(readme.includes("review a pull request"));
   assert.ok(readme.includes("persisted-only"));
   assert.ok(readme.includes("## Next step"));
-  assert.match(readme, /saved each skill inside this workflow/i);
+  assert.match(readme, /linked each step to the installed skill/i);
   assert.doesNotMatch(readme, /Resolve each capability by name in the current host/);
   assert.ok(!/codex|claude/i.test(readme));
   const userProfileRoot = ["C:", "Users"].join("\\");
@@ -139,8 +139,10 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.match(detail, /recommended — not installed/);
 });
 
-test("skill steps restore saved files without showing host paths", () => {
+test("skill steps point to installed files without copying them", () => {
   const outDir = mkdtempSync(join(tmpdir(), "dirf-instr-disclose-"));
+  const installed = join(outDir, "installed-tdd-SKILL.md");
+  writeFileSync(installed, "# Installed TDD\n");
   const workflow = {
     name: "disclose", task: "write tests", playbook: "tdd",
     workflow: { phases: ["a"], output: "tests", validation: "v", recovery: "r" },
@@ -152,10 +154,13 @@ test("skill steps restore saved files without showing host paths", () => {
       }] },
     policy: "policies/workflow-policy.md", schema_version: 2, context_reserve_percent: 5,
   };
-  buildInstructions(workflow, outDir);
+  buildInstructions(workflow, outDir, [{ skill: "tdd", provider: "project", status: "installed", entry: installed.replaceAll("\\", "/") }]);
   const readme = readFileSync(join(outDir, "README.md"), "utf-8");
   assert.doesNotMatch(readme, /mocking\.md/);
-  assert.equal(readFileSync(join(outDir, "skills", "01-tdd", "tests.md"), "utf-8"), "saved test guide\n");
+  const wrapper = readFileSync(join(outDir, "skills", "01-tdd", "README.md"), "utf-8");
+  assert.match(wrapper, /Open the installed skill at/);
+  assert.equal(existsSync(join(outDir, "skills", "01-tdd", "tests.md")), false);
+  assert.equal(existsSync(join(outDir, "skills", "01-tdd", "SKILL.md")), false);
 });
 
 test("focused output can be disabled without changing task instructions", () => {
@@ -247,7 +252,7 @@ test("per-step output contract renders as a checkpoint", () => {
   assert.match(skillReadme, /outputs: \["a green test with the touched surface building clean"\]/);
 });
 
-test("rendered workflow preserves repository context and full skill instructions", () => {
+test("rendered workflow preserves repository context and points to the installed skill", () => {
   const outDir = mkdtempSync(join(tmpdir(), "dirf-context-"));
   const workflow = {
     name: "audit", task: "compare screens", playbook: "ui-ux-review",
@@ -260,15 +265,16 @@ test("rendered workflow preserves repository context and full skill instructions
     }] },
   };
 
-  buildInstructions(workflow, outDir);
+  const installed = join(outDir, "installed-graphify-SKILL.md");
+  writeFileSync(installed, "# Installed Graphify\n");
+  buildInstructions(workflow, outDir, [{ skill: "graphify", provider: "project", status: "installed", entry: installed.replaceAll("\\", "/") }]);
   const readme = readFileSync(join(outDir, "README.md"), "utf8");
   const skillReadme = readFileSync(join(outDir, "skills", "01-graphify", "README.md"), "utf8");
-  const skill = readFileSync(join(outDir, "skills", "01-graphify", "SKILL.md"), "utf8");
   assert.match(readme, /Repository context preflight/);
   assert.match(readme, /`AGENTS\.md`/);
-  assert.match(skillReadme, /details: \["SKILL\.md"\]/);
-  assert.match(skillReadme, /Read \[SKILL\.md\]/);
-  assert.match(skill, /Run the graph query before source browsing/);
+  assert.match(skillReadme, /details: \[\]/);
+  assert.match(skillReadme, /Open the installed skill at/);
+  assert.equal(existsSync(join(outDir, "skills", "01-graphify", "SKILL.md")), false);
   assert.equal(existsSync(join(outDir, "skills", "01-graphify", "SOURCE.md")), false);
 });
 
@@ -288,7 +294,7 @@ test("buildHtml is self-contained and collapsible", () => {
   assert.ok(html.includes("frontend-developer"));
   assert.ok(html.includes("persisted-only"));
   assert.ok(html.includes("<h2>Next step</h2>"));
-  assert.ok(html.includes("Each skill is saved here"));
+  assert.ok(html.includes("Each step points to the installed skill"));
   assert.ok(!/codex|claude/i.test(html));
   assert.ok(html.includes("Definition of Done"));
   assert.ok(!html.includes("src=") && !html.includes('href="')); // no external assets

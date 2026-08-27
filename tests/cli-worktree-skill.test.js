@@ -13,7 +13,7 @@ function run(command, args, cwd, env = process.env) {
   return execFileSync(command, args, { cwd, env, encoding: "utf8", timeout: TIMEOUT });
 }
 
-test("a linked worktree receives each skill and its files", () => {
+test("a linked worktree points to its installed skill without copying it", () => {
   const home = mkdtempSync(join(tmpdir(), "dirf-worktree-skill-home-"));
   const primary = mkdtempSync(join(tmpdir(), "dirf-worktree-skill-primary-"));
   const linked = join(dirname(primary), `${primary.split(/[\\/]/).pop()}-linked`);
@@ -44,16 +44,25 @@ test("a linked worktree receives each skill and its files", () => {
   const attempt = join(home, "projects", slug, "attempts", attemptId);
   const workflowReadme = readFileSync(join(attempt, "README.md"), "utf8");
   const workflow = JSON.parse(readFileSync(join(attempt, "workflow.json"), "utf8"));
+  const bindings = JSON.parse(readFileSync(join(attempt, "skill-bindings.json"), "utf8")).bindings;
   const skillFolders = readdirSync(join(attempt, "skills"));
   assert.equal(skillFolders.length, workflow.skill_flow.steps.length);
   for (const skillFolder of skillFolders) {
-    assert.match(workflowReadme, new RegExp(`skills/${skillFolder}/SKILL\\.md`));
-    assert.ok(existsSync(join(attempt, "skills", skillFolder, "SKILL.md")));
+    assert.match(workflowReadme, new RegExp(`skills/${skillFolder}/README\\.md`));
+    assert.equal(existsSync(join(attempt, "skills", skillFolder, "SKILL.md")), false);
   }
   const fixtureFolder = skillFolders.find((folder) => folder.endsWith("-testing"));
   assert.ok(fixtureFolder, skillFolders.join(", "));
-  const skill = readFileSync(join(attempt, "skills", fixtureFolder, "SKILL.md"), "utf8");
+  const skill = readFileSync(join(attempt, "skills", fixtureFolder, "README.md"), "utf8");
+  const fixtureBinding = bindings.find((item) => item.skill === "testing");
   assert.doesNotMatch(workflowReadme, /Resolve each capability by name in the current host/);
-  assert.match(skill, /Read \[the guide\]\(references\/guide\.md\)/);
-  assert.equal(readFileSync(join(attempt, "skills", fixtureFolder, "references", "guide.md"), "utf8"), "PORTABLE-GUIDE-CONTENT\n");
+  assert.equal(fixtureBinding.status, "installed");
+  assert.equal(fixtureBinding.entry, join(linked, ".agents", "skills", "testing", "SKILL.md").replaceAll("\\", "/"));
+  assert.equal(fixtureBinding.relative_entry, ".agents/skills/testing/SKILL.md");
+  assert.ok(fixtureBinding.fingerprint);
+  assert.match(skill, /Open the installed skill at/);
+  assert.match(skill, new RegExp(fixtureBinding.entry.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.equal(existsSync(join(attempt, "skills", fixtureFolder, "references", "guide.md")), false);
+  assert.equal("instructions" in workflow.skill_flow.steps.find((step) => step.skill === "testing"), false);
+  assert.equal("files" in workflow.skill_flow.steps.find((step) => step.skill === "testing"), false);
 });
