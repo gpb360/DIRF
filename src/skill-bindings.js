@@ -1,10 +1,9 @@
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { fileHash } from "./paths.js";
 import { bundledSkills, discover, enrichDiscovered } from "./skills.js";
 
 const ENTRY_FILES = ["SKILL.md", "skill.json", "README.md"];
-export const SKILL_BINDINGS_FILE = "skill-bindings.json";
 
 function entryFile(path) {
   if (!path) return null;
@@ -41,21 +40,7 @@ export function bindingsFromPlan(plan, projectRoot) {
   return (plan.skill_flow?.steps || []).map((step) => binding(step, step.path, projectRoot));
 }
 
-export function readSkillBindings(folder) {
-  try {
-    const value = JSON.parse(readFileSync(join(folder, SKILL_BINDINGS_FILE), "utf8"));
-    return Array.isArray(value.bindings) ? value.bindings : [];
-  } catch {
-    return [];
-  }
-}
-
-export function writeSkillBindings(folder, bindings) {
-  writeFileSync(join(folder, SKILL_BINDINGS_FILE), JSON.stringify({ schema_version: 1, bindings }, null, 2) + "\n", "utf8");
-}
-
-export function refreshSkillBindings(plan, folder, projectRoot, options = {}) {
-  const previous = readSkillBindings(folder);
+export function refreshSkillBindings(plan, previous, projectRoot, options = {}) {
   let installed;
   let bundled;
   const bindings = (plan.skill_flow?.steps || []).map((step, index) => {
@@ -76,6 +61,5 @@ export function refreshSkillBindings(plan, folder, projectRoot, options = {}) {
       ? binding(step, current.path, projectRoot)
       : binding(step, null, projectRoot);
   });
-  writeSkillBindings(folder, bindings);
   return bindings;
 }

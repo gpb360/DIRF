@@ -6,6 +6,8 @@ import { registerProject, storeProjectDir, createAttemptInStore, listAttempts as
 function ensureRegistered(root) {
   return registerProject(root);
 }
+const ATTEMPT_IGNORE = ".dirf/attempts/";
+
 const DEFAULT_COMPACTION = Object.freeze({
   method: "verbatim-line",
   preserve_recent: 2,
@@ -145,12 +147,16 @@ export function setupProject(root = process.cwd(), options = {}) {
   // move. The backup safety net (.dirf.migrating.<ts>/) still runs.
   migrateLegacyContent(root, slug);
 
-  if (options.docs) {
-    writeMissing(root, contextPath, "# Project Context\n\nRecord stable domain language and constraints here.\n", created);
-    writeMissing(root, join(adrPath, "README.md"), "# Architecture Decisions\n\nRecord hard-to-reverse decisions as numbered Markdown files.\n", created);
-    writeMissing(root, join(config.tracker.specs_path, "README.md"), "# Specifications\n\nDurable destination documents for multi-session work.\n", created);
-    writeMissing(root, config.tracker.tickets_path, "# Tickets\n\nDependency-ordered implementation slices.\n", created);
+  const gitignore = join(root, ".gitignore");
+  const ignored = existsSync(gitignore) ? readFileSync(gitignore, "utf8") : "";
+  if (!ignored.split(/\r?\n/).includes(ATTEMPT_IGNORE)) {
+    writeFileSync(gitignore, `${ignored}${ignored && !ignored.endsWith("\n") ? "\n" : ""}${ATTEMPT_IGNORE}\n`, "utf8");
+    created.push(".gitignore");
   }
+  writeMissing(root, contextPath, "# Project Context\n\nRecord stable domain language and constraints here.\n", created);
+  writeMissing(root, join(adrPath, "README.md"), "# Architecture Decisions\n\nRecord hard-to-reverse decisions as numbered Markdown files.\n", created);
+  writeMissing(root, join(config.tracker.specs_path, "README.md"), "# Specifications\n\nDurable destination documents for multi-session work.\n", created);
+  writeMissing(root, config.tracker.tickets_path, "# Tickets\n\nDependency-ordered implementation slices.\n", created);
   return { root, slug, config: loadProjectConfig(root), created };
 }
 

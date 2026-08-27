@@ -123,11 +123,11 @@ node src/cli.js build first-run "fix the checkout timeout" --path "../my-project
 `build` prints the saved attempt path. Open its `README.md` and give it to your
 agent as the operating workflow.
 
-Setup does not rewrite application code, replace dependencies, change agent
-configuration, or add repository files. It keeps coordination state outside the
-project at `~/.dirf/projects/<slug>/`. Pass `--docs` only when you want DIRF to
-create shared project context, architecture decision, specification, and ticket
-documents under `docs/agents/`.
+Setup is additive. DIRF does not rewrite application code, replace dependencies,
+or change your agent configuration. It keeps coordination state outside the
+project at `~/.dirf/projects/<slug>/`. On first setup it may add missing support
+documents and the `.dirf/attempts/` rule to the project's `.gitignore`; review
+and commit those small files only if they fit your repository.
 
 ## Works with your current setup
 
@@ -255,7 +255,7 @@ done-when checklist.
 
 ```
 # building workflows
-dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5] [--docs]
+dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
 dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--open]   full pipeline: route -> JSON -> md + html
 dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--research] discovery through handoff, without implementation
 dirf create <name> "<task>" [--path DIR] [--profile FILE]             route -> workflow JSON only

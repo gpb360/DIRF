@@ -161,6 +161,15 @@ test("skill steps point to installed files without copying them", () => {
   assert.match(wrapper, /Open the installed skill at/);
   assert.equal(existsSync(join(outDir, "skills", "01-tdd", "tests.md")), false);
   assert.equal(existsSync(join(outDir, "skills", "01-tdd", "SKILL.md")), false);
+
+  const missingDir = mkdtempSync(join(tmpdir(), "dirf-instr-missing-"));
+  const missingBinding = [{ skill: "tdd", provider: "project", status: "missing", entry: null }];
+  buildInstructions(workflow, missingDir, missingBinding);
+  const missingReadme = readFileSync(join(missingDir, "README.md"), "utf8");
+  const missingLine = missingReadme.split("\n").find((line) => line.includes("`tdd`"));
+  assert.match(missingLine, /⚠️/);
+  assert.doesNotMatch(missingLine, /✅/);
+  assert.match(buildHtml(workflow, missingBinding), /chip recommended'>tdd/);
 });
 
 test("focused output can be disabled without changing task instructions", () => {

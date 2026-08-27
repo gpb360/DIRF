@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,11 +23,13 @@ test("a linked worktree points to its installed skill without copying it", () =>
   run("git", ["remote", "add", "origin", "https://example.invalid/dirf-fixture.git"], primary);
   run(process.execPath, [CLI, "setup", primary], primary, env);
   const fixtureSkill = join(primary, ".agents", "skills", "testing");
-  mkdirSync(join(fixtureSkill, "references"), { recursive: true });
-  writeFileSync(join(fixtureSkill, "SKILL.md"), [
+  const fixtureSkillFile = join(fixtureSkill, "SKILL.md");
+  const fixtureSkillContents = [
     "---", "name: testing", "description: test bug fixes", "---", "",
     "# Testing", "", "Read [the guide](references/guide.md) before testing.", "",
-  ].join("\n"));
+  ].join("\n");
+  mkdirSync(join(fixtureSkill, "references"), { recursive: true });
+  writeFileSync(fixtureSkillFile, fixtureSkillContents);
   writeFileSync(join(fixtureSkill, "references", "guide.md"), "PORTABLE-GUIDE-CONTENT\n");
   writeFileSync(join(primary, "fixture-profile.json"), JSON.stringify({ skills: ["testing"] }));
   run("git", ["config", "user.email", "dirf-test@example.invalid"], primary);
@@ -65,4 +67,28 @@ test("a linked worktree points to its installed skill without copying it", () =>
   assert.equal(existsSync(join(attempt, "skills", fixtureFolder, "references", "guide.md")), false);
   assert.equal("instructions" in workflow.skill_flow.steps.find((step) => step.skill === "testing"), false);
   assert.equal("files" in workflow.skill_flow.steps.find((step) => step.skill === "testing"), false);
+
+  const linkedSkillFile = join(linked, ".agents", "skills", "testing", "SKILL.md");
+  unlinkSync(linkedSkillFile);
+  assert.throws(
+    () => run(process.execPath, [CLI, "resume", attemptId, "--path", linked, "--json"], linked, env),
+    /Cannot resume: required skill not installed: testing/,
+  );
+  assert.equal(JSON.parse(readFileSync(join(attempt, "attempt.json"), "utf8")).status, "planned");
+  const missingBindings = JSON.parse(readFileSync(join(attempt, "skill-bindings.json"), "utf8")).bindings;
+  assert.equal(missingBindings.find((item) => item.skill === "testing").status, "missing");
+  const missingReadme = readFileSync(join(attempt, "README.md"), "utf8");
+  const testingLine = missingReadme.split("\n").find((line) => line.includes("`testing`"));
+  assert.match(testingLine, /⚠️/);
+  assert.doesNotMatch(testingLine, /✅/);
+
+  writeFileSync(linkedSkillFile, fixtureSkillContents);
+  const resumed = JSON.parse(run(process.execPath, [CLI, "resume", attemptId, "--path", linked, "--json"], linked, env));
+  assert.equal(resumed.attempt.status, "in_progress");
+  const beforeRejectedResume = readFileSync(join(attempt, "skill-bindings.json"), "utf8");
+  assert.throws(
+    () => run(process.execPath, [CLI, "resume", attemptId, "--path", primary, "--json"], primary, env),
+    /already responsible for/,
+  );
+  assert.equal(readFileSync(join(attempt, "skill-bindings.json"), "utf8"), beforeRejectedResume);
 });

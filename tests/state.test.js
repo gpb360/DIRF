@@ -156,7 +156,7 @@ test("resolveProjectReference applies the same registered slug and path rules", 
   );
 });
 
-import { readHandoff, writeHandoff, listAttempts, getAttempt, storeAttemptDir, createAttemptInStore } from "../src/state.js";
+import { readHandoff, writeHandoff, listAttempts, getAttempt, storeAttemptDir, createAttemptInStore, readAttemptSkillBindings, writeAttemptSkillBindings } from "../src/state.js";
 
 function withRegisteredProject() {
   freshHome();
@@ -194,6 +194,16 @@ test("createAttemptInStore writes attempt.json under the store and listAttempts 
   assert.equal(listed.length, 1);
   assert.equal(listed[0].id, attempt.id);
   assert.equal(getAttempt(slug, attempt.id).id, attempt.id);
+});
+
+test("skill bindings round-trip through canonical attempt state", () => {
+  const { slug } = withRegisteredProject();
+  const attempt = createAttemptInStore(slug, "bindings", new Date("2026-07-25T10:00:00.000Z"));
+  const bindings = [{ skill: "testing", provider: "codex", status: "installed", entry: "C:/skills/testing/SKILL.md" }];
+
+  assert.deepEqual(readAttemptSkillBindings(slug, attempt.id), []);
+  writeAttemptSkillBindings(slug, attempt.id, bindings);
+  assert.deepEqual(readAttemptSkillBindings(slug, attempt.id), bindings);
 });
 
 test("writeHandoff is atomic — file is valid after concurrent writes", () => {

@@ -15,7 +15,7 @@
 //   dirf skills scan [--path DIR]                        scan host, print installed skills + resolved refs
 //   dirf validate|graph|run|render <folder>               operate an Eve-style folder DAG
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
-import { dirname, join, isAbsolute, resolve } from "node:path";
+import { basename, dirname, join, isAbsolute, resolve } from "node:path";
 import { homedir } from "node:os";
 import { execFileSync, spawn } from "node:child_process";
 import * as readline from "node:readline";
@@ -30,7 +30,7 @@ import { inspect, detectStackProfile } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGateState, attemptResponsibility, pendingGates, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact } from "./state.js";
+import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGateState, attemptResponsibility, pendingGates, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings } from "./state.js";
 import { ARTIFACT_TYPES, explainGoverningArtifact } from "./artifacts.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 import {
@@ -42,7 +42,7 @@ import {
   verifyEvidenceLedger,
 } from "./governance.js";
 import { DEFAULT_ISSUE_POLICY } from "./issue-governance.js";
-import { bindingsFromPlan, readSkillBindings, refreshSkillBindings, writeSkillBindings } from "./skill-bindings.js";
+import { bindingsFromPlan, refreshSkillBindings } from "./skill-bindings.js";
 
 const LIFECYCLE = {
   clarify: "Use the best installed interview capability before implementation.",
@@ -295,7 +295,8 @@ function assembleTaskRouting(task, path, options = {}) {
 function savePlan(plan, attempt, target) {
   const path = join(attempt.folder, "workflow.json");
   plan.attempt = { id: attempt.id, path: attempt.relativePath };
-  writeSkillBindings(attempt.folder, bindingsFromPlan(plan, target));
+  const slug = resolveProject(target).slug;
+  writeAttemptSkillBindings(slug, attempt.id, bindingsFromPlan(plan, target));
   writeFileSync(path, JSON.stringify(portablePlan(plan), null, 2), "utf-8");
   const handoff = join(attempt.folder, "HANDOFF.md");
   if (!existsSync(handoff)) writeFileSync(handoff, [
@@ -309,10 +310,11 @@ function savePlan(plan, attempt, target) {
   return path;
 }
 
-function renderPlan(planPath, openBrowser = false, quiet = false) {
+function renderPlan(planPath, target, openBrowser = false, quiet = false) {
   const plan = JSON.parse(readFileSync(planPath, "utf-8"));
   const outDir = dirname(planPath);
-  const bindings = readSkillBindings(outDir);
+  const slug = resolveProject(target).slug;
+  const bindings = readAttemptSkillBindings(slug, plan.attempt?.id || basename(outDir));
   const written = buildInstructions(plan, outDir, bindings);
   const htmlPath = join(outDir, "instructions.html");
   writeFileSync(htmlPath, buildHtml(plan, bindings), "utf-8");
@@ -340,7 +342,7 @@ function cmdBuild(args) {
   const attempt = createAttempt(target, args.name);
   const planPath = savePlan(plan, attempt, target);
   if (!args.json) console.log(`Attempt saved: ${attempt.id}`);
-  renderPlan(planPath, args.open, args.json);
+  renderPlan(planPath, target, args.open, args.json);
   if (args.json) console.log(JSON.stringify({ attempt: publicAttemptForSlug(resolveProject(target).slug, attempt), workflow: planPath }, null, 2));
 }
 
@@ -360,7 +362,7 @@ function cmdPlan(args) {
   const planPath = savePlan(plan, attempt, target);
   console.log(`Plan saved: ${attempt.id}`);
   console.log(`Lifecycle: ${plan.skill_flow.steps.map((step) => step.stage).join(" -> ")}`);
-  renderPlan(planPath, args.open);
+  renderPlan(planPath, target, args.open);
 }
 
 function cmdCreate(args) {
@@ -484,14 +486,16 @@ async function cmdLearn(args) {
 function cmdRender(args) {
   const target = projectRoot(args.path);
   const attempt = findAttempt(target, args.name);
+  const project = resolveProject(target);
   const planPath = join(attempt.folder, "workflow.json");
   if (!existsSync(planPath)) {
     console.error(`Attempt ${attempt.id} has no workflow.json`);
     process.exit(2);
   }
   const plan = JSON.parse(readFileSync(planPath, "utf8"));
-  refreshSkillBindings(plan, attempt.folder, target);
-  renderPlan(planPath, args.open);
+  const bindings = refreshSkillBindings(plan, readAttemptSkillBindings(project.slug, attempt.id), target);
+  writeAttemptSkillBindings(project.slug, attempt.id, bindings);
+  renderPlan(planPath, target, args.open);
 }
 
 function publicAttemptForSlug(slug, attempt) {
@@ -569,16 +573,19 @@ function cmdResume(args) {
   const target = projectRoot(args.path);
   const attempt = findAttempt(target, args.name);
   const project = resolveProject(target);
+  const stored = claimAttemptCheckout(project.slug, attempt.id, checkoutRoot(target));
   const planPath = join(attempt.folder, "workflow.json");
   if (existsSync(planPath)) {
     const plan = JSON.parse(readFileSync(planPath, "utf8"));
-    refreshSkillBindings(plan, attempt.folder, target);
-    if ([2, 3, 4, 5].includes(plan.schema_version)) renderPlan(planPath, false, true);
+    const bindings = refreshSkillBindings(plan, readAttemptSkillBindings(project.slug, attempt.id), target);
+    writeAttemptSkillBindings(project.slug, attempt.id, bindings);
+    if ([2, 3, 4, 5].includes(plan.schema_version)) renderPlan(planPath, target, false, true);
+    const missing = bindings.filter((binding) => binding.status !== "installed");
+    if (missing.length) throw new Error(`Cannot resume: required skill${missing.length === 1 ? "" : "s"} not installed: ${missing.map((binding) => binding.skill).join(", ")}`);
   }
   // Resume is the "work is starting" signal: a planned attempt auto-starts so
   // the lifecycle can't drift (no phases in its workflow → stays planned).
   let autoStarted = false;
-  const stored = claimAttemptCheckout(project.slug, attempt.id, checkoutRoot(target));
   if (stored?.tracked && stored.status === "planned") {
     try { updateAttemptLifecycle(project.slug, attempt.id, "start"); autoStarted = true; }
     catch { /* attempt workflow has no phases — leave planned */ }
@@ -682,8 +689,10 @@ function cmdMigrate(name, target) {
       const plan = portablePlan(parsed);
       writeFileSync(path, JSON.stringify(plan, null, 2), "utf-8");
       if (existsSync(join(dirname(path), "README.md"))) {
-        refreshSkillBindings(plan, attempt.folder, root);
-        renderPlan(path);
+        const project = resolveProject(root);
+        const bindings = refreshSkillBindings(plan, readAttemptSkillBindings(project.slug, attempt.id), root);
+        writeAttemptSkillBindings(project.slug, attempt.id, bindings);
+        renderPlan(path, root);
       }
       migrated += 1;
     } catch (error) {
@@ -695,7 +704,7 @@ function cmdMigrate(name, target) {
 
 function cmdSetup(args) {
   const target = args._[0] || args.path || ".";
-  const result = setupProject(target, { tracker: args.tracker, context: args.context, reservePercent: args.reservePercent, docs: args.docs });
+  const result = setupProject(target, { tracker: args.tracker, context: args.context, reservePercent: args.reservePercent });
   console.log(`DIRF configured: ${result.root}`);
   console.log(result.created.length ? `Created: ${result.created.join(", ")}` : "Already configured; no files changed.");
   const discovered = enrichDiscovered(discover(result.root));
@@ -1278,7 +1287,6 @@ function parse(argv) {
     if (a === "--tracker") { out.tracker = rest[++i]; continue; }
     if (a === "--context") { out.context = rest[++i]; continue; }
     if (a === "--reserve-percent") { out.reservePercent = Number(rest[++i]); continue; }
-    if (a === "--docs") { out.docs = true; continue; }
     if (a === "--open") { out.open = true; continue; }
     if (a === "--file") { out.file = rest[++i]; continue; }
     if (a === "--name") { out.name = rest[++i]; continue; }
@@ -1331,7 +1339,7 @@ function parse(argv) {
 const HELP = `DIRF — Do It Right First
 
 Usage:
-  dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5] [--docs]
+  dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
   dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--open] [--no-focused-output] [--playbooks DIR]
   dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--research] [--open] [--no-focused-output] [--playbooks DIR]
   dirf create <name> "<task>" [--path DIR] [--profile FILE] [--playbooks DIR]   JSON only

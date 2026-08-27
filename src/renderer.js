@@ -372,7 +372,8 @@ export function buildInstructions(workflow, outDir, skillBindings = []) {
   let lastStage = "";
   for (const [index, s] of flow.steps.entries()) {
     if (s.stage !== lastStage) { lines.push(`**${s.stage}**`); lastStage = s.stage; }
-    const mark = s.status === "installed" ? "✅" : "⚠️";
+    const status = skillBindings[index]?.status || s.status;
+    const mark = status === "installed" ? "✅" : "⚠️";
     const unit = skillUnits[index];
     const label = unit ? `[\`${s.skill}\`](skills/${unit.folder}/README.md)` : `\`${s.skill}\``;
     lines.push(`- ${mark} ${label} — ${s.reason}`);
@@ -614,7 +615,7 @@ export function buildHtml(workflow, skillBindings = []) {
   parts.push("<h2>Skill flow</h2>");
   parts.push("<p class='mute'>Each step points to the installed skill selected on this machine.</p><ol>");
   for (const [index, step] of workflow.skill_flow.steps.entries()) {
-    const status = step.status === "installed" ? "installed" : "recommended";
+    const status = (skillBindings[index]?.status || step.status) === "installed" ? "installed" : "recommended";
     parts.push(`<li><span class='chip ${status}'>${escapeHtml(step.skill)}</span> ${escapeHtml(step.reason)}`);
     const binding = skillBindings[index];
     if (binding?.status === "installed" && binding.entry) parts.push(`<br><code>${escapeHtml(binding.entry)}</code>`);
