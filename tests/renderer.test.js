@@ -103,7 +103,8 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.ok(readme.includes("review a pull request"));
   assert.ok(readme.includes("persisted-only"));
   assert.ok(readme.includes("## Next step"));
-  assert.ok(readme.includes("current host"));
+  assert.match(readme, /local workflow skill/i);
+  assert.doesNotMatch(readme, /Resolve each capability by name in the current host/);
   assert.ok(!/codex|claude/i.test(readme));
   const userProfileRoot = ["C:", "Users"].join("\\");
   assert.ok(!readme.includes(userProfileRoot));
@@ -134,10 +135,10 @@ test("buildInstructions writes router + per-agent detail", () => {
   const detail = readFileSync(join(outDir, "agents", "frontend-developer.md"), "utf-8");
   assert.ok(detail.includes("# frontend-developer"));
   assert.ok(detail.includes("## Skills"));
-  assert.ok(detail.includes("global skill"), "agent should be told it can use global skill discovery");
+  assert.doesNotMatch(detail, /ponytail/, "unavailable optional role hints should be omitted");
 });
 
-test("skill steps render progressive-disclosure pointers", () => {
+test("skill steps do not advertise uncaptured host reference files", () => {
   const outDir = mkdtempSync(join(tmpdir(), "dirf-instr-disclose-"));
   const workflow = {
     name: "disclose", task: "write tests", playbook: "tdd",
@@ -148,7 +149,7 @@ test("skill steps render progressive-disclosure pointers", () => {
   };
   buildInstructions(workflow, outDir);
   const readme = readFileSync(join(outDir, "README.md"), "utf-8");
-  assert.match(readme, /Reference files \(in the skill's folder — load on demand\): tests\.md, mocking\.md/);
+  assert.doesNotMatch(readme, /tests\.md|mocking\.md/);
 });
 
 test("focused output can be disabled without changing task instructions", () => {
@@ -256,12 +257,13 @@ test("rendered workflow preserves repository context and full skill instructions
   buildInstructions(workflow, outDir);
   const readme = readFileSync(join(outDir, "README.md"), "utf8");
   const skillReadme = readFileSync(join(outDir, "skills", "01-graphify", "README.md"), "utf8");
-  const source = readFileSync(join(outDir, "skills", "01-graphify", "SOURCE.md"), "utf8");
+  const skill = readFileSync(join(outDir, "skills", "01-graphify", "SKILL.md"), "utf8");
   assert.match(readme, /Repository context preflight/);
   assert.match(readme, /`AGENTS\.md`/);
-  assert.match(skillReadme, /details: \["SOURCE\.md"\]/);
-  assert.match(skillReadme, /Read \[SOURCE\.md\]/);
-  assert.match(source, /Run the graph query before source browsing/);
+  assert.match(skillReadme, /details: \["SKILL\.md"\]/);
+  assert.match(skillReadme, /Read \[SKILL\.md\]/);
+  assert.match(skill, /Run the graph query before source browsing/);
+  assert.equal(existsSync(join(outDir, "skills", "01-graphify", "SOURCE.md")), false);
 });
 
 test("buildHtml is self-contained and collapsible", () => {
@@ -280,7 +282,7 @@ test("buildHtml is self-contained and collapsible", () => {
   assert.ok(html.includes("frontend-developer"));
   assert.ok(html.includes("persisted-only"));
   assert.ok(html.includes("<h2>Next step</h2>"));
-  assert.ok(html.includes("current host"));
+  assert.ok(html.includes("local workflow skill"));
   assert.ok(!/codex|claude/i.test(html));
   assert.ok(html.includes("Definition of Done"));
   assert.ok(!html.includes("src=") && !html.includes('href="')); // no external assets

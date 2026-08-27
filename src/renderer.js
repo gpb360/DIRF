@@ -362,7 +362,7 @@ export function buildInstructions(workflow, outDir) {
   lines.push(
     "",
     "## Capabilities",
-    "DIRF selected the best installed capability for each stage. Resolve each capability by name in the current host; provider values in the snapshot are discovery hints, not runtime requirements. Absent capabilities are never placed in the executable flow.",
+    "DIRF captured each selected capability as a local workflow skill. Load the linked `SKILL.md` for the active stage; no global skill installation or name lookup is required.",
     "",
     "## Skill flow",
     "Reach for skills in this order — each has a reason for its place in the sequence:",
@@ -370,14 +370,13 @@ export function buildInstructions(workflow, outDir) {
   );
   if (!flow?.steps) throw new Error(`workflow ${workflow.name || "?"}: missing persisted skill_flow`);
   let lastStage = "";
-  for (const s of flow.steps) {
+  for (const [index, s] of flow.steps.entries()) {
     if (s.stage !== lastStage) { lines.push(`**${s.stage}**`); lastStage = s.stage; }
     const mark = s.status === "installed" ? "✅" : "⚠️";
-    lines.push(`- ${mark} \`${s.skill}\` — ${s.reason}`);
+    const unit = skillUnits[index];
+    const label = unit ? `[\`${s.skill}\`](skills/${unit.folder}/SKILL.md)` : `\`${s.skill}\``;
+    lines.push(`- ${mark} ${label} — ${s.reason}`);
     if (s.output) lines.push(`  - **Done at this step when:** ${s.output}`);
-    // Progressive disclosure: the selected skill's co-located reference files
-    // are loaded on demand, never eagerly (unread files cost zero tokens).
-    if (s.disclosures?.length) lines.push(`  - 📄 Reference files (in the skill's folder — load on demand): ${s.disclosures.join(", ")}`);
   }
   if (flow.gaps?.length) {
     lines.push("", "## Capability gaps", "");
@@ -412,21 +411,22 @@ export function buildInstructions(workflow, outDir) {
     const skillDir = join(outDir, "skills", step.folder);
     mkdirSync(skillDir, { recursive: true });
     const skillReadme = join(skillDir, "README.md");
-    const sourceName = step.instructions ? "SOURCE.md" : null;
     writeFileSync(skillReadme, [
       "---", `name: ${JSON.stringify(step.skill)}`, "kind: skill", `description: ${JSON.stringify(step.reason)}`,
-      "uses: []", `details: ${JSON.stringify(sourceName ? [sourceName] : [])}`, `inputs: ${JSON.stringify([step.stage])}`,
+      "uses: []", 'details: ["SKILL.md"]', `inputs: ${JSON.stringify([step.stage])}`,
       `outputs: ${JSON.stringify(step.output ? [step.output] : ["stage result"])}`,
       `capabilities: ${JSON.stringify(step.capability ? [step.capability] : [])}`, "---", "",
       `# ${step.skill}`, "", step.reason,
-      ...(sourceName ? ["", `Read [${sourceName}](${sourceName}) completely before using this skill.`] : []),
+      "", "Read [SKILL.md](SKILL.md) completely before using this skill.",
     ].join("\n"), "utf-8");
     written.push(skillReadme);
-    if (sourceName) {
-      const sourcePath = join(skillDir, sourceName);
-      writeFileSync(sourcePath, step.instructions, "utf-8");
-      written.push(sourcePath);
-    }
+    const skillPath = join(skillDir, "SKILL.md");
+    const instructions = String(step.instructions || "").trim();
+    const skillBody = instructions.startsWith("---")
+      ? `${instructions}\n`
+      : ["---", `name: ${JSON.stringify(step.skill)}`, `description: ${JSON.stringify(step.reason)}`, "---", "", instructions || step.reason, ""].join("\n");
+    writeFileSync(skillPath, skillBody, "utf-8");
+    written.push(skillPath);
   }
 
   const policySrc = resolve(ROOT, workflow.policy || "policies/workflow-policy.md");
@@ -454,7 +454,7 @@ function writeAgentDetail(agentRef, agentsSub) {
   }
   const fm = parsed.frontmatter;
   const tags = agentRef.tags || [];
-  const resolved = agentRef.skills || [];
+  const resolved = (agentRef.skills || []).filter((skill) => skill.status === "installed");
 
   const lines = [`# ${name}`, ""];
   if (tags.length) lines.push(`**Tags:** ${tags.join(", ")}`, "");
@@ -612,7 +612,8 @@ export function buildHtml(workflow) {
   }
   parts.push(`<div class='gate'>⛔ Do not start the next phase until the current is verifiably done. Validation: ${escapeHtml(wf.validation || "—")}</div>`);
 
-  parts.push("<h2>Skill flow</h2><ol>");
+  parts.push("<h2>Skill flow</h2>");
+  parts.push("<p class='mute'>Each selected capability is a local workflow skill; load its generated SKILL.md when that stage begins.</p><ol>");
   for (const step of workflow.skill_flow.steps) {
     const status = step.status === "installed" ? "installed" : "recommended";
     parts.push(`<li><span class='chip ${status}'>${escapeHtml(step.skill)}</span> ${escapeHtml(step.reason)}`);
@@ -640,7 +641,7 @@ export function buildHtml(workflow) {
     } catch {
       parsed = { body: "_(missing)_", frontmatter: {} };
     }
-    const resolved = a.skills || [];
+    const resolved = (a.skills || []).filter((skill) => skill.status === "installed");
     const tags = (a.tags || []).join(", ");
     const origin = a.status === "installed"
       ? ` <span class='chip installed'>installed: ${escapeHtml(a.matched || name)}</span>`
