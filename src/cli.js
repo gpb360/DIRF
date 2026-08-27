@@ -695,7 +695,7 @@ function cmdMigrate(name, target) {
 
 function cmdSetup(args) {
   const target = args._[0] || args.path || ".";
-  const result = setupProject(target, { tracker: args.tracker, context: args.context, reservePercent: args.reservePercent });
+  const result = setupProject(target, { tracker: args.tracker, context: args.context, reservePercent: args.reservePercent, docs: args.docs });
   console.log(`DIRF configured: ${result.root}`);
   console.log(result.created.length ? `Created: ${result.created.join(", ")}` : "Already configured; no files changed.");
   const discovered = enrichDiscovered(discover(result.root));
@@ -1278,6 +1278,7 @@ function parse(argv) {
     if (a === "--tracker") { out.tracker = rest[++i]; continue; }
     if (a === "--context") { out.context = rest[++i]; continue; }
     if (a === "--reserve-percent") { out.reservePercent = Number(rest[++i]); continue; }
+    if (a === "--docs") { out.docs = true; continue; }
     if (a === "--open") { out.open = true; continue; }
     if (a === "--file") { out.file = rest[++i]; continue; }
     if (a === "--name") { out.name = rest[++i]; continue; }
@@ -1330,7 +1331,7 @@ function parse(argv) {
 const HELP = `DIRF — Do It Right First
 
 Usage:
-  dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
+  dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5] [--docs]
   dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--open] [--no-focused-output] [--playbooks DIR]
   dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--research] [--open] [--no-focused-output] [--playbooks DIR]
   dirf create <name> "<task>" [--path DIR] [--profile FILE] [--playbooks DIR]   JSON only

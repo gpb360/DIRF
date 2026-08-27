@@ -18,7 +18,7 @@ function freshStateHome() {
 
 const TIMEOUT_MS = 30_000;
 
-test("setup creates the minimum tracked contract and is idempotent", () => {
+test("setup creates only central configuration by default and is idempotent", () => {
   const home = freshStateHome();
   const root = project();
   const first = setupProject(root);
@@ -26,18 +26,28 @@ test("setup creates the minimum tracked contract and is idempotent", () => {
   const before = readFileSync(storeCfg(), "utf8");
   const second = setupProject(root);
 
-  assert.ok(first.created.length >= 5, `created: ${first.created.join(",")}`);
+  assert.deepEqual(first.created, [`${first.slug}/config.json (store)`]);
   assert.ok(existsSync(storeCfg()));
   assert.deepEqual(second.created, []);
   assert.equal(readFileSync(storeCfg(), "utf8"), before);
-  assert.match(readFileSync(join(root, ".gitignore"), "utf8"), /^\.dirf\/attempts\/$/m);
-  assert.ok(existsSync(join(root, "docs", "agents", "domain", "CONTEXT.md")));
-  assert.ok(existsSync(join(root, "docs", "agents", "issues", "tickets.md")));
+  assert.equal(existsSync(join(root, ".gitignore")), false);
+  assert.equal(existsSync(join(root, "docs", "agents")), false);
 
   const config = loadProjectConfig(root);
   assert.equal(config.tracker.provider, "local");
   assert.equal(config.context.mode, "single");
   assert.equal(config.context.reserve_percent, 5);
+});
+
+test("setup creates shared project documentation only when requested", () => {
+  freshStateHome();
+  const root = project();
+  const result = setupProject(root, { docs: true });
+
+  assert.ok(result.created.includes("docs/agents/domain/CONTEXT.md"));
+  assert.ok(existsSync(join(root, "docs", "agents", "domain", "CONTEXT.md")));
+  assert.ok(existsSync(join(root, "docs", "agents", "issues", "tickets.md")));
+  assert.equal(existsSync(join(root, ".gitignore")), false);
 });
 
 test("setup reuses existing context and ADR locations without overwriting", () => {
@@ -156,7 +166,7 @@ test("setup accepts names beginning with two dots when they remain inside", () =
   assert.equal(loadProjectConfig(root).tracker.tickets_path, "..tickets.md");
 });
 
-test("Git sees setup docs but ignores attempts and renders", () => {
+test("Git stays clean after default setup and central attempt creation", () => {
   freshStateHome();
   const root = project();
   execFileSync("git", ["init", "-q"], { cwd: root, timeout: TIMEOUT_MS });
@@ -165,9 +175,8 @@ test("Git sees setup docs but ignores attempts and renders", () => {
   writeFileSync(join(attempt.folder, "render.mp4"), "render");
 
   const status = execFileSync("git", ["status", "--short", "--untracked-files=all"], { cwd: root, encoding: "utf8", timeout: TIMEOUT_MS });
-  assert.match(status, /docs\/agents\/domain\/CONTEXT\.md/);
+  assert.equal(status, "");
   assert.doesNotMatch(status, /\.dirf\/attempts/);
-  assert.match(execFileSync("git", ["check-ignore", "-q", ".dirf/attempts/"], { cwd: root, encoding: "utf8", timeout: TIMEOUT_MS }), /^$/);
 });
 
 test("attempt creation fails before setup", () => {

@@ -232,7 +232,7 @@ test("dirf resume never composes attempts or context from another project", () =
   const betaProject = mkdtempSync(join(tmpdir(), "beta-project-brain-"));
   for (const root of [alphaProject, betaProject]) {
     execFileSync("git", ["init", "-q"], { cwd: root, timeout: TIMEOUT });
-    run(["setup", root], { DIRF_HOME: home }, root);
+    run(["setup", root, "--docs"], { DIRF_HOME: home }, root);
   }
   writeFileSync(join(alphaProject, "docs", "agents", "domain", "CONTEXT.md"), "alpha-only-context\n");
   writeFileSync(join(betaProject, "docs", "agents", "domain", "CONTEXT.md"), "beta-private-context\n");
