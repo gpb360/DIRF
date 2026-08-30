@@ -144,6 +144,7 @@ apply and take precedence.
 
 ```bash
 node src/cli.js flow "review this pull request" --path "../my-project"
+node src/cli.js flow "grill me about this design before implementation" --path "../my-project"
 node src/cli.js skills scan --path "../my-project"
 node src/cli.js list --path "../my-project"
 node src/cli.js state which --path "../my-project"
@@ -152,6 +153,13 @@ node src/cli.js validate
 
 The rest of this README is the technical reference for how DIRF routes,
 renders, stores, and resumes workflows.
+
+An explicit **Grill Me** request remains a user checkpoint and points to its
+installed model-facing interview engine. A generic request to clarify a plan
+can select that engine directly. Both routes inspect repository facts, ask one
+load-bearing decision at a time, and stop at recorded user confirmation before
+implementation. Persistent glossary or ADR updates require the separate
+stateful discovery branch.
 
 ## Governed agent execution
 
@@ -247,7 +255,8 @@ its own promotion policy using its existing review and tracker audit trail.
 Each per-agent detail file is self-contained: role, **USE THESE SKILLS**
 (resolved live from the host index, with installed/recommended status),
 **YOUR JOB** (from the agent markdown), **NOT YOUR JOB** (boundary), and a
-done-when checklist.
+task-specific work contract with the ordered phases, required result,
+verification, decision ownership, and done-when checklist.
 
 ## CLI reference
 

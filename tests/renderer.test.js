@@ -343,3 +343,37 @@ test("agent casting statuses surface in README, details, and kickoff prompt", ()
   assert.ok(html.includes("my-own-dev"));
   assert.ok(html.includes("Open questions"));
 });
+
+test("decision interviews render the human checkpoint and task-specific orchestrator contract", () => {
+  const outDir = mkdtempSync(join(tmpdir(), "dirf-grill-"));
+  const workflow = {
+    name: "grill", task: "grill me before implementation", playbook: "improve-plan",
+    workflow: {
+      phases: ["inspect facts", "ask one decision", "confirm shared understanding"],
+      gates: { "confirm shared understanding": { kind: "decision" } },
+      output: "a confirmed decision record",
+      validation: "the user accepted the shared understanding",
+      recovery: "ask the next unresolved decision and stop",
+    },
+    agents: [{ name: "workflow-orchestrator", file: "agents/workflow-orchestrator.md", tags: ["orchestration"], skills: [], status: "fallback" }],
+    baseline_skills: [], questions: [], schema_version: 5,
+    skill_flow: {
+      label: "decision interview", branches: [], gaps: [],
+      steps: [
+        { stage: "decide", capability: "plan interview", skill: "grill-me", reason: "Preserve the request", status: "installed", invocation: "user", output: "the user checkpoint is preserved" },
+        { stage: "decide", capability: "plan interview", skill: "grilling", reason: "Run the interview", status: "installed", output: "shared understanding" },
+      ],
+    },
+  };
+
+  buildInstructions(workflow, outDir);
+  const readme = readFileSync(join(outDir, "README.md"), "utf8");
+  const detail = readFileSync(join(outDir, "agents", "workflow-orchestrator.md"), "utf8");
+  assert.match(readme, /User checkpoint.*grill-me/);
+  assert.match(detail, /## Work contract/);
+  assert.match(detail, /Ask one unresolved decision at a time/);
+  assert.match(detail, /stop before implementation until the decision gate is accepted/);
+  assert.match(detail, /Required result: a confirmed decision record/);
+  assert.match(buildHtml(workflow), /user checkpoint: grill-me/);
+  assert.match(buildHtml(workflow), /Decision interview/);
+});

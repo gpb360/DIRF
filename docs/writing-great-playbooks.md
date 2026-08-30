@@ -77,6 +77,31 @@ DIRF respects this choice. A user-invoked skill may call a model-invoked skill,
 but it should not call another user-invoked skill. Add a router when several
 user-invoked skills need to work together.
 
+When a user names a human-only router explicitly, DIRF preserves that user
+checkpoint. If the router points to exactly one installed model-invoked skill,
+DIRF can use that skill as the executable engine. A generic task may select the
+engine directly. Keep the router small and put the repeatable process in the
+engine.
+
+## One capability, five connected views
+
+Treat an adopted capability as one behavior with five connected views:
+
+| View | Question it answers |
+|---|---|
+| Workflow | What happens, in what order, and where does work stop? |
+| Playbook | When should DIRF route here, and which gates apply? |
+| Agent | Who owns the action, decision, verification, and handoff? |
+| Code | What is validated, selected, persisted, or rendered deterministically? |
+| Documentation | How can a person understand and use it in ordinary language? |
+
+Do not copy the same instructions into five files. Keep one authoritative rule
+and make the other views point to or enforce it. For example, a plan interview
+has a one-question workflow, routes through the existing planning playbook,
+assigns question order to the workflow orchestrator while decisions remain
+user-owned, enforces the confirmation gate in code, and documents the normal
+and stateful variants once.
+
 ## Failure modes to prune
 
 - **Premature completion:** the completion rule is too vague to verify.

@@ -374,9 +374,10 @@ export function buildInstructions(workflow, outDir, skillBindings = []) {
     if (s.stage !== lastStage) { lines.push(`**${s.stage}**`); lastStage = s.stage; }
     const status = skillBindings[index]?.status || s.status;
     const mark = status === "installed" ? "✅" : "⚠️";
+    const prefix = s.invocation === "user" ? "**User checkpoint:**" : mark;
     const unit = skillUnits[index];
     const label = unit ? `[\`${s.skill}\`](skills/${unit.folder}/README.md)` : `\`${s.skill}\``;
-    lines.push(`- ${mark} ${label} — ${s.reason}`);
+    lines.push(`- ${prefix} ${label} — ${s.reason}`);
     if (s.output) lines.push(`  - **Done at this step when:** ${s.output}`);
   }
   if (flow.gaps?.length) {
@@ -437,12 +438,12 @@ export function buildInstructions(workflow, outDir, skillBindings = []) {
   } catch { /* policy missing — non-fatal */ }
 
   for (const a of agents) {
-    written.push(writeAgentDetail(a, agentsSub));
+    written.push(writeAgentDetail(a, agentsSub, workflow));
   }
   return written;
 }
 
-function writeAgentDetail(agentRef, agentsSub) {
+function writeAgentDetail(agentRef, agentsSub, workflow = {}) {
   const name = agentRef.name || "agent";
   const path = join(agentsSub, `${name}.md`);
   const agentMdPath = join(AGENTS_DIR, `${name}.md`);
@@ -491,6 +492,25 @@ function writeAgentDetail(agentRef, agentsSub) {
     lines.push("", "## Your job", "", parsed.body.trim() || "_(empty)_", "");
   }
 
+  const wf = workflow.workflow || {};
+  lines.push("## Work contract", "");
+  if (wf.phases?.length) lines.push(`Work only within these ordered phases: ${wf.phases.join(" -> ")}.`, "");
+  lines.push(`Required result: ${wf.output || "the assigned phase output"}.`, "");
+  lines.push(`Verification: ${wf.validation || "use the workflow's declared validation"}.`, "");
+  const runsDecisionInterview = name === "workflow-orchestrator" &&
+    (workflow.skill_flow?.steps || []).some((step) => step.capability === "plan interview");
+  if (runsDecisionInterview) {
+    lines.push(
+      "## Decision interview", "",
+      "- Look up repository facts before asking the user.",
+      "- Ask one unresolved decision at a time.",
+      "- Give two to four meaningful choices when the host supports them, recommend one first, and state the material tradeoff.",
+      "- Record the user's answer and keep unresolved contradictions visible.",
+      "- Summarize the shared understanding and stop before implementation until the decision gate is accepted.",
+      "",
+    );
+  }
+
   lines.push(
     "## Not your job",
     "",
@@ -500,8 +520,9 @@ function writeAgentDetail(agentRef, agentsSub) {
   lines.push(
     "## Done when",
     "",
-    "- [ ] Your phase output is produced",
-    "- [ ] Validation command passes",
+    `- [ ] The required result is produced: ${wf.output || "the assigned phase output"}`,
+    `- [ ] The workflow validation is satisfied: ${wf.validation || "the declared validation"}`,
+    "- [ ] Every decision gate in your lane has recorded user acceptance",
     "- [ ] No scope creep into another agent's lane",
     "",
   );
@@ -616,7 +637,8 @@ export function buildHtml(workflow, skillBindings = []) {
   parts.push("<p class='mute'>Each step points to the installed skill selected on this machine.</p><ol>");
   for (const [index, step] of workflow.skill_flow.steps.entries()) {
     const status = (skillBindings[index]?.status || step.status) === "installed" ? "installed" : "recommended";
-    parts.push(`<li><span class='chip ${status}'>${escapeHtml(step.skill)}</span> ${escapeHtml(step.reason)}`);
+    const label = step.invocation === "user" ? `user checkpoint: ${step.skill}` : step.skill;
+    parts.push(`<li><span class='chip ${status}'>${escapeHtml(label)}</span> ${escapeHtml(step.reason)}`);
     const binding = skillBindings[index];
     if (binding?.status === "installed" && binding.entry) parts.push(`<br><code>${escapeHtml(binding.entry)}</code>`);
     else parts.push("<br><span class='mute'>not installed now</span>");
@@ -662,6 +684,20 @@ export function buildHtml(workflow, skillBindings = []) {
       if (a.matched_description) parts.push(`<p class='mute'>${escapeHtml(a.matched_description)}</p>`);
     } else {
       parts.push(renderMarkdownLite(parsed.body));
+    }
+    parts.push("<h3>Work contract</h3>");
+    if (wf.phases?.length) parts.push(`<p>Work only within these ordered phases: ${escapeHtml(wf.phases.join(" -> "))}.</p>`);
+    parts.push(`<p><strong>Required result:</strong> ${escapeHtml(wf.output || "the assigned phase output")}.</p>`);
+    parts.push(`<p><strong>Verification:</strong> ${escapeHtml(wf.validation || "use the workflow's declared validation")}.</p>`);
+    const runsDecisionInterview = name === "workflow-orchestrator" &&
+      (workflow.skill_flow?.steps || []).some((step) => step.capability === "plan interview");
+    if (runsDecisionInterview) {
+      parts.push("<h3>Decision interview</h3><ul>");
+      parts.push("<li>Look up repository facts before asking the user.</li>");
+      parts.push("<li>Ask one unresolved decision at a time.</li>");
+      parts.push("<li>Recommend one of two to four meaningful choices and state the material tradeoff.</li>");
+      parts.push("<li>Stop before implementation until the user accepts the shared understanding.</li>");
+      parts.push("</ul>");
     }
     parts.push("<h3>Not your job</h3><p>Hand off to the matching agent rather than expanding scope.</p>");
     parts.push("</details>");

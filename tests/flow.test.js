@@ -165,6 +165,92 @@ test("user-invoked-only hosts leave an automatic routing gap", () => {
   assert.equal(flow.gaps[0].capability, "copywriting");
 });
 
+test("a human router lends its capability to one installed model engine", () => {
+  const selection = {
+    playbook: "improve-plan", agents: [],
+    skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
+  };
+  const skills = {
+    "grill-me": {
+      path: "/user/grill-me", provider: "codex", invocation: "user",
+      capabilities: ["plan interview"], references: ["grilling"],
+    },
+    grilling: {
+      path: "/model/grilling", provider: "codex", invocation: "model",
+      description: "Relentless interview that sharpens a plan or design",
+    },
+  };
+
+  const flow = buildFlow(selection, { task: "interview me one question at a time" }, skills);
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["grilling"]);
+  assert.equal(flow.steps[0].selection_reason, "best installed match (110) for plan interview");
+  assert.deepEqual(flow.gaps, []);
+});
+
+test("an explicitly named human router is preserved before its model engine", () => {
+  const selection = {
+    playbook: "improve-plan", agents: [],
+    skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
+  };
+  const skills = {
+    "grill-me": {
+      path: "/user/grill-me", provider: "codex", invocation: "user",
+      capabilities: ["plan interview"], references: ["grilling"],
+    },
+    grilling: {
+      path: "/model/grilling", provider: "codex", invocation: "model",
+      description: "Relentless interview that sharpens a plan or design",
+    },
+  };
+
+  const flow = buildFlow(selection, { task: "grill me about the design before implementation" }, skills);
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["grill-me", "grilling"]);
+  assert.equal(flow.steps[0].invocation, "user");
+  assert.equal(flow.steps[0].human_checkpoint, true);
+  assert.match(flow.steps[1].selection_reason, /referenced by explicit human router grill-me/);
+  assert.deepEqual(flow.gaps, []);
+});
+
+test("an explicit human router with no installed engine stops with a clear gap", () => {
+  const selection = {
+    playbook: "improve-plan", agents: [],
+    skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
+  };
+  const flow = buildFlow(selection, { task: "grill me before implementation" }, {
+    "grill-me": {
+      path: "/user/grill-me", provider: "codex", invocation: "user",
+      capabilities: ["plan interview"], references: ["missing-engine"],
+    },
+  });
+
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["grill-me"]);
+  assert.match(flow.gaps[0].question, /none of its installed model-invoked references covers/);
+});
+
+test("an explicit human router can select one engine among model helpers", () => {
+  const selection = {
+    playbook: "improve-plan", agents: [],
+    skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
+  };
+  const flow = buildFlow(selection, { task: "grill with docs before implementation" }, {
+    "grill-with-docs": {
+      path: "/user/grill-with-docs", provider: "codex", invocation: "user",
+      capabilities: ["plan interview"], references: ["domain-modeling", "grilling"],
+    },
+    "domain-modeling": {
+      path: "/model/domain-modeling", provider: "codex", invocation: "model",
+      capabilities: ["domain modeling"], description: "Maintain the domain glossary",
+    },
+    grilling: {
+      path: "/model/grilling", provider: "codex", invocation: "model",
+      description: "Relentless interview that sharpens a plan or design",
+    },
+  });
+
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["grill-with-docs", "grilling"]);
+  assert.deepEqual(flow.gaps, []);
+});
+
 test("multi-session feature activates spec, ticket, and handoff branches", () => {
   const selection = {
     playbook: "fullstack-feature",

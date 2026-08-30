@@ -105,6 +105,18 @@ test("explicit large-work decision mapping routes to the optional planning playb
   assert.ok(result.workflow.phases.every((phase) => !/implement|build|execute/.test(phase)));
 });
 
+test("explicit Grill Me and one-question interview requests route to improve-plan", () => {
+  for (const task of [
+    "grill me about a design before implementation",
+    "interview me one question at a time to sharpen a software plan before implementation",
+  ]) {
+    const result = recommend(task);
+    assert.equal(result.playbook, "improve-plan");
+    assert.ok(result.workflow.phases.includes("confirm shared understanding"));
+    assert.deepEqual(result.workflow.gates["confirm shared understanding"], { kind: "decision" });
+  }
+});
+
 test("ordinary understood feature work bypasses decision mapping", () => {
   assert.equal(
     recommend("Build the approved account settings feature from the existing specification").playbook,

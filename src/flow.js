@@ -123,6 +123,55 @@ function words(value) {
   return new Set(String(value || "").toLowerCase().replaceAll("-", " ").match(/[a-z0-9]{3,}/g)?.filter((word) => !STOP_WORDS.has(word)).map(stem) || []);
 }
 
+function declaredCapabilities(item) {
+  return Array.isArray(item?.capabilities)
+    ? item.capabilities
+    : String(item?.capabilities || "").split(",").map((value) => value.trim()).filter(Boolean);
+}
+
+function normalizedCue(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function explicitlyRequests(task, skillName) {
+  const taskCue = normalizedCue(task);
+  const skillCue = normalizedCue(skillName);
+  return !!skillCue && (` ${taskCue} `).includes(` ${skillCue} `);
+}
+
+// A human-only skill may be a small router whose sole model-invoked reference
+// is the actual engine (for example, a human command that says to run a model
+// interview skill). Carry the router's declared capability to that one engine
+// so generic requests can select the executable skill without making the
+// human-facing description an autonomous routing signal. Multiple references
+// stay explicit because DIRF cannot safely guess which one owns the capability.
+function withRouterCapabilities(skillIndex) {
+  const expanded = Object.fromEntries(Object.entries(skillIndex || {}).map(([name, item]) => [name, { ...item }]));
+  for (const [routerName, router] of Object.entries(skillIndex || {})) {
+    if (router.invocation !== "user") continue;
+    const references = (router.references || []).filter((name) => expanded[name]?.invocation !== "user");
+    if (references.length !== 1) continue;
+    const targetName = references[0];
+    const target = expanded[targetName];
+    if (!target) continue;
+    const inherited = declaredCapabilities(router);
+    if (!inherited.length) continue;
+    expanded[targetName] = {
+      ...target,
+      capabilities: [...new Set([...declaredCapabilities(target), ...inherited])],
+      capability_router: routerName,
+    };
+  }
+  return expanded;
+}
+
+function explicitHumanRouter(requirement, task, skillIndex) {
+  return Object.entries(skillIndex || {})
+    .filter(([name, item]) => item.invocation === "user" && explicitlyRequests(task, name))
+    .filter(([, item]) => declaredCapabilities(item).includes(requirement.capability))
+    .sort(([a], [b]) => a.localeCompare(b))[0] || null;
+}
+
 function selectCapability(requirement, selection, context, skillIndex) {
   const capabilityWords = words(requirement.capability);
   // User-invoked skills (`disable-model-invocation`) are human-only: their
@@ -133,7 +182,7 @@ function selectCapability(requirement, selection, context, skillIndex) {
   const pool = entries.filter(([, item]) => item.invocation !== "user");
   const ranked = pool.map(([name, item]) => {
     const candidate = words([name, item.description, item.summary, item.category, ...(item.applies_to || []), ...(item.tags || [])].join(" "));
-    const declared = Array.isArray(item.capabilities) ? item.capabilities : String(item.capabilities || "").split(",").map((value) => value.trim()).filter(Boolean);
+    const declared = declaredCapabilities(item);
     const normalizedName = name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     const normalizedCapability = requirement.capability.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     const directMatch = declared.includes(requirement.capability) || normalizedName === normalizedCapability;
@@ -184,12 +233,52 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
     .map(({ branch: _branch, skill: _legacySkill, ...step }) => ({ ...step, capability: step.capability || step.stage }));
   const steps = [];
   const gaps = [];
-  const installed = scopedSkillIndex(skillIndex, context.allowedSkills);
+  const installed = scopedSkillIndex(withRouterCapabilities(skillIndex), context.allowedSkills);
   // The kit ships zero installed skills; its bundled skills/ folder is a
   // fallback consulted ONLY when the local install has nothing for a
   // capability, and the step is labeled so — never passed off as installed.
   let bundled;
   for (const requirement of requirements) {
+    const explicit = explicitHumanRouter(requirement, context.task, installed);
+    if (explicit) {
+      const [routerName, router] = explicit;
+      const references = (router.references || []).filter((name) => installed[name] && installed[name].invocation !== "user");
+      steps.push({
+        stage: requirement.stage,
+        capability: requirement.capability || requirement.stage,
+        skill: routerName,
+        type: router.type || "skill",
+        reason: requirement.reason,
+        output: "the user's explicit interview checkpoint is preserved",
+        status: "installed",
+        provider: router.provider || "project",
+        path: router.path,
+        invocation: "user",
+        human_checkpoint: true,
+        references: router.references || [],
+        selection_reason: `explicitly requested human-invoked skill for ${requirement.capability || requirement.stage}`,
+        rejected_candidates: [],
+      });
+      const referencedIndex = Object.fromEntries(references.map((name) => [name, installed[name]]));
+      const engine = selectCapability(requirement, selection, context, referencedIndex);
+      if (engine) {
+        steps.push({
+          ...engine,
+          reason: `Run the model-invoked engine referenced by ${routerName}.`,
+          selection_reason: `model-invoked engine referenced by explicit human router ${routerName}`,
+        });
+      } else {
+        gaps.push({
+          stage: requirement.stage,
+          capability: requirement.capability,
+          question: `${routerName} is human-invoked but none of its installed model-invoked references covers ${requirement.capability}. Install or repair its engine reference before continuing.`,
+          reason: requirement.reason,
+          requires_approval: true,
+          trusted_candidates: [],
+        });
+      }
+      continue;
+    }
     const selected = selectCapability(requirement, selection, context, installed);
     const fallback = selected ? null : selectCapability(
       requirement, selection, context, (bundled ??= scopedSkillIndex(context.bundledIndex || bundledSkills(), context.allowedSkills)));

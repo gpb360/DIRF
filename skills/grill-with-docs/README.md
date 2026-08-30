@@ -11,4 +11,8 @@ capabilities: ["stateful discovery", "plan interview"]
 
 # Grill with docs
 
-Ask only questions whose answers change the work. Capture resolved terminology immediately and stop when the smallest safe plan is clear.
+Use the plan-interview rules, then maintain domain records only when this
+stateful branch was explicitly selected. Ask one decision at a time. After the
+user accepts an answer, update the glossary or context record. Create an ADR
+only for a decision that is hard to reverse, surprising, and based on a real
+tradeoff. Do not write project documents during an ordinary Grill Me session.

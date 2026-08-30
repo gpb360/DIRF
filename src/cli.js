@@ -1419,8 +1419,13 @@ function cmdFlow(args) {
     if (s.stage !== lastStage) { console.log(`\n[${s.stage}]`); lastStage = s.stage; }
     const mark = s.status === "installed" ? "✅" : "⚠️";
     const note = s.status === "installed" ? "" : " (recommended — not installed)";
-    console.log(`  ${mark} ${s.skill}${note}`);
+    const prefix = s.invocation === "user" ? "[user checkpoint]" : mark;
+    console.log(`  ${prefix} ${s.skill}${note}`);
     console.log(`      ${s.reason}`);
+  }
+  if (flow.gaps.length) {
+    console.log("\n[gaps]");
+    for (const gap of flow.gaps) console.log(`  ${gap.question}`);
   }
 }
 
