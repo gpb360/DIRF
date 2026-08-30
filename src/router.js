@@ -152,8 +152,15 @@ function interviewCueIndex(taskText, interviewPlaybook) {
 
 function explicitlyInterviewFirst(taskText, interviewIndex) {
   const afterInterview = taskText.slice(interviewIndex);
-  return /\bfirst\b/.test(afterInterview) ||
-    new RegExp(`\\bbefore\\b[^,.;!?]{0,100}${INTERVIEW_FIRST_TARGET.source}`).test(afterInterview);
+  const firstIndex = afterInterview.search(/\bfirst\b/);
+  if (firstIndex >= 0) {
+    const beforeFirst = afterInterview.slice(0, firstIndex);
+    // Bind `first` to the phrase it modifies. "Grill me first" is
+    // interview-first; "grill me after you review first" is action-first.
+    if (!CONTINUATION_ACTION_INTENT.test(beforeFirst) &&
+        !/\b(?:after|before|but|until)\b/.test(beforeFirst)) return true;
+  }
+  return new RegExp(`\\bbefore\\b[^,.;!?]{0,100}${INTERVIEW_FIRST_TARGET.source}`).test(afterInterview);
 }
 
 function requestsContinuation(taskText, interviewPlaybook) {
@@ -261,8 +268,14 @@ function matchingConditionalContract(taskText, workflow = {}) {
 }
 
 function resolveWorkflow(taskText, workflow = {}) {
-  const { conditional_contract: _conditionalContract, ...base } = workflow;
-  const contract = matchingConditionalContract(taskText, workflow);
+  const {
+    conditional_contract: _conditionalContract,
+    non_interview_contract: _nonInterviewContract,
+    ...base
+  } = workflow;
+  const contract = negatesInterviewCapability(taskText)
+    ? workflow.non_interview_contract
+    : matchingConditionalContract(affirmativeRoutingText(taskText), workflow);
   if (!contract) return base;
 
   return {
@@ -278,8 +291,17 @@ function resolveWorkflow(taskText, workflow = {}) {
 }
 
 function resolveAgents(taskText, playbook = {}) {
-  const contract = matchingConditionalContract(taskText, playbook.workflow);
+  const contract = negatesInterviewCapability(taskText)
+    ? playbook.workflow?.non_interview_contract
+    : matchingConditionalContract(affirmativeRoutingText(taskText), playbook.workflow);
   return contract?.agents || playbook.agents || [];
+}
+
+function resolveSkillFlow(taskText, playbook = {}) {
+  const contract = negatesInterviewCapability(taskText)
+    ? playbook.workflow?.non_interview_contract
+    : null;
+  return contract?.skill_flow || playbook.skill_flow;
 }
 
 function unique(items) {
@@ -335,9 +357,11 @@ function composeSequentialWorkflows(taskText, result, continuation, transition) 
       ...contract,
       phases: (contract.phases || []).map((phase) => phaseMap.get(phase) || phase),
     }]));
-  const fulfilledCapabilities = new Set((result.skill_flow.steps || [])
-    .map((step) => step.capability)
-    .filter(Boolean));
+  const fulfilledCapabilities = transition === "after-primary"
+    ? new Set()
+    : new Set((result.skill_flow.steps || [])
+      .map((step) => step.capability)
+      .filter(Boolean));
   const continuationSteps = (continuation.pb.skill_flow.steps || [])
     .filter((step) => !step.capability || !fulfilledCapabilities.has(step.capability));
   const mergedContracts = { ...workflowContracts(result.workflow, result.agents, `playbook ${result.playbook}`) };
@@ -535,10 +559,10 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
     matched_keywords: matched,
     matched_context: context,
     alternates,
-    workflow: resolveWorkflow(routingTaskText, pb.workflow),
-    skill_flow: pb.skill_flow,
-    agents: resolveAgents(routingTaskText, pb),
-    questions: pb.questions || [],
+    workflow: resolveWorkflow(taskText, pb.workflow),
+    skill_flow: resolveSkillFlow(taskText, pb),
+    agents: resolveAgents(taskText, pb),
+    questions: negatesInterviewCapability(taskText) ? [] : pb.questions || [],
     baseline_skills: [],
   };
   // Provenance appears only when loadPlaybooks was given a project directory;
@@ -548,9 +572,9 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
     result.playbook_source_path = pb.playbook_source_path;
   }
   if (continuation && explicitlyRequestsInterview(routingTaskText, pb)) {
-    result = composeSequentialWorkflows(routingTaskText, result, continuation, "after-decision");
+    result = composeSequentialWorkflows(taskText, result, continuation, "after-decision");
   } else if (postActionInterview && !explicitlyRequestsInterview(routingTaskText, pb)) {
-    result = composeSequentialWorkflows(routingTaskText, result, postActionInterview, "after-primary");
+    result = composeSequentialWorkflows(taskText, result, postActionInterview, "after-primary");
   }
   return result;
 }

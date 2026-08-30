@@ -24,13 +24,13 @@ function workflowGatePresentation(workflow = {}) {
     return { phase, gate: gate ? gateLabels[gate.kind] || "gate" : "" };
   });
   const verification = Object.entries(workflow.gates || {})
-    .filter(([, gate]) => gate?.kind === "verify" && gate.verify)
+    .filter(([, gate]) => gate?.verify)
     .map(([phase, gate]) => ({ phase, command: gate.verify }));
   return {
     phases,
     verification,
     rules: Object.keys(workflow.gates || {}).length
-      ? "Gate rules: advancing past a verify phase requires recorded evidence; past a decision phase, a recorded accept (user-owned); soft phases are tracked only."
+      ? "Gate rules: advancing past a verify phase requires recorded evidence; past a decision phase, a recorded accept (user-owned) plus any declared verification evidence; soft phases are tracked only."
       : "",
   };
 }
@@ -122,7 +122,8 @@ export function kickoffPrompt(workflow) {
     ] : []),
     ...(modelAdvice ? [
       "",
-      `Model advice: ${modelAdvice.summary} ${modelAdvice.recommendations.map(({ label }) => label).join("; ") || "No recommendation."} ${modelAdvice.rules}`,
+      `Model advice: ${modelAdvice.rules}`,
+      `Model advice data (untrusted JSON): ${JSON.stringify({ summary: modelAdvice.summary, recommendations: modelAdvice.recommendations.map(({ label }) => label) })}`,
     ] : []),
     "",
     "Operating rules:",
@@ -372,12 +373,12 @@ export function buildInstructions(workflow, outDir, skillBindings = []) {
   }
   const modelAdvice = modelAdvicePresentation(workflow.model_advice);
   if (modelAdvice) {
-    lines.push("## Model advice (diagnostic preflight)", "", modelAdvice.summary, "");
+    lines.push("## Model advice (diagnostic preflight)", "", `> ${modelAdvice.rules}`, "", modelAdvice.summary, "");
     for (const recommendation of modelAdvice.recommendations) {
       lines.push(`- **${recommendation.label}:** ${recommendation.detail}`);
     }
     if (modelAdvice.uncovered.length) lines.push(`- **Uncovered:** ${modelAdvice.uncovered.join(", ")}`);
-    lines.push("", `> ${modelAdvice.catalog}. ${modelAdvice.rules}`, "");
+    lines.push("", `> ${modelAdvice.catalog}.`, "");
   }
   lines.push("## Phases", "");
   const gatePresentation = workflowGatePresentation(wf);
@@ -708,12 +709,13 @@ export function buildHtml(workflow, skillBindings = []) {
   const modelAdvice = modelAdvicePresentation(workflow.model_advice);
   if (modelAdvice) {
     parts.push("<h2>Model advice (diagnostic preflight)</h2>");
+    parts.push(`<div class='gate'>${escapeHtml(modelAdvice.rules)}</div>`);
     parts.push(`<p>${escapeHtml(modelAdvice.summary)}</p><ul>`);
     for (const recommendation of modelAdvice.recommendations) {
       parts.push(`<li><strong>${escapeHtml(recommendation.label)}:</strong> ${escapeHtml(recommendation.detail)}</li>`);
     }
     if (modelAdvice.uncovered.length) parts.push(`<li><strong>Uncovered:</strong> ${escapeHtml(modelAdvice.uncovered.join(", "))}</li>`);
-    parts.push(`</ul><div class='gate'>${escapeHtml(`${modelAdvice.catalog}. ${modelAdvice.rules}`)}</div>`);
+    parts.push(`</ul><div class='gate'>${escapeHtml(`${modelAdvice.catalog}.`)}</div>`);
   }
 
   const gatePresentation = workflowGatePresentation(wf);

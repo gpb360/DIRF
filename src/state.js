@@ -474,6 +474,13 @@ function gateRequirement(gates, records, evidence, attempt, phase, strict = fals
     if (gate.artifact_type && !governingAttemptArtifact(attempt, gate.artifact_type)) {
       return { kind, reason: `Phase "${phase}" requires an accepted governing artifact of type "${gate.artifact_type}"` };
     }
+    const declared = String(gate.verify || "").trim();
+    if (declared && !evidence[phase]) {
+      return { kind, reason: `Phase "${phase}" also requires verification evidence — pass --evidence ${JSON.stringify(declared)} when advancing or completing it` };
+    }
+    if (declared && evidence[phase].command !== declared) {
+      return { kind, reason: `Phase "${phase}" evidence command must match its declared verify command: ${JSON.stringify(declared)}` };
+    }
     return null;
   }
   if (evidence[phase]) {
@@ -484,7 +491,7 @@ function gateRequirement(gates, records, evidence, attempt, phase, strict = fals
     return null;
   }
   if (kind === "soft" && !strict) return null;
-  return { kind, reason: `Phase "${phase}" is a ${kind} gate — record its evidence first (dirf attempt advance --evidence "<command>")` };
+  return { kind, reason: `Phase "${phase}" is a ${kind} gate — pass --evidence "<command>" when advancing or completing it` };
 }
 
 // All gate declarations for an attempt with their current record status,
@@ -507,19 +514,23 @@ export function attemptGateState(slug, attempt) {
       const phaseIndex = phases.indexOf(phase);
       const record = records[phase] || null;
       const kind = gates[phase].kind || "verify";
-      const satisfied = kind !== "decision" && Boolean(evidence[phase]);
+      const declaredVerify = String(gates[phase].verify || "").trim();
+      const evidenceMatches = Boolean(evidence[phase]) &&
+        (!declaredVerify || evidence[phase].command === declaredVerify);
+      const satisfied = kind !== "decision" && evidenceMatches;
       const crossedSoftGate = kind === "soft" && (
         attempt.status === "done" || (currentIndex >= 0 && phaseIndex < currentIndex)
       );
       const artifactType = gates[phase].artifact_type || null;
       const governingArtifact = artifactType ? governingAttemptArtifact(attempt, artifactType) : null;
       const artifactPending = kind === "decision" && record?.status === "accepted" && artifactType && !governingArtifact;
+      const decisionEvidencePending = kind === "decision" && record?.status === "accepted" && declaredVerify && !evidenceMatches;
       let status = "pending";
       if (kind === "decision" && record) status = record.status;
       if (record?.status === "denied") status = "denied";
       else if (satisfied) status = "satisfied";
       else if (crossedSoftGate) status = "passed";
-      if (artifactPending) status = "pending";
+      if (artifactPending || decisionEvidencePending) status = "pending";
       return {
         phase,
         kind,
@@ -586,7 +597,8 @@ export function effectiveAttemptStatus(slug, attempt) {
   if (attempt.status === "done" || attempt.status === "in_progress" || attempt.status === "blocked") {
     return { status: attempt.status, status_source: "lifecycle" };
   }
-  if (handoffHasCompletionEvidence(readAttemptHandoffFile(slug, attempt.id))) {
+  if (handoffHasCompletionEvidence(readAttemptHandoffFile(slug, attempt.id)) &&
+      !attemptGateState(slug, attempt).gates.some(gateIsPending)) {
     return { status: "done", status_source: "handoff" };
   }
   return { status: attempt.status, status_source: "lifecycle" };
@@ -687,11 +699,33 @@ export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now
     if (attempt.status !== "in_progress") throw new Error("Only an in-progress attempt can complete");
     if (!phases.length || attempt.current_phase !== phases.at(-1)) throw new Error("Attempt must reach its final phase before completion");
     if (options.confirm !== true) throw new Error("Confirm the final done-when checks before completion");
+    const finalPhase = phases.at(-1);
+    const evidence = { ...(attempt.evidence || {}) };
+    if (options.evidence) {
+      const command = String(options.evidence.command || "").trim();
+      if (!command) throw new Error("evidence command must not be empty");
+      evidence[finalPhase] = { command, output: options.evidence.output ? String(options.evidence.output) : null, at: timestamp };
+    }
+    const requirement = gateRequirement(
+      workflowGates(slug, attempt.id),
+      attempt.gates || {},
+      evidence,
+      attempt,
+      finalPhase,
+      options.strict === true,
+    );
+    if (requirement) throw new Error(requirement.reason);
     const governingPlan = governingAttemptArtifact(attempt, "plan");
     if (governingPlan && !governingAttemptArtifact(attempt, "plan_delta")) {
       throw new Error(`Attempt with governing plan "${governingPlan.id}" requires an accepted governing plan_delta before completion`);
     }
-    attempt = { ...attempt, status: "done", blocker: null, completed_at: timestamp };
+    attempt = {
+      ...attempt,
+      status: "done",
+      blocker: null,
+      completed_at: timestamp,
+      ...(Object.keys(evidence).length ? { evidence } : {}),
+    };
   } else {
     throw new Error(`Unknown attempt lifecycle action ${JSON.stringify(action)}`);
   }
@@ -775,6 +809,14 @@ export function syncAttemptFromHandoff(slug, idOrName) {
   const handoff = readAttemptHandoffFile(slug, attempt.id);
   if (!handoffHasCompletionEvidence(handoff)) {
     return { ...attempt, changed: false, reason: "no completion evidence in HANDOFF.md" };
+  }
+  const pending = attemptGateState(slug, attempt).gates.filter(gateIsPending);
+  if (pending.length) {
+    return {
+      ...attempt,
+      changed: false,
+      reason: `workflow gates remain pending: ${pending.map(({ phase }) => phase).join(", ")}`,
+    };
   }
   const completedAt = statSync(handoffPath).mtime.toISOString();
   const phases = attemptPhases(slug, attempt.id);

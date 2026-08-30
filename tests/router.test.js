@@ -204,6 +204,8 @@ test("action-first requests preserve both workflows in their stated order", () =
     "Review the PR and grill me afterward",
     "After you review the PR, grill me",
     "Grill me after you review the PR",
+    "Grill me after you review the PR first",
+    "Grill me after you first review the PR",
   ]) {
     const result = recommend(task);
     assert.equal(result.playbook, "pr-review", task);
@@ -221,6 +223,12 @@ test("plain action-first conjunctions preserve build work before the interview",
   assert.equal(result.continuation.transition, "after-primary");
   assert.ok(result.workflow.phases.indexOf("define user outcome") <
     result.workflow.phases.indexOf("confirm shared understanding"));
+  const interviewSteps = result.skill_flow.steps
+    .map((step, index) => ({ ...step, index }))
+    .filter((step) => step.capability === "plan interview");
+  assert.equal(interviewSteps.length, 2);
+  assert.equal(interviewSteps.at(-1).stage, "decide");
+  assert.ok(interviewSteps.at(-1).index >= loadPlaybooks()["fullstack-feature"].skill_flow.steps.length);
 });
 
 test("composed workflows give every phase exactly one typed owner", () => {
@@ -234,11 +242,51 @@ test("composed workflows give every phase exactly one typed owner", () => {
   }
 });
 
-test("composition fails closed instead of inventing multi-agent ownership", () => {
-  assert.throws(
-    () => recommend("Grill me, then fix the checkout bug"),
-    /playbook bug-fix: cannot compose a multi-agent workflow without workflow\.agent_contracts/,
-  );
+test("common multi-agent actions compose with declared ownership", () => {
+  for (const task of [
+    "Grill me, then fix the checkout bug",
+    "Grill me, then run a security audit",
+    "Grill me, then deploy the release",
+    "Grill me, then build a landing page",
+  ]) {
+    const result = recommend(task);
+    assert.equal(result.playbook, "improve-plan", task);
+    assert.ok(result.continuation, task);
+    const ownership = new Map(result.workflow.phases.map((phase) => [phase, []]));
+    for (const [agent, contract] of Object.entries(result.workflow.agent_contracts)) {
+      for (const phase of contract.phases) ownership.get(phase).push(agent);
+    }
+    for (const [phase, owners] of ownership) assert.equal(owners.length, 1, `${task}: ${phase}`);
+  }
+});
+
+test("every bundled multi-agent workflow declares exactly one owner per phase", () => {
+  for (const [name, playbook] of Object.entries(loadPlaybooks())) {
+    if ((playbook.agents || []).length < 2) continue;
+    const owners = new Map(playbook.workflow.phases.map((phase) => [phase, []]));
+    for (const [agent, contract] of Object.entries(playbook.workflow.agent_contracts || {})) {
+      for (const phase of contract.phases || []) owners.get(phase)?.push(agent);
+    }
+    for (const [phase, phaseOwners] of owners) {
+      assert.equal(phaseOwners.length, 1, `${name}: ${phase}`);
+    }
+  }
+});
+
+test("generic interview negation resolves a complete non-interview plan", () => {
+  const result = recommend("Do not interview me; improve the plan another way");
+  assert.equal(result.playbook, "improve-plan");
+  assert.equal(result.questions.length, 0);
+  assert.equal(result.skill_flow.steps.some((step) => step.capability === "plan interview"), false);
+  const persisted = JSON.stringify({
+    phases: result.workflow.phases,
+    gates: result.workflow.gates,
+    contracts: result.workflow.agent_contracts,
+    output: result.workflow.output,
+    validation: result.workflow.validation,
+  });
+  assert.doesNotMatch(persisted, /ask and record|confirm shared understanding|one unresolved decision/i);
+  assert.ok(result.workflow.phases.includes("draft the smallest evidence-based plan"));
 });
 
 test("negated interview and action cues never become executable work", () => {

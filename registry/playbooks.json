@@ -27,7 +27,37 @@
       ],
       "output": "working page plus verification notes",
       "validation": "run the project's narrowest build/test or page check",
-      "recovery": "if scope is unclear, emit the agent list and ask the missing context questions before edits"
+      "recovery": "if scope is unclear, emit the agent list and ask the missing context questions before edits",
+      "agent_contracts": {
+        "content-marketer": {
+          "phases": [
+            "clarify offer"
+          ],
+          "output": "a clear audience, offer, and conversion brief",
+          "verification": "the page promise and call to action are specific and supported by the task"
+        },
+        "ui-designer": {
+          "phases": [
+            "design page"
+          ],
+          "output": "an accessible page structure using the existing design system",
+          "verification": "layout, hierarchy, interaction states, and responsive intent are explicit"
+        },
+        "frontend-developer": {
+          "phases": [
+            "implement"
+          ],
+          "output": "the smallest working page implementation",
+          "verification": "the touched page builds and its primary interaction works"
+        },
+        "test-engineer": {
+          "phases": [
+            "verify performance and tests"
+          ],
+          "output": "functional and performance evidence for the completed page",
+          "verification": "focused tests, responsive checks, and the relevant performance check pass"
+        }
+      }
     },
     "questions": [
       "What framework is the project using?",
@@ -185,7 +215,25 @@
       ],
       "output": "fix with reproduction and verification evidence",
       "validation": "run the failing command or narrow regression test",
-      "recovery": "if reproduction is missing, gather exact error and command first"
+      "recovery": "if reproduction is missing, gather exact error and command first",
+      "agent_contracts": {
+        "test-engineer": {
+          "phases": [
+            "reproduce",
+            "verify"
+          ],
+          "output": "a minimal failing reproduction followed by regression evidence",
+          "verification": "the reproduction fails before the patch and the narrowest regression check passes after it"
+        },
+        "error-coordinator": {
+          "phases": [
+            "isolate cause",
+            "patch smallest source"
+          ],
+          "output": "the proven root cause and smallest source-level correction",
+          "verification": "the patch changes only the causal seam and preserves surrounding behavior"
+        }
+      }
     },
     "questions": [
       "What is the exact failure or error?",
@@ -409,7 +457,37 @@
       ],
       "output": "rendered video campaign package with scripts, metadata, Missinglettr copy, and verification evidence",
       "validation": "probe rendered media durations, inspect sample frames, verify manifests and platform metadata",
-      "recovery": "if video runtime is unavailable, use the narrowest local renderer and keep source compositions portable"
+      "recovery": "if video runtime is unavailable, use the narrowest local renderer and keep source compositions portable",
+      "agent_contracts": {
+        "content-marketer": {
+          "phases": [
+            "inventory source assets and target platform constraints"
+          ],
+          "output": "a complete asset and channel constraint inventory",
+          "verification": "every required source, format, duration, and destination constraint is recorded"
+        },
+        "brand-guardian": {
+          "phases": [
+            "lock brand system, script hooks, and SEO keyword map"
+          ],
+          "output": "an approved brand, message, and discoverability contract",
+          "verification": "copy, visuals, hooks, and keywords trace to supplied brand and campaign goals"
+        },
+        "frontend-developer": {
+          "phases": [
+            "build motion compositions and render pilots"
+          ],
+          "output": "reusable motion compositions and representative pilot renders",
+          "verification": "pilot renders use the locked system and meet target format constraints"
+        },
+        "test-engineer": {
+          "phases": [
+            "batch render and verify campaign manifest"
+          ],
+          "output": "the complete rendered campaign and a checked manifest",
+          "verification": "every manifest row has the expected file, duration, dimensions, and no render failure"
+        }
+      }
     },
     "questions": [
       "What assets, target keywords, and platform formats should be used?",
@@ -481,7 +559,30 @@
       ],
       "output": "working Electron change with process-boundary and runtime verification",
       "validation": "run the narrowest typecheck, build, and runtime smoke check for the Electron surface",
-      "recovery": "if the process boundary or IPC contract is unclear, document the missing contract before editing"
+      "recovery": "if the process boundary or IPC contract is unclear, document the missing contract before editing",
+      "agent_contracts": {
+        "backend-architect": {
+          "phases": [
+            "map Electron boundaries"
+          ],
+          "output": "an explicit main, preload, renderer, IPC, storage, and security boundary map",
+          "verification": "privileged operations and trust boundaries have one named owner and interface"
+        },
+        "rapid-prototyper": {
+          "phases": [
+            "implement the smallest vertical slice"
+          ],
+          "output": "one runnable Electron slice across the required boundaries",
+          "verification": "the slice answers the task without speculative platform scope"
+        },
+        "test-engineer": {
+          "phases": [
+            "verify runtime behavior"
+          ],
+          "output": "runtime and regression evidence for the Electron slice",
+          "verification": "the packaged or development runtime exercises the touched IPC and UI behavior"
+        }
+      }
     },
     "questions": [
       "Which Electron surface is changing: main, preload, renderer, IPC, or packaging?",
@@ -538,7 +639,31 @@
       ],
       "output": "evidence-backed recommendation where every claim traces to a typed source or is marked unverified",
       "validation": "every claim cites a primary or secondary source (typed as such); unverified claims are labeled, and the recommendation restates the decision it supports",
-      "recovery": "if sources are unavailable, mark claims as unverified rather than guessing"
+      "recovery": "if sources are unavailable, mark claims as unverified rather than guessing",
+      "agent_contracts": {
+        "research-analyst": {
+          "phases": [
+            "define decision",
+            "collect sources"
+          ],
+          "output": "a precise decision question and provenance-bound primary evidence",
+          "verification": "the question is answerable and every retained claim cites a current source"
+        },
+        "competitive-analyst": {
+          "phases": [
+            "compare"
+          ],
+          "output": "a like-for-like comparison with limitations visible",
+          "verification": "criteria are applied consistently and unavailable evidence is not treated as a result"
+        },
+        "knowledge-synthesizer": {
+          "phases": [
+            "synthesize"
+          ],
+          "output": "a concise evidence-backed recommendation and open uncertainties",
+          "verification": "the conclusion follows from cited evidence and separates fact, inference, and recommendation"
+        }
+      }
     },
     "questions": [
       "What decision should the research support?",
@@ -594,7 +719,33 @@
       },
       "output": "a tracker-neutral decision map that links accepted answers, exposes ready questions, preserves unresolved uncertainty without premature tickets, and stops before specification until accepted",
       "validation": "every open decision is a precise question; every ready decision has no unresolved prerequisite; accepted answers link to one authoritative artifact; not-yet-specified and out-of-scope items are disjoint; no delivery ticket or implementation work begins before map acceptance",
-      "recovery": "if the destination is already clear, use the existing specification and ticket workflow; if a question cannot yet be stated precisely, keep it not yet specified; if tracker or concurrency machinery appears necessary, record the observed failure and stop before adding runtime state"
+      "recovery": "if the destination is already clear, use the existing specification and ticket workflow; if a question cannot yet be stated precisely, keep it not yet specified; if tracker or concurrency machinery appears necessary, record the observed failure and stop before adding runtime state",
+      "agent_contracts": {
+        "workflow-orchestrator": {
+          "phases": [
+            "name the destination and exit condition",
+            "state precise open decisions and prerequisites",
+            "separate not-yet-specified uncertainty from out-of-scope work",
+            "approve the route into specification"
+          ],
+          "output": "a bounded route from accepted decisions to specification with an explicit approval record",
+          "verification": "the final decision gate and its governing research artifact are accepted before completion"
+        },
+        "knowledge-synthesizer": {
+          "phases": [
+            "record accepted decisions without duplicating their artifacts"
+          ],
+          "output": "a traceable index of accepted decisions and their authoritative artifacts",
+          "verification": "each entry links to its source and does not copy or reinterpret accepted content"
+        },
+        "research-analyst": {
+          "phases": [
+            "derive the decisions ready now"
+          ],
+          "output": "the decisions supportable by current evidence",
+          "verification": "each ready decision cites sufficient evidence and unresolved prerequisites remain open"
+        }
+      }
     },
     "questions": [
       "What destination would make the route clear enough for specification?",
@@ -670,7 +821,42 @@
       },
       "output": "one passage-grounded learning note with an adopt, adapt, experiment, reject, or defer disposition for each material idea; if approved, one reversible experiment with verification evidence",
       "validation": "every material claim is labeled as source claim, observation, inference, or recommendation; every source claim cites a timestamp or stable passage; comparisons use current target code or docs; any implementation names one hypothesis and one verification check",
-      "recovery": "if the source is unavailable, request the missing input; if the method remains ambiguous, preserve the questions and stop before comparison; if no idea clears the value, fit, and simplicity threshold, record a justified no-change result"
+      "recovery": "if the source is unavailable, request the missing input; if the method remains ambiguous, preserve the questions and stop before comparison; if no idea clears the value, fit, and simplicity threshold, record a justified no-change result",
+      "agent_contracts": {
+        "research-analyst": {
+          "phases": [
+            "freeze the source and learning question",
+            "consume once for the whole argument",
+            "replay only load-bearing passages"
+          ],
+          "output": "a provenance-bound source record and evidence excerpts tied to the learning question",
+          "verification": "the source hash is fixed and every load-bearing claim maps to a retained passage"
+        },
+        "knowledge-synthesizer": {
+          "phases": [
+            "reconstruct the methodology faithfully",
+            "challenge assumptions and answer open questions"
+          ],
+          "output": "a faithful method model with assumptions, strengths, limits, and answered questions",
+          "verification": "source claims and local interpretation remain clearly separated"
+        },
+        "dx-optimizer": {
+          "phases": [
+            "compare with the live target",
+            "choose the smallest justified adaptation",
+            "implement one approved experiment or record no change"
+          ],
+          "output": "a bounded target comparison and the smallest approved adaptation or justified no-change result",
+          "verification": "the experiment stays within the accepted decision and names rollback or disposal criteria"
+        },
+        "test-engineer": {
+          "phases": [
+            "verify the result and retain the learning"
+          ],
+          "output": "verification evidence and a durable retained-learning record",
+          "verification": "the relevant full checks pass and retained guidance states what was learned, accepted, rejected, and changed"
+        }
+      }
     },
     "questions": [
       "What authorized source should be studied?",
@@ -737,7 +923,25 @@
       ],
       "output": "before/after evidence",
       "validation": "rerun the same benchmark or focused timing check",
-      "recovery": "if no metric exists, establish baseline before changing code"
+      "recovery": "if no metric exists, establish baseline before changing code",
+      "agent_contracts": {
+        "performance-benchmarker": {
+          "phases": [
+            "measure",
+            "identify bottleneck",
+            "remeasure"
+          ],
+          "output": "comparable before and after measurements tied to one proven bottleneck",
+          "verification": "measurements use the same workload and show whether the target metric improved"
+        },
+        "backend-architect": {
+          "phases": [
+            "patch smallest cause"
+          ],
+          "output": "the smallest architecture or code change addressing the measured cause",
+          "verification": "the patch targets the measured bottleneck and preserves correctness"
+        }
+      }
     },
     "questions": [
       "What metric is too slow?",
@@ -790,7 +994,19 @@
       ],
       "output": "security findings with impact and remediation",
       "validation": "prove findings with code references or commands",
-      "recovery": "if boundary is unclear, ask for the asset and attacker model"
+      "recovery": "if boundary is unclear, ask for the asset and attacker model",
+      "agent_contracts": {
+        "security-auditor": {
+          "phases": [
+            "map trust boundary",
+            "inspect controls",
+            "rank risks",
+            "recommend fixes"
+          ],
+          "output": "a trust-boundary map and evidence-backed, prioritized security findings with bounded remediations",
+          "verification": "authorization, data exposure, secrets, injection, and fail-open behavior are checked where applicable"
+        }
+      }
     },
     "questions": [
       "What trust boundary or asset matters most?",
@@ -844,7 +1060,31 @@
       ],
       "output": "curated agent/workflow surface",
       "validation": "run validate and smoke tests",
-      "recovery": "preserve raw source files unless deletion is explicit"
+      "recovery": "preserve raw source files unless deletion is explicit",
+      "agent_contracts": {
+        "agent-organizer": {
+          "phases": [
+            "inventory",
+            "dedupe"
+          ],
+          "output": "a complete agent inventory and evidence-backed duplicate map",
+          "verification": "every retained or removed role has a distinct responsibility and provenance"
+        },
+        "dx-optimizer": {
+          "phases": [
+            "normalize"
+          ],
+          "output": "consistent, lean agent definitions with explicit scope boundaries",
+          "verification": "normalized agents preserve behavior while removing overlap and boilerplate"
+        },
+        "cli-developer": {
+          "phases": [
+            "validate"
+          ],
+          "output": "machine-checked registry and routing evidence",
+          "verification": "DIRF validation and the focused agent-discovery checks pass"
+        }
+      }
     },
     "questions": [
       "What agents should be public versus archived?",
@@ -898,7 +1138,31 @@
       ],
       "output": "API test plan or fixes with evidence",
       "validation": "run focused API tests or documented request checks",
-      "recovery": "if no contract exists, derive expected behavior from routes and docs"
+      "recovery": "if no contract exists, derive expected behavior from routes and docs",
+      "agent_contracts": {
+        "backend-architect": {
+          "phases": [
+            "identify contract"
+          ],
+          "output": "the current endpoint, input, output, error, and compatibility contract",
+          "verification": "the contract traces to implementation or authoritative API documentation"
+        },
+        "api-tester": {
+          "phases": [
+            "test happy/error paths",
+            "report gaps"
+          ],
+          "output": "reproducible happy-path, error-path, and contract-gap evidence",
+          "verification": "each reported gap includes the exact request, response, and expected contract"
+        },
+        "security-auditor": {
+          "phases": [
+            "check security"
+          ],
+          "output": "applicable authentication, authorization, validation, and exposure findings",
+          "verification": "security checks cover the endpoint trust boundary and tenant or identity scope"
+        }
+      }
     },
     "questions": [
       "Which endpoint, contract, or webhook should be tested?",
@@ -1026,7 +1290,25 @@
       ],
       "output": "deployment-ready change or blocker report",
       "validation": "run the narrowest build, CI, or deploy dry-run command",
-      "recovery": "if credentials are missing, stop at config validation and document the blocker"
+      "recovery": "if credentials are missing, stop at config validation and document the blocker",
+      "agent_contracts": {
+        "devops-automator": {
+          "phases": [
+            "inspect current deploy path",
+            "identify blocker",
+            "patch config or docs"
+          ],
+          "output": "the proven deployment path, root blocker, and smallest configuration or documentation correction",
+          "verification": "the change follows the repository deployment contract and includes rollback guidance"
+        },
+        "test-engineer": {
+          "phases": [
+            "verify"
+          ],
+          "output": "deployment validation evidence without unapproved production mutation",
+          "verification": "local or approved environment checks pass and any unrun production step is explicit"
+        }
+      }
     },
     "questions": [
       "What host or CI system is used?",
@@ -1076,7 +1358,19 @@
       ],
       "output": "recommended workflow and next command",
       "validation": "no code changes; recommendation only",
-      "recovery": "if confidence is low, show alternates instead of pretending certainty"
+      "recovery": "if confidence is low, show alternates instead of pretending certainty",
+      "agent_contracts": {
+        "agent-organizer": {
+          "phases": [
+            "classify task",
+            "select closest playbook",
+            "ask missing context",
+            "stop before edits"
+          ],
+          "output": "one routed playbook with only the material missing context and no repository change",
+          "verification": "the selected playbook best matches the task and the handoff stops before unauthorized edits"
+        }
+      }
     },
     "questions": [
       "What are you trying to produce or fix?",
@@ -1270,6 +1564,79 @@
         "output": "a confirmed decision record, accepted domain documentation, and short execution plan with agent/model routing, ownership, verification, and credit controls",
         "validation": "discoverable facts were inspected before questions; preflight model advice is derived only from a host-provided catalog or explicitly unavailable and never claims to cover later confirmed work; one unresolved decision was asked at a time with meaningful choices, a recommendation, and its material tradeoff; user acceptance is recorded before documentation or implementation; every documentation change traces to an accepted decision; the plan names concrete files or modules, commands, and work that should not be delegated; model advice never invokes a model, monitors a session, looks up live prices, or authorizes spend",
         "recovery": "if a fact is discoverable, inspect it instead of asking; if a load-bearing decision remains unresolved, continue the interview one question at a time and stop before changing documentation or implementation"
+      },
+      "non_interview_contract": {
+        "agents": [
+          "workflow-orchestrator",
+          "agent-organizer",
+          "dx-optimizer"
+        ],
+        "phases": [
+          "inspect repository facts and existing decisions",
+          "review preflight model advice",
+          "draft the smallest evidence-based plan",
+          "assign agents and ownership",
+          "define verification gates"
+        ],
+        "gates": {
+          "inspect repository facts and existing decisions": {
+            "kind": "soft"
+          },
+          "review preflight model advice": {
+            "kind": "soft"
+          },
+          "draft the smallest evidence-based plan": {
+            "kind": "soft"
+          },
+          "assign agents and ownership": {
+            "kind": "soft"
+          }
+        },
+        "agent_contracts": {
+          "workflow-orchestrator": {
+            "phases": [
+              "inspect repository facts and existing decisions",
+              "draft the smallest evidence-based plan"
+            ],
+            "output": "a repository-grounded plan that records unresolved decisions as blockers instead of asking questions",
+            "verification": "the plan cites inspected facts, makes no unstated decision, and stops before work affected by a blocker"
+          },
+          "agent-organizer": {
+            "phases": [
+              "review preflight model advice",
+              "assign agents and ownership"
+            ],
+            "output": "diagnostic model suggestions and bounded, non-overlapping agent assignments",
+            "verification": "advice is catalog-grounded or unavailable and every assignment names one owner, input, output, and excluded scope"
+          },
+          "dx-optimizer": {
+            "phases": [
+              "define verification gates"
+            ],
+            "output": "concrete verification commands and evidence expectations",
+            "verification": "every owned result has a command or manual evidence check"
+          }
+        },
+        "output": "a short evidence-based execution plan with explicit blockers, ownership, verification, and credit controls",
+        "validation": "repository facts were inspected; no question or interview step remains; unresolved decisions are blockers; the plan names concrete files or modules, commands, and work that should not be delegated; model advice never invokes a model, monitors a session, looks up live prices, or authorizes spend",
+        "recovery": "if a load-bearing decision remains unresolved, record the exact blocker and stop before affected implementation",
+        "skill_flow": {
+          "label": "preflight model advice -> evidence-based plan",
+          "steps": [
+            {
+              "stage": "route",
+              "reason": "Suggest the lowest host-reported cost tier that declares each preflight workflow capability; do not invoke or monitor models.",
+              "capability": "model selection advice",
+              "output": "portable preflight capability advice with catalog evidence, or an explicit no-catalog result"
+            },
+            {
+              "stage": "plan",
+              "reason": "Use known facts and accepted decisions to choose the cheapest sufficient execution shape.",
+              "capability": "minimalism",
+              "output": "the smallest executable plan with blockers, owned work, and verification"
+            }
+          ]
+        }
       }
     },
     "questions": [
@@ -1363,7 +1730,71 @@
           "Use seeded authenticated no-spend fixtures for transient and failure states; preserve explicit security, privacy, and no-spend verification.",
           "If an exact reference is missing or conflicting, mark reference decision required; never extrapolate visual approval.",
           "Run an audit-only pass first; freeze findings and issue ownership before phased fix waves and a complete final recapture."
+        ],
+        "agent_contracts": {
+          "ux-researcher": {
+            "phases": [
+              "derive the source-reachable screen and state inventory"
+            ],
+            "output": "a complete authenticated screen and state inventory",
+            "verification": "every reachable state is represented or explicitly blocked with its precondition"
+          },
+          "ui-designer": {
+            "phases": [
+              "freeze the complete screen x state x viewport manifest and exact references",
+              "approve the finding ledger and reference decisions"
+            ],
+            "output": "a frozen manifest, exact reference bindings, and an approved finding ledger",
+            "verification": "every row has an approved reference or explicit decision blocker before fixes"
+          },
+          "test-engineer": {
+            "phases": [
+              "run the audit-only authenticated comparison",
+              "rediscover and recapture the complete final matrix"
+            ],
+            "output": "authenticated audit evidence and an independent final recapture",
+            "verification": "the same fixtures, viewports, and references cover every unblocked row before and after"
+          },
+          "frontend-developer": {
+            "phases": [
+              "execute issue-owned non-overlapping fix waves"
+            ],
+            "output": "dependency-ordered fixes with one owner per approved issue",
+            "verification": "each wave changes only its issue-owned scope and passes focused checks"
+          }
+        },
+        "agents": [
+          "ui-designer",
+          "ux-researcher",
+          "brand-guardian",
+          "performance-benchmarker",
+          "test-engineer",
+          "frontend-developer"
         ]
+      },
+      "agent_contracts": {
+        "ux-researcher": {
+          "phases": [
+            "identify product type and audience",
+            "check accessibility and interaction quality"
+          ],
+          "output": "audience-grounded usability and accessibility findings",
+          "verification": "the primary journey, keyboard or touch states, contrast, motion, and recovery states are checked"
+        },
+        "ui-designer": {
+          "phases": [
+            "select design-system constraints"
+          ],
+          "output": "the existing visual and interaction constraints to preserve",
+          "verification": "each constraint traces to the current design system or an explicit supplied reference"
+        },
+        "test-engineer": {
+          "phases": [
+            "verify responsive behavior"
+          ],
+          "output": "responsive runtime evidence across relevant viewports and states",
+          "verification": "small and large viewports, layout stability, and primary interactions are exercised"
+        }
       }
     },
     "questions": [
@@ -1430,7 +1861,39 @@
       ],
       "output": "complete visual evidence ledger, dependency-ordered issues, implemented fixes, and independently verified final design parity",
       "validation": "prove inventory completeness, exact reference identity, desktop and mobile evidence, keyboard and assistive behavior, focused tests, production build, and a complete post-fix recapture",
-      "recovery": "if a reference, authenticated state, fixture, or environment is unavailable, mark the exact row blocked instead of guessing; continue every unblocked row and do not claim full parity"
+      "recovery": "if a reference, authenticated state, fixture, or environment is unavailable, mark the exact row blocked instead of guessing; continue every unblocked row and do not claim full parity",
+      "agent_contracts": {
+        "ux-researcher": {
+          "phases": [
+            "derive the complete source-reachable screen, state, action, and viewport inventory"
+          ],
+          "output": "the complete reachable screen, state, action, and viewport matrix",
+          "verification": "routes, render branches, flags, entitlements, transient states, and nested surfaces are represented or blocked"
+        },
+        "ui-designer": {
+          "phases": [
+            "bind every inventory row to an exact approved reference or explicit reference blocker",
+            "create durable issues and dependency-order every verified mismatch or missing surface"
+          ],
+          "output": "exact reference bindings and a dependency-ordered issue ledger",
+          "verification": "no row relies on inferred approval and every issue owns one verified mismatch"
+        },
+        "test-engineer": {
+          "phases": [
+            "capture and classify the first complete visual comparison",
+            "independently recapture and verify the complete matrix"
+          ],
+          "output": "before and after evidence for every unblocked matrix row",
+          "verification": "captures use the frozen fixtures, viewports, references, and independent final comparison"
+        },
+        "frontend-developer": {
+          "phases": [
+            "implement dependency-ordered issue-owned fixes"
+          ],
+          "output": "bounded fixes linked one-to-one with owned visual issues",
+          "verification": "each fix resolves its issue without altering unowned surfaces"
+        }
+      }
     },
     "questions": [
       "Where is the approved design source of truth?",
@@ -1529,7 +1992,31 @@
       ],
       "output": "polish findings or fixes with proof",
       "validation": "run focused UI/runtime checks and document before/after evidence",
-      "recovery": "if no target is provided, produce a prioritized polish checklist instead of editing"
+      "recovery": "if no target is provided, produce a prioritized polish checklist instead of editing",
+      "agent_contracts": {
+        "ui-designer": {
+          "phases": [
+            "scan current experience",
+            "apply smallest polish fixes"
+          ],
+          "output": "a focused experience scan and the smallest coherent visual or interaction refinements",
+          "verification": "fixes reuse existing patterns and preserve accessibility and responsive behavior"
+        },
+        "brand-guardian": {
+          "phases": [
+            "identify rough edges"
+          ],
+          "output": "a prioritized list of inconsistent, generic, or off-brand details",
+          "verification": "each retained issue is visible in the current experience and traces to the supplied brand"
+        },
+        "test-engineer": {
+          "phases": [
+            "verify user-facing quality"
+          ],
+          "output": "user-facing regression and quality evidence",
+          "verification": "the touched states are exercised across relevant viewports, inputs, and reduced-motion settings"
+        }
+      }
     },
     "questions": [
       "What screen, workflow, or artifact needs the polish pass?",
@@ -1590,7 +2077,31 @@
       },
       "output": "governance contract or review with decision evidence",
       "validation": "prove state-changing actions are blocked without mandate, evidence, scope, and named authority",
-      "recovery": "if authority, scope, or evidence is missing, deny or require named human approval"
+      "recovery": "if authority, scope, or evidence is missing, deny or require named human approval",
+      "agent_contracts": {
+        "security-auditor": {
+          "phases": [
+            "classify action risk",
+            "check evidence requirements"
+          ],
+          "output": "a risk classification and the exact evidence required before execution",
+          "verification": "scope, reversibility, privilege, data exposure, spend, and external effects are evaluated"
+        },
+        "agent-organizer": {
+          "phases": [
+            "define mandate and authority"
+          ],
+          "output": "a bounded actor, action, resource, environment, and duration mandate",
+          "verification": "authority is explicit and cannot expand through implication"
+        },
+        "documentation-engineer": {
+          "phases": [
+            "emit allow/deny/approval decision contract"
+          ],
+          "output": "a plain, auditable governance decision contract",
+          "verification": "the contract states allow, deny, or approval-required with evidence and no execution side effect"
+        }
+      }
     },
     "questions": [
       "What actions need gateway enforcement?",
@@ -1659,7 +2170,38 @@
       },
       "output": "allow, require_approval, or deny decision plus a verified hash-linked execution ledger",
       "validation": "prove every segment was evaluated, high-risk authority was exact-content-bound and atomically consumed, and the final ledger verifies",
-      "recovery": "deny unknown, cross-tenant, stale, malformed, or out-of-scope actions; request a new named approval when exact content or policy changed"
+      "recovery": "deny unknown, cross-tenant, stale, malformed, or out-of-scope actions; request a new named approval when exact content or policy changed",
+      "agent_contracts": {
+        "workflow-orchestrator": {
+          "phases": [
+            "normalize complete action and scope",
+            "consume authority and execute through one adapter"
+          ],
+          "output": "a normalized action and one authority-bound adapter execution record",
+          "verification": "the adapter receives only the approved action and cannot broaden scope"
+        },
+        "governance-execution-auditor": {
+          "phases": [
+            "evaluate risk mandate and evidence"
+          ],
+          "output": "the deterministic governance evaluation for the normalized action",
+          "verification": "dirf govern evaluate returns an allow result bound to the same canonical action"
+        },
+        "security-auditor": {
+          "phases": [
+            "bind exact human authorization when required"
+          ],
+          "output": "content-bound authorization for the exact gated action",
+          "verification": "authorization identity, scope, expiry, and action hash all match"
+        },
+        "test-engineer": {
+          "phases": [
+            "verify outcome and tamper-evident ledger"
+          ],
+          "output": "outcome evidence and a verified append-only governance ledger entry",
+          "verification": "the outcome matches the authorized action and ledger integrity checks pass"
+        }
+      }
     },
     "questions": [
       "What exact action, organization, target, repository/ref, and payload are being governed?",

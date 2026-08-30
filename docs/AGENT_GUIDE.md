@@ -287,7 +287,8 @@ form — the flow-board desktop app consumes the same shape.
 
 Status is **evidence-aware**: an attempt whose HANDOFF.md carries a completion
 marker (`## Status: Complete.` or a filled-in `## Completed` section) is
-reported as `done` even when its lifecycle was never updated. If past sessions
+reported as `done` even when its lifecycle was never updated, provided its
+workflow has no pending gates. If past sessions
 did the work without updating lifecycle state, promote the evidence once:
 
 ```bash
@@ -300,6 +301,9 @@ advances that attempt's lifecycle to match the phase being reported (start →
 in_progress → advance). `--attempt` may be omitted only when the project has zero
 or one attempt; use the full attempt ID when a name is reused. Explicit
 completion (`dirf attempt complete --confirm`) stays a deliberate final gate.
+If the final phase declares a verify command, pass its evidence with
+`--evidence "<exact command>" [--output "<result>"]`; final decision and
+artifact gates must also be satisfied before completion.
 
 To hand the portfolio to a human: `dirf export obsidian` writes notes + a
 color-coded `.canvas` dashboard into the active Obsidian vault, and `dirf export

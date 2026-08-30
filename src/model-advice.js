@@ -22,6 +22,14 @@ function catalogLabel(value, label) {
   return normalized;
 }
 
+function modelIdentifier(value, label) {
+  const normalized = catalogLabel(value, label);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._+:/@-]*$/.test(normalized)) {
+    throw new Error(`${label} must be an identifier using only letters, numbers, dot, underscore, plus, colon, slash, at, or hyphen`);
+  }
+  return normalized;
+}
+
 export function normalizeModelCatalog(data, sha256 = null) {
   if (!data || typeof data !== "object" || Array.isArray(data) || !Array.isArray(data.models)) {
     throw new Error('Model catalog must be an object with a "models" array');
@@ -31,7 +39,7 @@ export function normalizeModelCatalog(data, sha256 = null) {
     if (!model || typeof model !== "object" || Array.isArray(model)) {
       throw new Error(`Model catalog entry ${index + 1} must be an object`);
     }
-    const name = catalogLabel(model.name, `Model catalog entry ${index + 1} name`);
+    const name = modelIdentifier(model.name, `Model catalog entry ${index + 1} name`);
     if (names.has(name)) throw new Error(`Model catalog contains duplicate model ${JSON.stringify(name)}`);
     names.add(name);
     const costTier = String(model.cost_tier || "").trim();

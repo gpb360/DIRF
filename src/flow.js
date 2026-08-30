@@ -40,7 +40,11 @@ export function validateWorkflowGates(workflow = {}, label = "workflow") {
 
 export function validateAgentContracts(workflow = {}, agentNames = [], label = "workflow") {
   const errors = [];
-  if (workflow.agent_contracts === undefined) return errors;
+  if (workflow.agent_contracts === undefined) {
+    return Array.isArray(agentNames) && agentNames.length > 1
+      ? [`${label}: multi-agent workflows require workflow.agent_contracts with exactly one owner per phase`]
+      : errors;
+  }
   const contracts = workflow.agent_contracts;
   if (!contracts || typeof contracts !== "object" || Array.isArray(contracts)) {
     return [`${label}: workflow.agent_contracts must be an object`];
@@ -134,6 +138,41 @@ export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
           }
           errors.push(...validateWorkflowGates(resolved, `playbook ${name} conditional contract`));
           errors.push(...validateAgentContracts(resolved, conditionalAgents, `playbook ${name} conditional contract`));
+        }
+      }
+      const nonInterview = playbook.workflow.non_interview_contract;
+      if (nonInterview !== undefined) {
+        if (!nonInterview || typeof nonInterview !== "object" || Array.isArray(nonInterview)) {
+          errors.push(`playbook ${name}: workflow.non_interview_contract must be an object`);
+        } else {
+          const nonInterviewAgents = nonInterview.agents === undefined ? playbook.agents : nonInterview.agents;
+          if (!Array.isArray(nonInterviewAgents)) errors.push(`playbook ${name}: workflow.non_interview_contract.agents must be an array`);
+          const {
+            conditional_contract: _conditional,
+            non_interview_contract: _nested,
+            ...baseWorkflow
+          } = playbook.workflow;
+          const resolved = {
+            ...baseWorkflow,
+            ...Object.fromEntries(["phases", "gates", "agent_contracts", "output", "validation", "recovery", "requirements"]
+              .filter((field) => nonInterview[field] !== undefined)
+              .map((field) => [field, nonInterview[field]])),
+          };
+          if (!Array.isArray(resolved.phases) || resolved.phases.length === 0) {
+            errors.push(`playbook ${name}: workflow.non_interview_contract.phases must resolve to a non-empty array`);
+          }
+          for (const field of ["output", "validation", "recovery"]) {
+            if (typeof resolved[field] !== "string" || !resolved[field]) {
+              errors.push(`playbook ${name}: workflow.non_interview_contract.${field} must resolve to a non-empty string`);
+            }
+          }
+          if (!nonInterview.skill_flow || !Array.isArray(nonInterview.skill_flow.steps) || !nonInterview.skill_flow.steps.length) {
+            errors.push(`playbook ${name}: workflow.non_interview_contract.skill_flow must contain at least one step`);
+          } else if (nonInterview.skill_flow.steps.some((step) => step.capability === "plan interview")) {
+            errors.push(`playbook ${name}: workflow.non_interview_contract.skill_flow must not contain plan interview`);
+          }
+          errors.push(...validateWorkflowGates(resolved, `playbook ${name} non-interview contract`));
+          errors.push(...validateAgentContracts(resolved, nonInterviewAgents, `playbook ${name} non-interview contract`));
         }
       }
     }

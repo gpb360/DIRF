@@ -1385,6 +1385,7 @@ Usage:
                                                       record progress, update HANDOFF.md and sync the attempt lifecycle
   dirf attempt <action> <id> [--path DIR]              update lifecycle state
                                                       (advance: [--evidence "CMD" [--output F]] [--strict] [--auto])
+                                                      (complete: --confirm [--evidence "CMD" [--output F]] [--strict])
                                                       (gate <phase> accept|deny [--comment "..."]; block [--wait input|blocker])
                                                       (sync-from-handoff: backfill done from handoff evidence; no id = all)
   dirf artifact list <attempt> [--json]                list typed artifacts and governing versions

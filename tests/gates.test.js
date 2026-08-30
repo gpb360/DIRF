@@ -12,6 +12,7 @@ import {
   attemptGates,
   autoAdvance,
   createAttemptInStore,
+  effectiveAttemptStatus,
   getAttempt,
   pendingGates,
   recordAttemptArtifact,
@@ -19,6 +20,7 @@ import {
   recordedEvidence,
   registerProject,
   syncLifecycleFromProgress,
+  syncAttemptFromHandoff,
   updateAttemptLifecycle,
 } from "../src/state.js";
 import { reconcile } from "../src/flow.js";
@@ -81,6 +83,18 @@ function artifactGateFixture() {
   return { home, root, slug, attempt };
 }
 
+function finalGateFixture(gate) {
+  const home = mkdtempSync(join(tmpdir(), "dirf-final-gate-home-"));
+  process.env.DIRF_HOME = home;
+  const root = repo();
+  const { slug } = registerProject(root);
+  const attempt = createAttemptInStore(slug, "final-gated", new Date("2026-08-01T00:00:00.000Z"));
+  writeFileSync(join(attempt.folder, "workflow.json"), JSON.stringify({
+    workflow: { phases: ["define", "approve"], gates: { approve: gate } },
+  }));
+  return { home, root, slug, attempt };
+}
+
 function acceptPlan(slug, attempt) {
   recordAttemptArtifact(slug, attempt.id, { id: "plan-v1", type: "plan", path: "plan.md" });
   return acceptAttemptArtifact(slug, attempt.id, "plan-v1");
@@ -133,6 +147,86 @@ test("decision gates block advance until an accepted record; deny requires a com
   assert.equal(current.gates.design.status, "accepted");
   current = updateAttemptLifecycle(slug, attempt.id, "advance");
   assert.equal(current.current_phase, "build");
+});
+
+test("decision gates with verification require both acceptance and exact evidence", () => {
+  const { slug, attempt } = attemptFixture();
+  const workflowPath = join(attempt.folder, "workflow.json");
+  const snapshot = JSON.parse(readFileSync(workflowPath, "utf8"));
+  snapshot.workflow.gates.design.verify = "node scripts/check-decision.js";
+  writeFileSync(workflowPath, JSON.stringify(snapshot));
+
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+  updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "design", decision: "accept", comment: "scope approved" });
+  assert.equal(attemptGates(slug, attempt.id).find((gate) => gate.phase === "design").status, "pending");
+  assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "advance"), /also requires verification evidence/);
+  assert.throws(
+    () => updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "npm test" } }),
+    /must match its declared verify command/,
+  );
+  const current = updateAttemptLifecycle(slug, attempt.id, "advance", {
+    evidence: { command: "node scripts/check-decision.js", output: "allow" },
+  });
+  assert.equal(current.current_phase, "build");
+  assert.equal(attemptGates(slug, attempt.id).find((gate) => gate.phase === "design").status, "accepted");
+});
+
+test("completion enforces a final decision gate and its governing artifact", () => {
+  const { slug, attempt } = finalGateFixture({ kind: "decision", artifact_type: "research" });
+  writeFileSync(join(attempt.folder, "research.md"), "# Accepted research\n");
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+  assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "complete", { confirm: true }), /decision gate/);
+  updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "approve", decision: "accept", comment: "route approved" });
+  assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "complete", { confirm: true }), /accepted governing artifact.*research/);
+  recordAttemptArtifact(slug, attempt.id, { id: "research-v1", type: "research", path: "research.md" });
+  acceptAttemptArtifact(slug, attempt.id, "research-v1");
+  assert.equal(updateAttemptLifecycle(slug, attempt.id, "complete", { confirm: true }).status, "done");
+});
+
+test("handoff completion evidence cannot bypass pending workflow gates", () => {
+  const { slug, attempt } = finalGateFixture({ kind: "decision", artifact_type: "research" });
+  writeFileSync(join(attempt.folder, "HANDOFF.md"), "# DIRF Handoff\n\n## Status: Complete.\n");
+  assert.deepEqual(effectiveAttemptStatus(slug, getAttempt(slug, attempt.id)), {
+    status: "planned",
+    status_source: "lifecycle",
+  });
+  const synced = syncAttemptFromHandoff(slug, attempt.id);
+  assert.equal(synced.changed, false);
+  assert.match(synced.reason, /workflow gates remain pending: approve/);
+});
+
+test("completion records and enforces evidence for a final verify gate", () => {
+  const { slug, attempt } = finalGateFixture({ kind: "verify", verify: "node --test" });
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+  assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "complete", { confirm: true }), /verify gate/);
+  assert.throws(
+    () => updateAttemptLifecycle(slug, attempt.id, "complete", { confirm: true, evidence: { command: "npm test" } }),
+    /must match its declared verify command/,
+  );
+  const done = updateAttemptLifecycle(slug, attempt.id, "complete", {
+    confirm: true,
+    evidence: { command: "node --test", output: "all pass" },
+  });
+  assert.equal(done.status, "done");
+  assert.equal(done.evidence.approve.command, "node --test");
+  assert.equal(attemptGates(slug, attempt.id).find((gate) => gate.phase === "approve").status, "satisfied");
+});
+
+test("dirf attempt complete accepts final-phase evidence through the CLI", () => {
+  const { home, root, attempt } = finalGateFixture({ kind: "verify", verify: "node --test" });
+  const cli = (...args) => execFileSync(process.execPath, [join(process.cwd(), "src", "cli.js"), ...args], {
+    cwd: root, encoding: "utf8", timeout: 30000, env: { ...process.env, DIRF_HOME: home },
+  });
+  cli("attempt", "start", attempt.id, "--path", root);
+  cli("attempt", "advance", attempt.id, "--path", root);
+  const done = JSON.parse(cli(
+    "attempt", "complete", attempt.id, "--confirm", "--evidence", "node --test", "--output", "all pass", "--path", root, "--json",
+  ));
+  assert.equal(done.status, "done");
+  assert.equal(done.evidence.approve.command, "node --test");
 });
 
 test("manual advance requires the accepted governing artifact declared by a decision gate", () => {

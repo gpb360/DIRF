@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildFlow, findCapabilityGaps, reconcile } from "../src/flow.js";
+import { buildFlow, findCapabilityGaps, reconcile, validateAgentContracts } from "../src/flow.js";
 import { bundledSkills } from "../src/skills.js";
 import { validateSnapshot } from "../src/validate.js";
 import { recommend } from "../src/router.js";
@@ -11,6 +11,13 @@ const WORKFLOW = {
   validation: "Check the route",
   recovery: "Ask for context",
 };
+
+test("multi-agent workflows require explicit exact-one-owner contracts", () => {
+  assert.deepEqual(
+    validateAgentContracts({ phases: ["inspect", "build"] }, ["planner", "builder"], "demo"),
+    ["demo: multi-agent workflows require workflow.agent_contracts with exactly one owner per phase"],
+  );
+});
 
 test("Reconciliation rejects a Playbook without an ordered skill flow", () => {
   const errors = reconcile({ triage: { description: "Fallback", keywords: [], agents: [], workflow: WORKFLOW } });

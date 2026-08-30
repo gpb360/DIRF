@@ -91,6 +91,11 @@ engine. If one router branch changes durable documentation, give that branch a
 named documentation owner and a phase after the acceptance decision. Do not
 add that owner to stateless interview runs.
 
+If the user explicitly excludes interviews or questions, route to a declared
+non-interview contract or fail closed. Removing only the interview skill is not
+enough: the persisted phases, gates, ownership, output, validation, questions,
+and rendered instructions must also honor the exclusion.
+
 ## One capability, five connected views
 
 Treat an adopted capability as one behavior with five connected views:
@@ -141,4 +146,5 @@ never grants permission to invoke, monitor, or spend.
 - [ ] Short leading words replace repeated explanations where they improve
       clarity.
 - [ ] The invocation class is deliberate and declared for user-invoked skills.
-- [ ] `dirf validate` passes and non-final phases declare their gates.
+- [ ] `dirf validate` passes; every phase that must stop for evidence or a
+      decision declares the applicable verify, decision, or soft gate.

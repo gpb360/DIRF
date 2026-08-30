@@ -512,7 +512,8 @@ dirf settings set --stale-project-days 30
 
 **Status is also evidence-aware.** Attempts whose HANDOFF.md carries a
 completion marker (`## Status: Complete.` or a filled-in `## Completed` section)
-are reported as `done` even if the lifecycle was never updated — the store's
+are reported as `done` even if the lifecycle was never updated, provided no
+workflow gates remain pending — the store's
 `attempt.json` is never modified by the view. When the lifecycle has genuinely
 drifted (work happened, status stayed `planned`), promote the evidence:
 
@@ -527,6 +528,9 @@ advances that attempt to the reported phase (start → in_progress, in_progress 
 advance). You may omit `--attempt` only when the project has zero or one attempt;
 when a name is reused, pass the full attempt ID. Completion still requires the
 explicit `dirf attempt complete` gate.
+Final-phase gates are enforced too: use `--confirm`, include
+`--evidence "<exact command>" [--output "<result>"]` when the final phase
+declares verification, and satisfy any final decision or artifact requirement.
 
 ### Obsidian export
 
