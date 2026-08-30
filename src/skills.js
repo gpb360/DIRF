@@ -4,7 +4,10 @@
 // installed skill folders (there can be several), builds an index of what's
 // actually present, and resolves the curated registry references against it.
 //
-// A referenced skill that isn't installed is flagged "recommended" — never fatal.
+// A referenced skill that isn't installed is normally flagged "recommended".
+// Explicit human routers fail closed later in flow assembly when one of their
+// declared model dependencies is unavailable; partially running a named router
+// would misrepresent the workflow the user selected.
 //
 // Discovery is broadened to fix blind spots from the parent repo:
 //   - read SKILL.md first, fall back to skill.json then README.md frontmatter

@@ -229,7 +229,7 @@ test("an explicit human router with no installed engine stops with a clear gap",
   assert.match(flow.gaps[0].question, /none of its installed model-invoked references covers/);
 });
 
-test("an explicit human router can select one engine among model helpers", () => {
+test("an explicit human router binds its engine and every model dependency", () => {
   const selection = {
     playbook: "improve-plan", agents: [],
     skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
@@ -249,8 +249,31 @@ test("an explicit human router can select one engine among model helpers", () =>
     },
   });
 
-  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["grill-with-docs", "grilling"]);
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["grill-with-docs", "grilling", "domain-modeling"]);
+  assert.match(flow.steps[2].selection_reason, /dependency referenced by explicit human router grill-with-docs/);
   assert.deepEqual(flow.gaps, []);
+});
+
+test("an explicit human router fails when any referenced model dependency is missing", () => {
+  const selection = {
+    playbook: "improve-plan", agents: [],
+    skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
+  };
+  const flow = buildFlow(selection, { task: "grill with docs before implementation" }, {
+    "grill-with-docs": {
+      path: "/user/grill-with-docs", provider: "codex", invocation: "user",
+      capabilities: ["plan interview"], references: ["domain-modeling", "grilling"],
+    },
+    grilling: {
+      path: "/model/grilling", provider: "codex", invocation: "model",
+      description: "Relentless interview that sharpens a plan or design",
+    },
+  });
+
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["grill-with-docs"]);
+  assert.equal(flow.gaps[0].code, "invalid_router_reference");
+  assert.equal(flow.gaps[0].blocking, true);
+  assert.match(flow.gaps[0].question, /unavailable or human-only dependencies: domain-modeling/);
 });
 
 test("multi-session feature activates spec, ticket, and handoff branches", () => {

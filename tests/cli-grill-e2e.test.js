@@ -109,6 +109,10 @@ test("Grill Me builds, renders, resumes, and stops at its decision and verificat
   assert.match(optimizer, /Owned phases: define verification gates/);
   assert.match(optimizer, /concrete verification commands/);
   assert.equal((html.match(/<h3>Done when<\/h3>/g) || []).length, 3);
+  assert.match(html, /decision gate/);
+  assert.match(html, /verify gate/);
+  assert.match(html, /dirf validate/);
+  assert.match(html, /Gate rules: advancing past a verify phase requires recorded evidence/);
 
   const resumed = JSON.parse(run(["resume", built.attempt.id, "--path", target, "--json"], env, target));
   assert.equal(resumed.attempt.id, built.attempt.id);
@@ -142,6 +146,41 @@ test("Grill Me builds, renders, resumes, and stops at its decision and verificat
 
   const rerendered = run(["render", built.attempt.id, "--path", target], env, target);
   assert.match(rerendered, /Spec kit rendered:/);
+});
+
+test("Grill With Docs binds its interview engine and documentation dependency", () => {
+  const home = mkdtempSync(join(tmpdir(), "dirf-grill-docs-home-"));
+  const target = mkdtempSync(join(tmpdir(), "dirf-grill-docs-target-"));
+  const env = { DIRF_HOME: home, HOME: home, USERPROFILE: home };
+  execFileSync("git", ["init", "-q"], { cwd: target, timeout: TIMEOUT });
+  execFileSync("git", ["remote", "add", "origin", "https://example.invalid/fixture/dirf-grill-docs.git"], { cwd: target, timeout: TIMEOUT });
+  run(["setup", target], env, target);
+
+  writeSkill(
+    home,
+    "grill-with-docs",
+    "A human command that starts a stateful decision interview",
+    "Run `/grilling`, then use `/domain-modeling` for accepted documentation decisions.",
+    "disable-model-invocation: true",
+  );
+  writeSkill(home, "grilling", "A relentless interview to sharpen a plan or design", "Ask one decision at a time.");
+  writeSkill(home, "domain-modeling", "Maintain a domain glossary and justified ADRs", "Record accepted domain decisions.");
+  writeSkill(home, "ponytail", "Choose the smallest correct implementation", "Use the reuse ladder.");
+  for (const name of ["workflow-orchestrator", "agent-organizer", "dx-optimizer"]) writeAgent(home, name);
+
+  const built = JSON.parse(run([
+    "build", "grill-docs-e2e", "grill with docs before implementation",
+    "--path", target, "--json",
+  ], env, target));
+  const workflow = JSON.parse(readFileSync(built.workflow, "utf8"));
+
+  assert.equal(workflow.playbook, "improve-plan");
+  assert.deepEqual(workflow.skill_flow.steps.map(({ skill }) => skill), [
+    "grill-with-docs", "grilling", "domain-modeling", "ponytail",
+  ]);
+  assert.equal(workflow.skill_flow.steps[0].human_checkpoint, true);
+  assert.match(workflow.skill_flow.steps[2].selection_reason, /dependency referenced by explicit human router grill-with-docs/);
+  assert.deepEqual(workflow.skill_flow.gaps, []);
 });
 
 test("a broken explicit human router fails validation before an attempt is created", () => {

@@ -17,6 +17,24 @@ function usesFocusedOutput(workflow) {
   return workflow.focused_output !== false;
 }
 
+function workflowGatePresentation(workflow = {}) {
+  const gateLabels = { verify: "verify gate", decision: "decision gate", soft: "soft check" };
+  const phases = (workflow.phases || []).map((phase) => {
+    const gate = workflow.gates?.[phase];
+    return { phase, gate: gate ? gateLabels[gate.kind] || "gate" : "" };
+  });
+  const verification = Object.entries(workflow.gates || {})
+    .filter(([, gate]) => gate?.kind === "verify" && gate.verify)
+    .map(([phase, gate]) => ({ phase, command: gate.verify }));
+  return {
+    phases,
+    verification,
+    rules: Object.keys(workflow.gates || {}).length
+      ? "Gate rules: advancing past a verify phase requires recorded evidence; past a decision phase, a recorded accept (user-owned); soft phases are tracked only."
+      : "",
+  };
+}
+
 function assertSnapshot(workflow) {
   if (![2, 3, 4, 5].includes(workflow.schema_version)) throw new Error(`workflow ${workflow.name || "?"}: unsupported schema_version`);
   if (!workflow.skill_flow?.steps) throw new Error(`workflow ${workflow.name || "?"}: missing persisted skill_flow`);
@@ -314,20 +332,14 @@ export function buildInstructions(workflow, outDir, skillBindings = []) {
     lines.push("");
   }
   lines.push("## Phases", "");
-  const gateLabel = { verify: "verify gate", decision: "decision gate", soft: "soft check" };
-  let i = 0;
-  for (const phase of wf.phases || []) {
-    i += 1;
-    const gate = wf.gates?.[phase];
-    lines.push(`${i}. ${phase}${gate ? ` (${gateLabel[gate.kind] || "gate"})` : ""}`);
+  const gatePresentation = workflowGatePresentation(wf);
+  for (const [index, item] of gatePresentation.phases.entries()) {
+    lines.push(`${index + 1}. ${item.phase}${item.gate ? ` (${item.gate})` : ""}`);
   }
-  const verifyGates = Object.entries(wf.gates || {}).filter(([, gate]) => gate?.kind === "verify" && gate.verify);
-  if (verifyGates.length) {
-    lines.push("", ...verifyGates.map(([phase, gate]) => `> Verify ${phase}: \`${gate.verify}\``));
+  if (gatePresentation.verification.length) {
+    lines.push("", ...gatePresentation.verification.map(({ phase, command }) => `> Verify ${phase}: \`${command}\``));
   }
-  if (Object.keys(wf.gates || {}).length) {
-    lines.push("", "> Gate rules: advancing past a `verify` phase requires recorded evidence; past a `decision` phase, a recorded accept (user-owned); `soft` phases are tracked only.");
-  }
+  if (gatePresentation.rules) lines.push("", `> ${gatePresentation.rules}`);
   if (workflow.lifecycle) {
     lines.push("", "## Idea to ship", "");
     for (const [stage, guidance] of Object.entries(workflow.lifecycle)) lines.push(`- **${stage}:** ${guidance}`);
@@ -633,9 +645,16 @@ export function buildHtml(workflow, skillBindings = []) {
     parts.push("</ul>");
   }
 
+  const gatePresentation = workflowGatePresentation(wf);
   parts.push("<h2>Phases</h2><ol>");
-  for (const phase of wf.phases || []) parts.push(`<li>${escapeHtml(phase)}</li>`);
+  for (const item of gatePresentation.phases) {
+    parts.push(`<li>${escapeHtml(item.phase)}${item.gate ? ` <span class='chip'>${escapeHtml(item.gate)}</span>` : ""}</li>`);
+  }
   parts.push("</ol>");
+  for (const { phase, command } of gatePresentation.verification) {
+    parts.push(`<p><strong>Verify ${escapeHtml(phase)}:</strong> <code>${escapeHtml(command)}</code></p>`);
+  }
+  if (gatePresentation.rules) parts.push(`<div class='gate'>${escapeHtml(gatePresentation.rules)}</div>`);
 
   if (workflow.lifecycle) {
     parts.push("<h2>Idea to ship</h2><ul>");

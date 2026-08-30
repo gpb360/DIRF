@@ -78,8 +78,11 @@ but it should not call another user-invoked skill. Add a router when several
 user-invoked skills need to work together.
 
 When a user names a human-only router explicitly, DIRF preserves that user
-checkpoint. If the router points to exactly one installed model-invoked skill,
-DIRF can use that skill as the executable engine. A generic task may select the
+checkpoint. Every skill referenced by that router must be installed and
+model-invoked. DIRF selects the reference that covers the requested capability
+as the executable engine and binds the remaining references as required
+dependencies. A missing or human-only dependency stops with a plain validation
+error instead of running a partial workflow. A generic task may select the
 engine directly. Keep the router small and put the repeatable process in the
 engine.
 

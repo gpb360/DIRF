@@ -21,7 +21,9 @@ same store entry. State cannot drift between checkouts.
 
 1. **Agnostic skill mapping.** Never hardcode skills. Scan the host repo's skill
    folders, index what's installed, resolve references. Referenced-but-absent =
-   flagged "recommended, not installed" — never fatal.
+   flagged "recommended, not installed" and is normally non-fatal. An explicitly
+   requested human router is the exception: every model dependency it declares
+   must resolve so DIRF never runs only part of that router's workflow.
 2. **Lean output.** Smallest correct artifact first. A small
    always-loaded router + lazy-loaded detail one level deep. Unread files cost
    zero tokens. No monoliths, no prose padding.

@@ -276,7 +276,9 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
     const explicit = explicitHumanRouter(requirement, context.task, installed);
     if (explicit) {
       const [routerName, router] = explicit;
-      const references = (router.references || []).filter((name) => installed[name] && installed[name].invocation !== "user");
+      const declaredReferences = router.references || [];
+      const references = declaredReferences.filter((name) => installed[name] && installed[name].invocation !== "user");
+      const invalidReferences = declaredReferences.filter((name) => !installed[name] || installed[name].invocation === "user");
       steps.push({
         stage: requirement.stage,
         capability: requirement.capability || requirement.stage,
@@ -289,10 +291,23 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
         path: router.path,
         invocation: "user",
         human_checkpoint: true,
-        references: router.references || [],
+        references: declaredReferences,
         selection_reason: `explicitly requested human-invoked skill for ${requirement.capability || requirement.stage}`,
         rejected_candidates: [],
       });
+      if (references.length && invalidReferences.length) {
+        gaps.push({
+          stage: requirement.stage,
+          capability: requirement.capability,
+          code: "invalid_router_reference",
+          blocking: true,
+          question: `${routerName} references unavailable or human-only dependencies: ${invalidReferences.join(", ")}. Install or repair every referenced model-invoked dependency before continuing.`,
+          reason: requirement.reason,
+          requires_approval: true,
+          trusted_candidates: [],
+        });
+        continue;
+      }
       const referencedIndex = Object.fromEntries(references.map((name) => [name, installed[name]]));
       const engine = selectCapability(requirement, selection, context, referencedIndex);
       if (engine) {
@@ -301,6 +316,24 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
           reason: `Run the model-invoked engine referenced by ${routerName}.`,
           selection_reason: `model-invoked engine referenced by explicit human router ${routerName}`,
         });
+        for (const dependencyName of references.filter((name) => name !== engine.skill)) {
+          const dependency = installed[dependencyName];
+          const dependencyCapabilities = declaredCapabilities(dependency);
+          steps.push({
+            stage: requirement.stage,
+            capability: dependencyCapabilities[0] || dependencyName,
+            skill: dependencyName,
+            type: dependency.type || "skill",
+            reason: `Run the model-invoked dependency referenced by ${routerName}.`,
+            output: `the ${dependencyName} dependency required by ${routerName} is completed`,
+            status: "installed",
+            provider: dependency.provider || "project",
+            path: dependency.path,
+            ...(dependency.disclosures?.length ? { disclosures: dependency.disclosures } : {}),
+            selection_reason: `model-invoked dependency referenced by explicit human router ${routerName}`,
+            rejected_candidates: [],
+          });
+        }
       } else {
         gaps.push({
           stage: requirement.stage,
