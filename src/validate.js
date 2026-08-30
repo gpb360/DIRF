@@ -50,6 +50,48 @@ export function validateSnapshot(data, label = "workflow") {
       if (policy.externalCreation !== "project_policy_required") errors.push(`${label}: issue_policy.externalCreation must be project_policy_required`);
     }
   }
+  if (data.model_advice !== undefined) {
+    const advice = data.model_advice;
+    if (!advice || typeof advice !== "object" || Array.isArray(advice)) {
+      errors.push(`${label}: model_advice must be an object`);
+    } else {
+      if (advice.advisory_only !== true) errors.push(`${label}: model_advice.advisory_only must be true`);
+      for (const field of ["invoked_models", "live_monitoring", "pricing_lookup"]) {
+        if (advice[field] !== false) errors.push(`${label}: model_advice.${field} must be false`);
+      }
+      if (!["recommended", "partial", "unavailable"].includes(advice.status)) {
+        errors.push(`${label}: model_advice.status must be recommended, partial, or unavailable`);
+      }
+      if (!Array.isArray(advice.recommendations)) {
+        errors.push(`${label}: model_advice.recommendations must be an array`);
+      } else {
+        for (const [index, recommendation] of advice.recommendations.entries()) {
+          for (const field of ["model", "cost_tier", "rationale"]) {
+            if (typeof recommendation?.[field] !== "string" || !recommendation[field].trim()) {
+              errors.push(`${label}: model_advice recommendation ${index + 1} ${field} must be a non-empty string`);
+            }
+          }
+          if (!["low", "medium", "high"].includes(recommendation?.cost_tier)) {
+            errors.push(`${label}: model_advice recommendation ${index + 1} cost_tier must be low, medium, or high`);
+          }
+          for (const field of ["capabilities", "stages"]) {
+            if (!Array.isArray(recommendation?.[field]) || !recommendation[field].length || recommendation[field].some((value) => typeof value !== "string" || !value.trim())) {
+              errors.push(`${label}: model_advice recommendation ${index + 1} ${field} must be an array of non-empty strings`);
+            }
+          }
+        }
+      }
+      if (!Array.isArray(advice.uncovered_capabilities) || advice.uncovered_capabilities.some((value) => typeof value !== "string" || !value.trim())) {
+        errors.push(`${label}: model_advice.uncovered_capabilities must be an array of non-empty strings`);
+      }
+      if (advice.catalog_sha256 !== undefined && !/^[a-f0-9]{64}$/.test(advice.catalog_sha256)) {
+        errors.push(`${label}: model_advice.catalog_sha256 must be a lowercase SHA-256 digest`);
+      }
+      if (typeof advice.rationale !== "string" || !advice.rationale.trim()) {
+        errors.push(`${label}: model_advice.rationale must be a non-empty string`);
+      }
+    }
+  }
 
   // Optional per-phase gates on the persisted workflow (playbook
   // config.workflow.gates flattened at selection time). Absent is fine — old

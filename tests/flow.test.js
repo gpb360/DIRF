@@ -81,6 +81,20 @@ test("Reconciliation requires a complete workflow contract", () => {
   ]);
 });
 
+test("Reconciliation rejects a conditional contract without a cue", () => {
+  const errors = reconcile({
+    triage: {
+      description: "Classify", keywords: [], agents: [],
+      workflow: {
+        ...WORKFLOW,
+        conditional_contract: { phases: ["replace"], output: "replacement" },
+      },
+      skill_flow: { label: "triage", steps: [{ stage: "route", skill: "grill-me", reason: "Classify" }] },
+    },
+  });
+  assert.ok(errors.includes("playbook triage: workflow.conditional_contract requires at least one when_all or when_any cue"));
+});
+
 test("Reconciliation tolerates an optional per-step output contract", () => {
   // Present and non-empty -> no error. Absent -> no error. Empty -> error.
   const ok = reconcile({
@@ -644,4 +658,27 @@ test("validateSnapshot accepts the local-first issue policy and rejects unsafe s
   assert.deepEqual(validateSnapshot({ ...base, issue_policy: issuePolicy }, "demo"), []);
   assert.ok(validateSnapshot({ ...base, issue_policy: { ...issuePolicy, mode: "github_first" } }, "demo").includes("demo: issue_policy.mode must be local_only"));
   assert.ok(validateSnapshot({ ...base, issue_policy: { ...issuePolicy, externalCreation: "automatic" } }, "demo").includes("demo: issue_policy.externalCreation must be project_policy_required"));
+});
+
+test("validateSnapshot accepts safe model advice and rejects operational claims", () => {
+  const base = {
+    schema_version: 5, name: "demo", task: "plan", playbook: "improve-plan", playbook_description: "Plan",
+    agents: [], baseline_skills: [], questions: [], capability_gaps: [], policy: "policies/workflow-policy.md",
+    skill_flow: { label: "plan", steps: [] },
+    attempt: { id: "a", path: "attempts/a" },
+    lifecycle: { clarify: "c", prototype: "p", split: "s", implement: "i", review: "r" },
+  };
+  const advice = {
+    advisory_only: true, invoked_models: false, live_monitoring: false, pricing_lookup: false,
+    status: "recommended", catalog_source: "host-provided file", catalog_sha256: "a".repeat(64),
+    recommendations: [{ model: "small", cost_tier: "low", capabilities: ["testing"], stages: ["verify"], rationale: "Declared match." }],
+    uncovered_capabilities: [], rationale: "Every capability is covered.",
+  };
+
+  assert.deepEqual(validateSnapshot({ ...base, model_advice: advice }, "demo"), []);
+  const unsafe = validateSnapshot({ ...base, model_advice: { ...advice, invoked_models: true, pricing_lookup: true } }, "demo");
+  assert.ok(unsafe.includes("demo: model_advice.invoked_models must be false"));
+  assert.ok(unsafe.includes("demo: model_advice.pricing_lookup must be false"));
+  assert.ok(validateSnapshot({ ...base, model_advice: { ...advice, catalog_sha256: "path/to/models.json" } }, "demo")
+    .includes("demo: model_advice.catalog_sha256 must be a lowercase SHA-256 digest"));
 });

@@ -2,9 +2,9 @@
 // DIRF — Do It Right First. Unified CLI. Node built-ins only.
 //
 //   dirf setup [path] [--reserve-percent N]              configure a target repository
-//   dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--open] [--no-focused-output] [--playbooks DIR]
-//   dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--research] [--playbooks DIR]  lifecycle planning attempt
-//   dirf create <name> "<task>" [--path DIR] [--profile FILE] [--playbooks DIR]  route -> attempt workflow JSON only
+//   dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--open] [--no-focused-output] [--playbooks DIR]
+//   dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--research] [--playbooks DIR]  lifecycle planning attempt
+//   dirf create <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--playbooks DIR]  route -> attempt workflow JSON only
 //   dirf learn [URL|FILE|TEXT] [--path DIR] [--profile FILE] [--file FILE] create a read-only learning review
 //   dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
 //   dirf list [--path DIR]                               list saved attempts
@@ -30,7 +30,7 @@ import { inspect, detectStackProfile } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGateState, attemptResponsibility, pendingGates, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings } from "./state.js";
+import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings } from "./state.js";
 import { ARTIFACT_TYPES, explainGoverningArtifact } from "./artifacts.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 import {
@@ -42,6 +42,7 @@ import {
   verifyEvidenceLedger,
 } from "./governance.js";
 import { DEFAULT_ISSUE_POLICY } from "./issue-governance.js";
+import { buildModelAdvice, normalizeModelCatalog } from "./model-advice.js";
 import { bindingsFromPlan, refreshSkillBindings } from "./skill-bindings.js";
 
 const LIFECYCLE = {
@@ -115,7 +116,7 @@ function castAgents(agents, hostAgents) {
 }
 
 function buildPlan(name, task, path, reservePercent = 5, compaction = null, focusedOutput = true, routing = {}) {
-  const { selection, skillFlow, discovered, hostAgents, facts, capabilityProfile } = assembleTaskRouting(task, path, routing);
+  const { selection, skillFlow, discovered, hostAgents, facts, capabilityProfile, modelAdvice } = assembleTaskRouting(task, path, routing);
   const agents = castAgents(enrichAgents(selection.agents), hostAgents).map((agent) => ({
     ...agent,
     skills: resolveAgentSkills(agent.name, agent.skills, [], discovered),
@@ -147,6 +148,7 @@ function buildPlan(name, task, path, reservePercent = 5, compaction = null, focu
     skill_flow: skillFlow,
     capability_gaps: skillFlow.gaps,
     ...(capabilityProfile ? { capability_profile: capabilityProfile } : {}),
+    ...(modelAdvice ? { model_advice: modelAdvice } : {}),
     agents,
     baseline_skills: [],
     questions,
@@ -185,6 +187,20 @@ function readCapabilityProfile(file) {
     throw new Error("Capability profile skills must be names, not paths");
   }
   return { skills: [...new Set(profile.skills.map((name) => name.trim()))] };
+}
+
+function readModelCatalog(file) {
+  if (!file) return null;
+  let raw;
+  let catalog;
+  try {
+    raw = readFileSync(resolve(file), "utf8");
+    catalog = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`Model catalog must be readable JSON: ${error.message}`);
+  }
+  const sha256 = createHash("sha256").update(raw).digest("hex");
+  return normalizeModelCatalog(catalog, sha256);
 }
 
 function repositoryContext(root) {
@@ -295,7 +311,11 @@ function assembleTaskRouting(task, path, options = {}) {
   if (blockingGaps.length) {
     throw new Error(`Task Routing validation failed:\n${blockingGaps.map((gap) => `  - ${gap.question}`).join("\n")}`);
   }
-  return { selection, discovered, hostAgents, facts, skillFlow, capabilityProfile: profileSnapshot };
+  const modelCatalog = readModelCatalog(options.models);
+  const modelAdvice = (options.models || selection.playbook === "improve-plan")
+    ? buildModelAdvice(skillFlow, modelCatalog)
+    : null;
+  return { selection, discovered, hostAgents, facts, skillFlow, capabilityProfile: profileSnapshot, modelAdvice };
 }
 
 function savePlan(plan, attempt, target) {
@@ -344,6 +364,7 @@ function cmdBuild(args) {
   const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction, args.focusedOutput !== false, {
     projectPlaybooks: args.playbooks,
     profile: args.profile,
+    models: args.models,
   });
   const attempt = createAttempt(target, args.name);
   const planPath = savePlan(plan, attempt, target);
@@ -363,6 +384,7 @@ function cmdPlan(args) {
     planningOnly: true,
     projectPlaybooks: args.playbooks,
     profile: args.profile,
+    models: args.models,
   });
   const attempt = createAttempt(target, args.name);
   const planPath = savePlan(plan, attempt, target);
@@ -377,6 +399,7 @@ function cmdCreate(args) {
   const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction, args.focusedOutput !== false, {
     projectPlaybooks: args.playbooks,
     profile: args.profile,
+    models: args.models,
   });
   const attempt = createAttempt(target, args.name);
   savePlan(plan, attempt, target);
@@ -522,7 +545,7 @@ function publicAttemptForSlug(slug, attempt) {
     wait: attempt.wait || null,
     worktree_path: attempt.worktree_path || null,
     gates,
-    pending_gates: gates.filter((gate) => gate.status !== "accepted" && gate.status !== "satisfied").map((gate) => gate.phase),
+    pending_gates: gates.filter(gateIsPending).map((gate) => gate.phase),
     evidence: attempt.evidence || {},
     next_action: attemptNextAction(slug, attempt.id),
   };
@@ -1304,6 +1327,12 @@ function parse(argv) {
       out.profile = file;
       continue;
     }
+    if (a === "--models") {
+      const file = rest[++i];
+      if (!file || file.startsWith("--")) throw new Error("--models requires FILE");
+      out.models = file;
+      continue;
+    }
     if (a === "--force") { out.force = true; continue; }
     if (a === "--project") { out.project = true; continue; }
     if (a === "--slug") { out.slug = rest[++i]; continue; }
@@ -1346,9 +1375,9 @@ const HELP = `DIRF — Do It Right First
 
 Usage:
   dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
-  dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--open] [--no-focused-output] [--playbooks DIR]
-  dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--research] [--open] [--no-focused-output] [--playbooks DIR]
-  dirf create <name> "<task>" [--path DIR] [--profile FILE] [--playbooks DIR]   JSON only
+  dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--open] [--no-focused-output] [--playbooks DIR]
+  dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--research] [--open] [--no-focused-output] [--playbooks DIR]
+  dirf create <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--playbooks DIR]   JSON only
   dirf learn [URL|FILE|TEXT] [--path DIR] [--profile FILE] [--file FILE] [--language CODE] [--name NAME] [--json]
                                                       ingest a source; implementation requires an accepted recommendation and decision
   dirf render <name-or-id> [--path DIR] [--open]       re-render an attempt
@@ -1378,7 +1407,8 @@ Usage:
   dirf export obsidian [--out DIR]                     export portfolio into an Obsidian vault (notes + canvas)
   dirf export graphify [--out DIR] [--skip-render]    export portfolio as a graphify graph (+ HTML render)
   dirf inspect [<path>]                                detect a project's optimization stack + suggest gaps
-  dirf flow "<task>" [--path DIR] [--profile FILE]     show the ordered skill flow for a task (ask-matt style)
+  dirf flow "<task>" [--path DIR] [--profile FILE] [--models FILE]
+                                                      show the ordered skill flow and optional diagnostic model advice
   dirf govern <digest|evaluate|append|verify> [...]    decide actions and maintain a hash-linked evidence ledger
   dirf state which [--path DIR]                       what project am I in? (slug + store path)
   dirf state list                                      list all registered projects
@@ -1412,8 +1442,8 @@ Plain language (natural-English aliases for the same commands):
 
 function cmdFlow(args) {
   const task = args._.join(" ");
-  if (!task) { console.error("usage: dirf flow \"<task>\" [--path DIR] [--profile FILE]"); process.exit(2); }
-  const { skillFlow: flow, capabilityProfile } = assembleTaskRouting(task, projectRoot(args.path), { profile: args.profile });
+  if (!task) { console.error("usage: dirf flow \"<task>\" [--path DIR] [--profile FILE] [--models FILE]"); process.exit(2); }
+  const { skillFlow: flow, capabilityProfile, modelAdvice } = assembleTaskRouting(task, projectRoot(args.path), { profile: args.profile, models: args.models });
   console.log(`Flow: ${flow.label}`);
   console.log(`Playbook: ${flow.playbook}${flow.branches.length ? ` (branches: ${flow.branches.join(", ")})` : ""}\n`);
   if (capabilityProfile) {
@@ -1432,6 +1462,17 @@ function cmdFlow(args) {
   if (flow.gaps.length) {
     console.log("\n[gaps]");
     for (const gap of flow.gaps) console.log(`  ${gap.question}`);
+  }
+  if (modelAdvice) {
+    console.log("\n[model advice — diagnostic only]");
+    console.log(`  ${modelAdvice.rationale}`);
+    for (const recommendation of modelAdvice.recommendations) {
+      console.log(`  ${recommendation.model} (${recommendation.cost_tier}): ${recommendation.capabilities.join(", ")}`);
+    }
+    if (modelAdvice.uncovered_capabilities.length) {
+      console.log(`  Uncovered: ${modelAdvice.uncovered_capabilities.join(", ")}`);
+    }
+    console.log("  Advisory only; DIRF did not invoke a model, monitor a session, query live pricing, or authorize spend.");
   }
 }
 

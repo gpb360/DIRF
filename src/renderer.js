@@ -35,6 +35,22 @@ function workflowGatePresentation(workflow = {}) {
   };
 }
 
+function modelAdvicePresentation(advice) {
+  if (!advice) return null;
+  return {
+    summary: advice.rationale,
+    recommendations: (advice.recommendations || []).map((recommendation) => ({
+      label: `${recommendation.model} (${recommendation.cost_tier})`,
+      detail: `${recommendation.capabilities.join(", ")} — ${recommendation.rationale}`,
+    })),
+    uncovered: advice.uncovered_capabilities || [],
+    catalog: advice.catalog_sha256
+      ? `Host catalog SHA-256: ${advice.catalog_sha256}`
+      : `Catalog: ${advice.catalog_source || "not provided"}`,
+    rules: "Advisory only. DIRF did not invoke a model, monitor a session, query live pricing, or authorize spend.",
+  };
+}
+
 function assertSnapshot(workflow) {
   if (![2, 3, 4, 5].includes(workflow.schema_version)) throw new Error(`workflow ${workflow.name || "?"}: unsupported schema_version`);
   if (!workflow.skill_flow?.steps) throw new Error(`workflow ${workflow.name || "?"}: missing persisted skill_flow`);
@@ -84,6 +100,7 @@ export function kickoffPrompt(workflow) {
   const agents = (workflow.agents || []).map((a) => a.name).filter(Boolean);
   const phases = wf.phases || [];
   const repo = workflow.repository;
+  const modelAdvice = modelAdvicePresentation(workflow.model_advice);
   const repoLine = repo
     ? `Repository: ${repo.remote || repo.name}${repo.remote && repo.name ? ` (${repo.name})` : ""} — all work happens inside this repository. Clone or open it before starting; if you cannot access it, say so and ask for the relevant files instead of guessing.`
     : "Repository: not recorded — ask which repository this task targets and open it before starting.";
@@ -96,6 +113,10 @@ export function kickoffPrompt(workflow) {
     ...(workflow.continuation ? [
       "",
       `Continuation: after the interview decision is accepted, run the ${workflow.continuation.playbook} workflow for the original task.`,
+    ] : []),
+    ...(modelAdvice ? [
+      "",
+      `Model advice: ${modelAdvice.summary} ${modelAdvice.recommendations.map(({ label }) => label).join("; ") || "No recommendation."} ${modelAdvice.rules}`,
     ] : []),
     "",
     "Operating rules:",
@@ -342,6 +363,15 @@ export function buildInstructions(workflow, outDir, skillBindings = []) {
       `After the interview decision is accepted, continue with **${workflow.continuation.playbook}**: ${workflow.continuation.description}`,
       "",
     );
+  }
+  const modelAdvice = modelAdvicePresentation(workflow.model_advice);
+  if (modelAdvice) {
+    lines.push("## Model advice (diagnostic only)", "", modelAdvice.summary, "");
+    for (const recommendation of modelAdvice.recommendations) {
+      lines.push(`- **${recommendation.label}:** ${recommendation.detail}`);
+    }
+    if (modelAdvice.uncovered.length) lines.push(`- **Uncovered:** ${modelAdvice.uncovered.join(", ")}`);
+    lines.push("", `> ${modelAdvice.catalog}. ${modelAdvice.rules}`, "");
   }
   lines.push("## Phases", "");
   const gatePresentation = workflowGatePresentation(wf);
@@ -660,6 +690,17 @@ export function buildHtml(workflow, skillBindings = []) {
   if (workflow.continuation) {
     parts.push("<h2>Continued task</h2>");
     parts.push(`<p>After the interview decision is accepted, continue with <strong>${escapeHtml(workflow.continuation.playbook)}</strong>: ${escapeHtml(workflow.continuation.description || "")}</p>`);
+  }
+
+  const modelAdvice = modelAdvicePresentation(workflow.model_advice);
+  if (modelAdvice) {
+    parts.push("<h2>Model advice (diagnostic only)</h2>");
+    parts.push(`<p>${escapeHtml(modelAdvice.summary)}</p><ul>`);
+    for (const recommendation of modelAdvice.recommendations) {
+      parts.push(`<li><strong>${escapeHtml(recommendation.label)}:</strong> ${escapeHtml(recommendation.detail)}</li>`);
+    }
+    if (modelAdvice.uncovered.length) parts.push(`<li><strong>Uncovered:</strong> ${escapeHtml(modelAdvice.uncovered.join(", "))}</li>`);
+    parts.push(`</ul><div class='gate'>${escapeHtml(`${modelAdvice.catalog}. ${modelAdvice.rules}`)}</div>`);
   }
 
   const gatePresentation = workflowGatePresentation(wf);

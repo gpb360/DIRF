@@ -185,6 +185,7 @@ function matchingConditionalContract(taskText, workflow = {}) {
   const matches = (cue) => matchesCue(taskText, cue);
   const allCues = Array.isArray(contract.when_all) ? contract.when_all : [];
   const anyCues = Array.isArray(contract.when_any) ? contract.when_any : [];
+  if (!allCues.length && !anyCues.length) return null;
   const allMatch = allCues.every(matches);
   const anyMatch = !anyCues.length || anyCues.some(matches);
   return allMatch && anyMatch ? contract : null;

@@ -1,6 +1,6 @@
 {
   "agents": [
-    {"name": "agent-organizer", "file": "agents/agent-organizer.md", "tags": ["orchestration", "routing", "teams"], "skills": ["ponytail"]},
+    {"name": "agent-organizer", "file": "agents/agent-organizer.md", "tags": ["orchestration", "routing", "teams"], "skills": ["ponytail", "model-advice"]},
     {"name": "api-tester", "file": "agents/api-tester.md", "tags": ["api", "testing"], "skills": ["ponytail", "tdd"]},
     {"name": "backend-architect", "file": "agents/backend-architect.md", "tags": ["backend", "api", "database"], "skills": ["ponytail", "impeccable", "security-review", "tdd", "systematic-debugging", "supabase-postgres-best-practices", "scan-analyze"]},
     {"name": "brand-guardian", "file": "agents/brand-guardian.md", "tags": ["brand", "design"], "skills": ["ponytail"]},

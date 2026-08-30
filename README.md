@@ -65,6 +65,12 @@ skills:
 DIRF prepares and records the route. Your agent host still performs the work,
 and you keep control of consequential actions.
 
+DIRF can add diagnostic model advice when the host supplies `--models FILE`.
+It selects the lowest host-reported cost tier that declares each required
+capability and stores the catalog hash with the advice. Without a catalog it
+says advice is unavailable. It never queries live prices, invokes a model,
+monitors a session, or authorizes spend.
+
 ## Install
 
 DIRF currently runs from a local clone:
@@ -273,9 +279,9 @@ Markdown and HTML.
 ```
 # building workflows
 dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
-dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--open]   full pipeline: route -> JSON -> md + html
-dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--research] discovery through handoff, without implementation
-dirf create <name> "<task>" [--path DIR] [--profile FILE]             route -> workflow JSON only
+dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--open]   full pipeline: route -> JSON -> md + html
+dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--research] discovery through handoff, without implementation
+dirf create <name> "<task>" [--path DIR] [--profile FILE] [--models FILE]             route -> workflow JSON only
 dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
 dirf list [--path DIR]                               list a project's attempts
 dirf resume <name-or-id> [--path DIR]                load one attempt's workflow + HANDOFF.md
@@ -308,7 +314,7 @@ dirf export graphify [--out DIR] [--skip-render]     export the portfolio as a g
 # inspection + registries
 dirf skills scan [--path DIR]                        scan host, show installed skills + resolved refs
 dirf inspect [<path>]                                detect a project's optimization stack + suggest gaps
-dirf flow "<task>" [--path DIR] [--profile FILE]     show the ordered skill flow for a task
+dirf flow "<task>" [--path DIR] [--profile FILE] [--models FILE]     show the ordered skill flow and optional model advice
 dirf validate                                        validate registries + workflows
 dirf validate <folder>                               validate one folder DAG
 dirf graph <folder>                                  show deterministic execution order
@@ -386,6 +392,21 @@ Use an explicit JSON profile to limit one routing invocation to named skills:
 Pass it with `--profile FILE` to `build`, `plan`, `create`, `flow`, or `learn`.
 Unavailable names remain visible gaps. `dirf skills scan` still shows the full
 installed inventory. Profiles have no automatic project default or layering.
+
+Use a separate host-provided model catalog when diagnostic routing advice is
+useful:
+
+```json
+{"models":[
+  {"name":"fast-model","cost_tier":"low","capabilities":["code review","testing"]},
+  {"name":"frontier-model","cost_tier":"high","capabilities":["*"]}
+]}
+```
+
+Pass it with `--models FILE` to `build`, `plan`, `create`, or `flow`. DIRF
+matches declared workflow capabilities, chooses the lowest reported tier, and
+stores only portable advice plus the catalog SHA-256. The flag does not run a
+model, check current prices, monitor work, or grant spending authority.
 
 **Scan roots** (all optional): `~/.agents/skills/`, `~/.codex/skills/`,
 `~/.claude/skills/`, `~/.zcode/.../skills/`, plus project-local equivalents.

@@ -530,11 +530,15 @@ export function attemptGates(slug, idOrName) {
   return attemptGateState(slug, getAttempt(slug, idOrName)).gates;
 }
 
+export function gateIsPending(gate) {
+  return !["accepted", "satisfied", "passed"].includes(gate?.status);
+}
+
 // Gates that still block or await the current/future phase. Crossed soft gates
 // are history and stay out of the resume blocker list.
 export function pendingGates(slug, idOrName) {
   return attemptGateState(slug, getAttempt(slug, idOrName)).gates
-    .filter((gate) => !["accepted", "satisfied", "passed"].includes(gate.status));
+    .filter(gateIsPending);
 }
 
 // Recorded verification evidence per phase (replay-don't-rerun).

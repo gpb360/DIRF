@@ -108,6 +108,12 @@ assigns question order to the workflow orchestrator while decisions remain
 user-owned, enforces the confirmation gate in code, and documents the normal
 and stateful variants once.
 
+Model-selection guidance follows the same rule. The workflow declares a
+diagnostic advice phase, the agent organizer owns it, code derives it only from
+a host-provided catalog, and the rendered workflow carries the result. If the
+catalog is absent, record that advice is unavailable; do not guess models or
+pricing. Advice never grants permission to invoke, monitor, or spend.
+
 ## Failure modes to prune
 
 - **Premature completion:** the completion rule is too vague to verify.

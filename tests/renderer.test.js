@@ -51,6 +51,12 @@ test("kickoff prompt is embedded in both renders and stays host-agnostic", () =>
     agents: [{ name: "frontend-developer", file: "agents/frontend-developer.md", tags: [], skills: [] }],
     baseline_skills: [],
     skill_flow: { label: "persisted", branches: [], steps: [{ stage: "build", skill: "s", reason: "r", status: "recommended" }] },
+    model_advice: {
+      advisory_only: true, invoked_models: false, live_monitoring: false, pricing_lookup: false,
+      status: "recommended", catalog_source: "host-provided file", catalog_sha256: "a".repeat(64),
+      recommendations: [{ model: "small-model", cost_tier: "low", capabilities: ["testing"], stages: ["build"], rationale: "Lowest host-reported tier." }],
+      uncovered_capabilities: [], rationale: "Every workflow capability has a suggestion from the host-provided catalog.",
+    },
     policy: "policies/workflow-policy.md", schema_version: 2,
   };
   const prompt = kickoffPrompt(workflow);
@@ -63,6 +69,9 @@ test("kickoff prompt is embedded in both renders and stays host-agnostic", () =>
   assert.ok(prompt.includes("frontend-developer"));
   assert.ok(prompt.includes("Begin with phase 1: a"));
   assert.ok(prompt.includes("Required acceptance contract"));
+  assert.ok(prompt.includes("Model advice:"));
+  assert.ok(prompt.includes("small-model (low)"));
+  assert.ok(prompt.includes("did not invoke a model"));
   assert.ok(prompt.includes("derive every screen x state x viewport row"));
   assert.ok(prompt.includes("For status updates, validation summaries, and handoffs"));
   assert.ok(prompt.includes("End with exactly one next action, or `Complete`"));
@@ -74,12 +83,16 @@ test("kickoff prompt is embedded in both renders and stays host-agnostic", () =>
   assert.ok(readme.includes("## Kickoff prompt (copy into your model of choice)"));
   assert.ok(readme.includes('"demo" DIRF workflow'));
   assert.ok(readme.includes("## Required acceptance contract"));
+  assert.ok(readme.includes("## Model advice (diagnostic only)"));
+  assert.ok(readme.includes("Host catalog SHA-256"));
 
   const html = buildHtml(workflow);
   assert.ok(html.includes("Kickoff prompt"));
   assert.ok(html.includes("Copy prompt"));
   assert.ok(html.includes('"demo" DIRF workflow'));
   assert.ok(html.includes("Required acceptance contract"));
+  assert.ok(html.includes("Model advice (diagnostic only)"));
+  assert.ok(html.includes("small-model (low)"));
 });
 
 test("buildInstructions writes router + per-agent detail", () => {

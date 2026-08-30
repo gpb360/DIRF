@@ -78,6 +78,18 @@ To see the routed skill flow without building:
 dirf flow "<task>"
 ```
 
+**Optional: diagnostic model advice.** Add `--models <file>` to `build`,
+`plan`, `create`, or `flow` when the host can provide a portable catalog:
+
+```json
+{"models":[{"name":"fast-model","cost_tier":"low","capabilities":["testing"]}]}
+```
+
+DIRF suggests the lowest host-reported tier that declares each workflow
+capability and records the catalog hash. With no catalog or match it says the
+advice is unavailable. This is planning evidence only: DIRF does not query live
+prices, invoke models, monitor sessions, or authorize spend.
+
 **Optional: project playbooks.** `dirf build|plan|create ... --playbooks <dir>`
 lets one explicitly supplied directory of playbooks participate in routing,
 alongside DIRF's bundled set. Trust model:

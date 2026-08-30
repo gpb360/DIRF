@@ -203,6 +203,20 @@ test("workflow contract is carried through", () => {
   assert.ok(Array.isArray(r.questions));
 });
 
+test("a cue-less conditional contract never replaces the base workflow", () => {
+  const base = {
+    description: "Route a demo task", keywords: ["demo"], agents: [], questions: [],
+    workflow: {
+      phases: ["base"], output: "base output", validation: "check base", recovery: "recover base",
+      conditional_contract: { phases: ["conditional"], output: "conditional output" },
+    },
+    skill_flow: { label: "demo", steps: [{ stage: "route", reason: "Route", capability: "minimalism" }] },
+  };
+  const result = recommend("demo", [], { triage: base, demo: base });
+  assert.deepEqual(result.workflow.phases, ["base"]);
+  assert.equal(result.workflow.output, "base output");
+});
+
 test("facts augment matching", () => {
   const without = recommend("help me with something");
   const withFacts = recommend("help me", ["build a landing page"]);

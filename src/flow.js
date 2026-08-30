@@ -103,6 +103,11 @@ export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
               errors.push(`playbook ${name}: workflow.conditional_contract.${field} must be an array of non-empty strings`);
             }
           }
+          const whenAll = Array.isArray(conditional.when_all) ? conditional.when_all : [];
+          const whenAny = Array.isArray(conditional.when_any) ? conditional.when_any : [];
+          if (!whenAll.length && !whenAny.length) {
+            errors.push(`playbook ${name}: workflow.conditional_contract requires at least one when_all or when_any cue`);
+          }
           const conditionalAgents = conditional.agents === undefined ? playbook.agents : conditional.agents;
           if (!Array.isArray(conditionalAgents)) errors.push(`playbook ${name}: workflow.conditional_contract.agents must be an array`);
           const { conditional_contract: _nested, ...baseWorkflow } = playbook.workflow;

@@ -72,7 +72,7 @@ test("Grill Me builds, renders, resumes, and respects its decision and soft gate
   const workflow = JSON.parse(readFileSync(built.workflow, "utf8"));
 
   assert.equal(workflow.playbook, "improve-plan");
-  assert.deepEqual(workflow.skill_flow.steps.map(({ skill }) => skill), ["grill-me", "grilling", "ponytail"]);
+  assert.deepEqual(workflow.skill_flow.steps.map(({ skill }) => skill), ["grill-me", "grilling", "ponytail", "model-advice"]);
   assert.equal(workflow.skill_flow.steps[0].invocation, "user");
   assert.equal(workflow.skill_flow.steps[0].human_checkpoint, true);
   assert.deepEqual(workflow.workflow.gates["confirm shared understanding"], { kind: "decision" });
@@ -81,6 +81,11 @@ test("Grill Me builds, renders, resumes, and respects its decision and soft gate
   assert.deepEqual(Object.keys(workflow.workflow.agent_contracts).sort(), ["agent-organizer", "dx-optimizer", "workflow-orchestrator"]);
   assert.ok(workflow.agents.every((agent) => agent.status === "installed"));
   assert.doesNotMatch(JSON.stringify(workflow), /\.codex[\\/]skills/);
+  assert.equal(workflow.model_advice.status, "unavailable");
+  assert.equal(workflow.model_advice.advisory_only, true);
+  assert.equal(workflow.model_advice.invoked_models, false);
+  assert.equal(workflow.model_advice.live_monitoring, false);
+  assert.equal(workflow.model_advice.pricing_lookup, false);
 
   for (const relative of [
     "README.md",
@@ -91,6 +96,7 @@ test("Grill Me builds, renders, resumes, and respects its decision and soft gate
     join("skills", "01-grill-me", "README.md"),
     join("skills", "02-grilling", "README.md"),
     join("skills", "03-ponytail", "README.md"),
+    join("skills", "04-model-advice", "README.md"),
   ]) assert.equal(existsSync(join(attemptFolder, relative)), true, `missing rendered file ${relative}`);
 
   const readme = readFileSync(join(attemptFolder, "README.md"), "utf8");
@@ -104,14 +110,16 @@ test("Grill Me builds, renders, resumes, and respects its decision and soft gate
   assert.match(agent, /Selected interview engine: `grilling`/);
   assert.match(agent, /recording decisions and contradictions/);
   assert.match(agent, /## Done when/);
-  assert.match(organizer, /Owned phases: partition the confirmed work, assign agents and ownership/);
-  assert.match(organizer, /bounded, non-overlapping assignments/);
+  assert.match(organizer, /Owned phases: partition the confirmed work, draft advisory model assignments, assign agents and ownership/);
+  assert.match(organizer, /bounded, non-overlapping agent assignments/);
   assert.match(optimizer, /Owned phases: define verification gates/);
   assert.match(optimizer, /concrete verification commands/);
   assert.equal((html.match(/<h3>Done when<\/h3>/g) || []).length, 3);
   assert.match(html, /decision gate/);
   assert.match(html, /soft check/);
   assert.match(html, /Gate rules: advancing past a verify phase requires recorded evidence/);
+  assert.match(readme, /Model advice \(diagnostic only\)[\s\S]*did not provide a model catalog/);
+  assert.match(html, /Model advice \(diagnostic only\)[\s\S]*did not provide a model catalog/);
 
   const resumed = JSON.parse(run(["resume", built.attempt.id, "--path", target, "--json"], env, target));
   assert.equal(resumed.attempt.id, built.attempt.id);
@@ -135,6 +143,7 @@ test("Grill Me builds, renders, resumes, and respects its decision and soft gate
   assert.equal(continuedToFinalPhase.current_phase, "define verification gates");
   assert.equal(continuedToFinalPhase.stopped_at_gate, null);
   assert.equal(continuedToFinalPhase.gates.find((gate) => gate.phase === "assign agents and ownership").status, "passed");
+  assert.ok(!continuedToFinalPhase.pending_gates.includes("assign agents and ownership"));
 
   const rerendered = run(["render", built.attempt.id, "--path", target], env, target);
   assert.match(rerendered, /Spec kit rendered:/);
@@ -159,16 +168,21 @@ test("Grill With Docs binds its interview engine and documentation dependency", 
   writeSkill(home, "domain-modeling", "Maintain a domain glossary and justified ADRs", "Record accepted domain decisions.");
   writeSkill(home, "ponytail", "Choose the smallest correct implementation", "Use the reuse ladder.");
   for (const name of ["workflow-orchestrator", "documentation-engineer", "agent-organizer", "dx-optimizer"]) writeAgent(home, name);
+  const modelCatalog = join(target, "models.json");
+  writeFileSync(modelCatalog, JSON.stringify({ models: [
+    { name: "small-planner", cost_tier: "low", capabilities: ["plan interview", "minimalism"] },
+    { name: "frontier", cost_tier: "high", capabilities: ["*"] },
+  ] }));
 
   const built = JSON.parse(run([
     "build", "grill-docs-e2e", "grill with docs before implementation",
-    "--path", target, "--json",
+    "--path", target, "--models", modelCatalog, "--json",
   ], env, target));
   const workflow = JSON.parse(readFileSync(built.workflow, "utf8"));
 
   assert.equal(workflow.playbook, "improve-plan");
   assert.deepEqual(workflow.skill_flow.steps.map(({ skill }) => skill), [
-    "grill-with-docs", "grilling", "domain-modeling", "ponytail",
+    "grill-with-docs", "grilling", "domain-modeling", "ponytail", "model-advice",
   ]);
   assert.equal(workflow.skill_flow.steps[0].human_checkpoint, true);
   assert.match(workflow.skill_flow.steps[2].selection_reason, /dependency referenced by explicit human router grill-with-docs/);
@@ -179,6 +193,16 @@ test("Grill With Docs binds its interview engine and documentation dependency", 
   assert.deepEqual(workflow.workflow.agent_contracts["documentation-engineer"].phases, [
     "record accepted domain language and durable decisions",
   ]);
+  assert.equal(workflow.model_advice.status, "recommended");
+  assert.match(workflow.model_advice.catalog_sha256, /^[a-f0-9]{64}$/);
+  assert.ok(workflow.model_advice.recommendations.some((item) =>
+    item.model === "small-planner" && item.capabilities.includes("plan interview")));
+  assert.ok(workflow.model_advice.recommendations.some((item) =>
+    item.model === "frontier" && item.capabilities.includes("domain modeling")));
+  assert.doesNotMatch(JSON.stringify(workflow.model_advice), /models\.json/);
+  const rendered = readFileSync(join(dirname(built.workflow), "README.md"), "utf8");
+  assert.match(rendered, /small-planner \(low\)/);
+  assert.match(rendered, /did not invoke a model, monitor a session, query live pricing, or authorize spend/);
 });
 
 test("a mixed Grill Me request continues into the requested PR review", () => {
