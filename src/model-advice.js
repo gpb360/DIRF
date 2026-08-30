@@ -4,9 +4,22 @@
 
 const COST_ORDER = new Map([["low", 0], ["medium", 1], ["high", 2]]);
 const ADVICE_CAPABILITY = "model selection advice";
+const MAX_CATALOG_LABEL_LENGTH = 120;
 
 function cleanStrings(values) {
   return [...new Set(values.map((value) => String(value).trim()).filter(Boolean))];
+}
+
+function catalogLabel(value, label) {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`${label} must be a non-empty string`);
+  const normalized = value.trim();
+  if (normalized.length > MAX_CATALOG_LABEL_LENGTH) {
+    throw new Error(`${label} must be ${MAX_CATALOG_LABEL_LENGTH} characters or fewer`);
+  }
+  if (/[\u0000-\u001f\u007f\u2028\u2029]/.test(normalized)) {
+    throw new Error(`${label} must be a single-line identifier without control characters`);
+  }
+  return normalized;
 }
 
 export function normalizeModelCatalog(data, sha256 = null) {
@@ -18,8 +31,7 @@ export function normalizeModelCatalog(data, sha256 = null) {
     if (!model || typeof model !== "object" || Array.isArray(model)) {
       throw new Error(`Model catalog entry ${index + 1} must be an object`);
     }
-    const name = String(model.name || "").trim();
-    if (!name) throw new Error(`Model catalog entry ${index + 1} name must be a non-empty string`);
+    const name = catalogLabel(model.name, `Model catalog entry ${index + 1} name`);
     if (names.has(name)) throw new Error(`Model catalog contains duplicate model ${JSON.stringify(name)}`);
     names.add(name);
     const costTier = String(model.cost_tier || "").trim();
@@ -29,7 +41,9 @@ export function normalizeModelCatalog(data, sha256 = null) {
     if (!Array.isArray(model.capabilities) || model.capabilities.some((capability) => typeof capability !== "string" || !capability.trim())) {
       throw new Error(`Model catalog entry ${name} capabilities must be an array of non-empty strings`);
     }
-    return { name, cost_tier: costTier, capabilities: cleanStrings(model.capabilities) };
+    const capabilities = cleanStrings(model.capabilities.map((capability, capabilityIndex) =>
+      catalogLabel(capability, `Model catalog entry ${name} capability ${capabilityIndex + 1}`)));
+    return { name, cost_tier: costTier, capabilities };
   });
   return { models, ...(sha256 ? { sha256 } : {}) };
 }

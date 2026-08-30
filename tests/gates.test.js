@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -99,8 +99,11 @@ test("verify gates block advance until evidence is recorded", () => {
   // leaving "build" (verify gate) requires an evidence record
   assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "advance"), /verify gate/);
   assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "" } }), /evidence command must not be empty/);
-  // gate record alone does NOT satisfy a verify gate — evidence does
-  updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "build", decision: "accept", comment: "not how verify works" });
+  // decision records are rejected for verify gates — evidence is the only contract
+  assert.throws(
+    () => updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "build", decision: "accept", comment: "not how verify works" }),
+    /not a decision gate/,
+  );
   assert.equal(attemptGates(slug, attempt.id).find((gate) => gate.phase === "build").status, "pending");
   assert.ok(pendingGates(slug, attempt.id).some((gate) => gate.phase === "build"));
   assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "advance"), /verify gate/);
@@ -347,7 +350,28 @@ test("gate decisions validate phase, state, and decision value", () => {
   assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "design", decision: "accept" }), /in-progress/);
   updateAttemptLifecycle(slug, attempt.id, "start");
   assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "nope", decision: "accept" }), /Unknown phase/);
+  assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "build", decision: "accept" }), /not a decision gate/);
+  assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "verify", decision: "deny", comment: "unsafe" }), /not a decision gate/);
   assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "design", decision: "maybe" }), /must be "accept" or "deny"/);
+});
+
+test("legacy denied soft-gate records remain denied after the phase is crossed", () => {
+  const { slug, attempt } = attemptFixture();
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+  updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "design", decision: "accept", comment: "ok" });
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+  updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "node --test" } });
+
+  const attemptFile = join(attempt.folder, "attempt.json");
+  const stored = JSON.parse(readFileSync(attemptFile, "utf8"));
+  stored.gates = { ...stored.gates, verify: { status: "denied", comment: "unsafe", at: "2026-08-01T00:00:02.000Z" } };
+  writeFileSync(attemptFile, JSON.stringify(stored, null, 2));
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+
+  const gate = attemptGates(slug, attempt.id).find((item) => item.phase === "verify");
+  assert.equal(gate.status, "denied");
+  assert.equal(gate.comment, "unsafe");
 });
 
 test("gate-free attempts advance exactly as before", () => {

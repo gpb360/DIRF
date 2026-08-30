@@ -494,7 +494,8 @@ function gateRequirement(gates, records, evidence, attempt, phase, strict = fals
 // verify gates: pending (no evidence) / satisfied (evidence recorded).
 // soft gates: pending until reached / passed once crossed / satisfied when
 // evidence was recorded. Accept/deny records are decisions only; a legacy
-// accept record on a verify or soft gate never substitutes for evidence.
+// accept record on a verify or soft gate never substitutes for evidence, while
+// a legacy denial remains visible and is never rewritten as passed.
 export function attemptGateState(slug, attempt) {
   const { phases, gates } = attemptWorkflow(slug, attempt);
   const records = attempt.gates || {};
@@ -516,8 +517,8 @@ export function attemptGateState(slug, attempt) {
       let status = "pending";
       if (kind === "decision" && record) status = record.status;
       if (record?.status === "denied") status = "denied";
-      if (satisfied) status = "satisfied";
-      if (crossedSoftGate && !satisfied) status = "passed";
+      else if (satisfied) status = "satisfied";
+      else if (crossedSoftGate) status = "passed";
       if (artifactPending) status = "pending";
       return {
         phase,
@@ -542,7 +543,7 @@ export function gateIsPending(gate) {
 }
 
 // Gates that still block or await the current/future phase. Crossed soft gates
-// are history and stay out of the resume blocker list.
+// are history unless a legacy denial must remain visible.
 export function pendingGates(slug, idOrName) {
   return attemptGateState(slug, getAttempt(slug, idOrName)).gates
     .filter(gateIsPending);
@@ -666,6 +667,10 @@ export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now
     const phase = String(options.phase || "").trim();
     if (!phase) throw new Error("gate phase is required");
     if (!phases.includes(phase)) throw new Error(`Unknown phase ${JSON.stringify(phase)} — no such workflow phase`);
+    const gate = workflowGates(slug, attempt.id)[phase];
+    if (gate?.kind !== "decision") {
+      throw new Error(`Phase ${JSON.stringify(phase)} is not a decision gate — record verification with dirf attempt advance --evidence instead`);
+    }
     const decision = options.decision;
     if (decision !== "accept" && decision !== "deny") throw new Error('gate decision must be "accept" or "deny"');
     const comment = String(options.comment || "").trim();

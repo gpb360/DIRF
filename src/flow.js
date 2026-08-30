@@ -2,7 +2,7 @@
 // Selection happens in router.js; this module never classifies a task.
 import { bundledSkills } from "./skills.js";
 import { ARTIFACT_TYPES } from "./artifacts.js";
-import { affirmativeRoutingText } from "./router.js";
+import { affirmativeRoutingText, negatesInterviewCapability } from "./router.js";
 
 export const KNOWN_BRANCHES = new Set(["ui", "react", "security", "multi-session", "research"]);
 
@@ -303,14 +303,38 @@ function scopedSkillIndex(index, allowedSkills) {
 
 function withoutNegatedHumanRouters(task, skillIndex) {
   const affirmativeTask = affirmativeRoutingText(task);
-  const blocked = new Set();
-  for (const [name, item] of Object.entries(skillIndex || {})) {
-    if (item.invocation !== "user") continue;
-    if (!explicitlyRequests(task, name) || explicitlyRequests(affirmativeTask, name)) continue;
-    blocked.add(name);
-    for (const reference of item.references || []) blocked.add(reference);
+  const entries = Object.entries(skillIndex || {});
+  const humanRouters = entries.filter(([, item]) => item.invocation === "user");
+  const affirmedRouters = new Set(humanRouters
+    .filter(([name]) => explicitlyRequests(affirmativeTask, name))
+    .map(([name]) => name));
+  const broadInterviewNegation = negatesInterviewCapability(task);
+  const blockedRouters = new Set(humanRouters
+    .filter(([name, item]) =>
+      (explicitlyRequests(task, name) && !affirmedRouters.has(name)) ||
+      (broadInterviewNegation && declaredCapabilities(item).includes("plan interview")))
+    .map(([name]) => name));
+  const preservedReferences = new Set(humanRouters
+    .filter(([name]) => affirmedRouters.has(name))
+    .flatMap(([, item]) => item.references || []));
+  const blocked = new Set(blockedRouters);
+  if (blockedRouters.size) {
+    for (const [name] of humanRouters) {
+      if (!affirmedRouters.has(name)) blocked.add(name);
+    }
   }
-  return Object.fromEntries(Object.entries(skillIndex || {}).filter(([name]) => !blocked.has(name)));
+  for (const [name, item] of humanRouters) {
+    if (!blockedRouters.has(name)) continue;
+    for (const reference of item.references || []) {
+      if (!preservedReferences.has(reference)) blocked.add(reference);
+    }
+  }
+  if (broadInterviewNegation) {
+    for (const [name, item] of entries) {
+      if (declaredCapabilities(item).includes("plan interview") && !affirmedRouters.has(name)) blocked.add(name);
+    }
+  }
+  return Object.fromEntries(entries.filter(([name]) => !blocked.has(name)));
 }
 
 export function buildFlow(selection, context = {}, skillIndex = {}) {
@@ -331,6 +355,18 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
   // capability, and the step is labeled so — never passed off as installed.
   let bundled;
   for (const requirement of requirements) {
+    if (negatesInterviewCapability(context.task) && requirement.capability === "plan interview") {
+      gaps.push({
+        stage: requirement.stage,
+        capability: requirement.capability,
+        code: "negated_capability",
+        question: "The task explicitly excludes an interview, so DIRF left the plan-interview capability unassigned.",
+        reason: requirement.reason,
+        requires_approval: false,
+        trusted_candidates: [],
+      });
+      continue;
+    }
     const explicit = explicitHumanRouter(requirement, affirmativeTask, installed);
     if (explicit) {
       const [routerName, router] = explicit;

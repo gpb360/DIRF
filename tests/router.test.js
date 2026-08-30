@@ -198,6 +198,7 @@ test("workflow composition does not repeat capabilities already fulfilled by the
 
 test("action-first requests preserve both workflows in their stated order", () => {
   for (const task of [
+    "Review the PR and grill me",
     "Review the PR, then grill me",
     "Review the PR before you grill me",
     "Review the PR and grill me afterward",
@@ -213,6 +214,15 @@ test("action-first requests preserve both workflows in their stated order", () =
   }
 });
 
+test("plain action-first conjunctions preserve build work before the interview", () => {
+  const result = recommend("Build the feature and grill me");
+  assert.equal(result.playbook, "fullstack-feature");
+  assert.equal(result.continuation.playbook, "improve-plan");
+  assert.equal(result.continuation.transition, "after-primary");
+  assert.ok(result.workflow.phases.indexOf("define user outcome") <
+    result.workflow.phases.indexOf("confirm shared understanding"));
+});
+
 test("composed workflows give every phase exactly one typed owner", () => {
   for (const task of ["Grill me before reviewing PR 47", "Review PR 47, then grill me"]) {
     const result = recommend(task);
@@ -222,6 +232,13 @@ test("composed workflows give every phase exactly one typed owner", () => {
     }
     for (const [phase, owners] of ownership) assert.equal(owners.length, 1, `${task}: ${phase}`);
   }
+});
+
+test("composition fails closed instead of inventing multi-agent ownership", () => {
+  assert.throws(
+    () => recommend("Grill me, then fix the checkout bug"),
+    /playbook bug-fix: cannot compose a multi-agent workflow without workflow\.agent_contracts/,
+  );
 });
 
 test("negated interview and action cues never become executable work", () => {

@@ -77,10 +77,12 @@ DIRF respects this choice. A user-invoked skill may call a model-invoked skill,
 but it should not call another user-invoked skill. Add a router when several
 user-invoked skills need to work together.
 
-When a user names a human-only router explicitly, DIRF preserves that user
-checkpoint before another requested review or build action, then continues the
-original action after the decision is confirmed. Every skill referenced by that router must be installed and
-model-invoked. DIRF selects the reference that covers the requested capability
+When a user names a human-only router explicitly, DIRF preserves every requested
+action. Explicit ordering controls the transition: action-first wording runs the
+action before the checkpoint; otherwise the checkpoint comes first and the
+original action continues after the decision is confirmed. Every skill
+referenced by that router must be installed and model-invoked. DIRF selects the
+reference that covers the requested capability
 as the executable engine and binds the remaining references as required
 dependencies. A missing or human-only dependency stops with a plain validation
 error instead of running a partial workflow. A generic task may select the

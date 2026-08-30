@@ -250,6 +250,69 @@ test("a negated human router and its engine are excluded from capability assembl
   assert.deepEqual(flow.gaps, []);
 });
 
+test("generic interview negation blocks every interview implementation", () => {
+  const selection = {
+    playbook: "improve-plan", agents: [],
+    skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
+  };
+  const skills = {
+    "grill-me": {
+      path: "/user/grill-me", provider: "codex", invocation: "user",
+      capabilities: ["plan interview"], references: ["grilling"],
+    },
+    grilling: {
+      path: "/model/grilling", provider: "codex", invocation: "model",
+      description: "Relentless interview that sharpens a plan or design",
+    },
+    "plan-interview": {
+      path: "/model/plan-interview", provider: "codex", invocation: "model",
+      capabilities: ["plan interview"], description: "Resolve planning decisions another way",
+    },
+  };
+
+  for (const task of [
+    "Do not interview me; improve the plan another way",
+    "Do not question me; improve the plan another way",
+  ]) {
+    const flow = buildFlow(selection, { task }, skills);
+    assert.deepEqual(flow.steps, [], task);
+    assert.equal(flow.gaps[0].capability, "plan interview", task);
+  }
+});
+
+test("a positive replacement router retains its shared engine", () => {
+  const selection = {
+    playbook: "improve-plan", agents: [],
+    skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
+  };
+  const skills = {
+    "grill-me": {
+      path: "/user/grill-me", provider: "codex", invocation: "user",
+      capabilities: ["plan interview"], references: ["grilling"],
+    },
+    "grill-with-docs": {
+      path: "/user/grill-with-docs", provider: "codex", invocation: "user",
+      capabilities: ["plan interview"], references: ["grilling", "domain-modeling"],
+    },
+    grilling: {
+      path: "/model/grilling", provider: "codex", invocation: "model",
+      capabilities: ["plan interview"], description: "Relentless interview that sharpens a plan or design",
+    },
+    "domain-modeling": {
+      path: "/model/domain-modeling", provider: "codex", invocation: "model",
+      capabilities: ["domain modeling"], description: "Record accepted domain language",
+    },
+  };
+
+  const withDocs = buildFlow(selection, { task: "Do not grill me; grill with docs instead" }, skills);
+  assert.deepEqual(withDocs.steps.map(({ skill }) => skill), ["grill-with-docs", "grilling", "domain-modeling"]);
+  assert.deepEqual(withDocs.gaps, []);
+
+  const withoutDocs = buildFlow(selection, { task: "Do not grill with docs; grill me without documentation" }, skills);
+  assert.deepEqual(withoutDocs.steps.map(({ skill }) => skill), ["grill-me", "grilling"]);
+  assert.deepEqual(withoutDocs.gaps, []);
+});
+
 test("an explicit human router with no installed engine stops with a clear gap", () => {
   const selection = {
     playbook: "improve-plan", agents: [],

@@ -134,6 +134,13 @@ export function affirmativeRoutingText(taskText) {
     .trim();
 }
 
+export function negatesInterviewCapability(taskText) {
+  const text = String(taskText || "").toLowerCase();
+  const negatesGenericInterview = /\b(?:(?:i\s+)?(?:do\s+not|don't|dont)\s+(?:want\s+(?:you\s+)?to\s+)?|never\s+|without\s+|not\s+)(?:you\s+)?(?:interview|question)\s+me\b/.test(text);
+  if (!negatesGenericInterview) return false;
+  return !/\b(?:grill(?:\s+me)?|interview\s+me|question\s+me)\b/.test(affirmativeRoutingText(text));
+}
+
 function interviewCueIndex(taskText, interviewPlaybook) {
   const interviewKeywords = matchedKeywords(taskText, interviewPlaybook)
     .filter((keyword) => /\b(?:grill|interview|question)\b/.test(keyword.replaceAll("-", " ")));
@@ -170,7 +177,7 @@ function requestsPostActionInterview(taskText, interviewPlaybook) {
   const actionAfter = CONTINUATION_ACTION_INTENT.test(afterInterview);
   return (actionBefore && (
     /^\s*after\b/.test(taskText) ||
-    /\b(?:then|and\s+then|before(?:\s+you)?|after(?:ward|wards)?)\b[^,.;!?]*$/.test(beforeInterview) ||
+    /\b(?:and(?:\s+then)?|then|before(?:\s+you)?|after(?:ward|wards)?)\b[^,.;!?]*$/.test(beforeInterview) ||
     /\bafter(?:ward|wards)?\b/.test(afterInterview)
   )) || (actionAfter && new RegExp(
     `\\bafter\\b[^,.;!?]{0,100}${CONTINUATION_ACTION_INTENT.source}`,
@@ -279,13 +286,17 @@ function unique(items) {
   return [...new Set(items.filter(Boolean))];
 }
 
-function workflowContracts(workflow, agents) {
+function workflowContracts(workflow, agents, label) {
   if (workflow.agent_contracts && Object.keys(workflow.agent_contracts).length) {
     return workflow.agent_contracts;
   }
-  const owner = (agents || [])[0];
+  const declaredAgents = agents || [];
   const phases = workflow.phases || [];
-  if (!owner || !phases.length) return {};
+  if (!declaredAgents.length || !phases.length) return {};
+  if (declaredAgents.length > 1) {
+    throw new Error(`${label}: cannot compose a multi-agent workflow without workflow.agent_contracts`);
+  }
+  const owner = declaredAgents[0];
   return {
     [owner]: {
       phases,
@@ -318,7 +329,7 @@ function composeSequentialWorkflows(taskText, result, continuation, transition) 
   }
   const continuationAgents = resolveAgents(taskText, continuation.pb);
   const continuationContracts = Object.fromEntries(Object.entries(
-    workflowContracts(continuationWorkflow, continuationAgents),
+    workflowContracts(continuationWorkflow, continuationAgents, `playbook ${continuation.name}`),
   )
     .map(([agent, contract]) => [agent, {
       ...contract,
@@ -329,7 +340,7 @@ function composeSequentialWorkflows(taskText, result, continuation, transition) 
     .filter(Boolean));
   const continuationSteps = (continuation.pb.skill_flow.steps || [])
     .filter((step) => !step.capability || !fulfilledCapabilities.has(step.capability));
-  const mergedContracts = { ...workflowContracts(result.workflow, result.agents) };
+  const mergedContracts = { ...workflowContracts(result.workflow, result.agents, `playbook ${result.playbook}`) };
   for (const [agent, contract] of Object.entries(continuationContracts)) {
     const primary = mergedContracts[agent];
     mergedContracts[agent] = primary ? {

@@ -259,7 +259,9 @@ test("negated and action-first interview requests stay coherent end to end", () 
   run(["setup", target], env, target);
 
   writeSkill(home, "grill-me", "A human command that starts a decision interview", "Run a `/grilling` session.", "disable-model-invocation: true");
+  writeSkill(home, "grill-with-docs", "A human command that starts a decision interview with documentation", "Run `/grilling`, then use `/domain-modeling`.", "disable-model-invocation: true");
   writeSkill(home, "grilling", "A relentless interview to sharpen a plan or design", "Ask one decision at a time.");
+  writeSkill(home, "domain-modeling", "Domain modeling for accepted language", "Record accepted domain terms.");
   writeSkill(home, "plan-interview", "Resolve plan decisions without Grill Me", "Ask one decision at a time.");
   writeSkill(home, "ponytail", "Choose the smallest correct implementation", "Use the reuse ladder.");
   writeSkill(home, "code-review", "Review code against its contract", "Review the frozen diff.");
@@ -278,8 +280,38 @@ test("negated and action-first interview requests stay coherent end to end", () 
   assert.ok(negatedWorkflow.skill_flow.steps.some((step) => step.skill === "plan-interview"));
   assert.ok(negatedWorkflow.skill_flow.steps.every((step) => !["grill-me", "grilling"].includes(step.skill)));
 
+  for (const [name, task] of [
+    ["negated-interview", "Do not interview me; improve the plan another way"],
+    ["negated-question", "Do not question me; improve the plan another way"],
+  ]) {
+    const built = JSON.parse(run(["build", name, task, "--path", target, "--json"], env, target));
+    const workflow = JSON.parse(readFileSync(built.workflow, "utf8"));
+    assert.ok(workflow.skill_flow.steps.every((step) =>
+      !["grill-me", "grill-with-docs", "grilling", "plan-interview"].includes(step.skill)), task);
+    assert.ok(workflow.skill_flow.gaps.some((gap) => gap.capability === "plan interview"), task);
+  }
+
+  const withDocs = JSON.parse(run([
+    "build", "replace-grill", "Do not grill me; grill with docs instead",
+    "--path", target, "--json",
+  ], env, target));
+  const withDocsWorkflow = JSON.parse(readFileSync(withDocs.workflow, "utf8"));
+  assert.ok(withDocsWorkflow.skill_flow.steps.some((step) => step.skill === "grill-with-docs"));
+  assert.ok(withDocsWorkflow.skill_flow.steps.some((step) => step.skill === "grilling"));
+  assert.ok(withDocsWorkflow.skill_flow.steps.every((step) => step.skill !== "grill-me"));
+
+  const withoutDocs = JSON.parse(run([
+    "build", "replace-docs-grill", "Do not grill with docs; grill me without documentation",
+    "--path", target, "--json",
+  ], env, target));
+  const withoutDocsWorkflow = JSON.parse(readFileSync(withoutDocs.workflow, "utf8"));
+  assert.ok(withoutDocsWorkflow.skill_flow.steps.some((step) => step.skill === "grill-me"));
+  assert.ok(withoutDocsWorkflow.skill_flow.steps.some((step) => step.skill === "grilling"));
+  assert.ok(withoutDocsWorkflow.skill_flow.steps.every((step) =>
+    !["grill-with-docs", "domain-modeling"].includes(step.skill)));
+
   const actionFirst = JSON.parse(run([
-    "build", "review-then-grill", "Review PR 47 before you grill me",
+    "build", "review-then-grill", "Review PR 47 and grill me",
     "--path", target, "--json",
   ], env, target));
   const actionWorkflow = JSON.parse(readFileSync(actionFirst.workflow, "utf8"));
