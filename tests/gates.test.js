@@ -437,3 +437,49 @@ test("validateSnapshot accepts valid gates and rejects malformed ones", () => {
   const artifactOnVerify = validateSnapshot({ ...base, workflow: { ...base.workflow, gates: { b: { kind: "verify", artifact_type: "plan" } } } }, "demo.json");
   assert.ok(artifactOnVerify.some((e) => /artifact_type is only valid for decision gates/.test(e)));
 });
+
+test("source playbooks and snapshots share agent contract validation", () => {
+  const contract = {
+    phases: ["a"],
+    output: "an owned result",
+    verification: "the result is checked",
+  };
+  const playbook = {
+    description: "d", keywords: [], agents: ["owner"],
+    workflow: {
+      phases: ["a", "b"], output: "o", validation: "v", recovery: "r",
+      agent_contracts: { owner: contract },
+    },
+    skill_flow: { label: "l", steps: [{ stage: "s", reason: "why", capability: "cap" }] },
+  };
+  assert.deepEqual(reconcile({ triage: playbook }), []);
+
+  const snapshot = {
+    schema_version: 5,
+    name: "x", task: "t", playbook: "p", playbook_description: "pd",
+    agents: [{ name: "owner", skills: [] }], baseline_skills: [], questions: [],
+    skill_flow: { label: "l", steps: [] }, policy: "policies/workflow-policy.md",
+    capability_gaps: [], attempt: { id: "1", path: "attempts/1" },
+    lifecycle: { clarify: "c", prototype: "p", split: "s", implement: "i", review: "r" },
+    workflow: { ...playbook.workflow },
+  };
+  assert.deepEqual(validateSnapshot(snapshot, "demo.json"), []);
+
+  const badContract = { ...contract, phases: ["missing"], verification: "" };
+  const badPlaybook = {
+    ...playbook,
+    workflow: { ...playbook.workflow, agent_contracts: { stranger: badContract } },
+  };
+  const sourceErrors = reconcile({ triage: badPlaybook });
+  assert.ok(sourceErrors.some((error) => /references undeclared agent stranger/.test(error)));
+  assert.ok(sourceErrors.some((error) => /references unknown phase missing/.test(error)));
+  assert.ok(sourceErrors.some((error) => /verification must be a non-empty string/.test(error)));
+
+  const snapshotErrors = validateSnapshot({
+    ...snapshot,
+    workflow: { ...snapshot.workflow, agent_contracts: { stranger: badContract } },
+  }, "demo.json");
+  assert.ok(snapshotErrors.some((error) => /references undeclared agent stranger/.test(error)));
+  assert.ok(snapshotErrors.some((error) => /references unknown phase missing/.test(error)));
+  assert.ok(snapshotErrors.some((error) => /verification must be a non-empty string/.test(error)));
+});

@@ -349,8 +349,20 @@ test("decision interviews render the human checkpoint and task-specific orchestr
   const workflow = {
     name: "grill", task: "grill me before implementation", playbook: "improve-plan",
     workflow: {
-      phases: ["inspect facts", "ask one decision", "confirm shared understanding"],
+      phases: ["inspect facts", "ask one decision", "confirm shared understanding", "define verification gates"],
       gates: { "confirm shared understanding": { kind: "decision" } },
+      agent_contracts: {
+        "workflow-orchestrator": {
+          phases: ["inspect facts", "ask one decision", "confirm shared understanding"],
+          output: "a confirmed decision record",
+          verification: "the confirm shared understanding gate is accepted",
+        },
+        "dx-optimizer": {
+          phases: ["define verification gates"],
+          output: "concrete verification commands",
+          verification: "the commands pass",
+        },
+      },
       output: "a confirmed decision record",
       validation: "the user accepted the shared understanding",
       recovery: "ask the next unresolved decision and stop",
@@ -372,17 +384,23 @@ test("decision interviews render the human checkpoint and task-specific orchestr
   buildInstructions(workflow, outDir);
   const readme = readFileSync(join(outDir, "README.md"), "utf8");
   const detail = readFileSync(join(outDir, "agents", "workflow-orchestrator.md"), "utf8");
-  const unrelatedDetail = readFileSync(join(outDir, "agents", "dx-optimizer.md"), "utf8");
+  const optimizerDetail = readFileSync(join(outDir, "agents", "dx-optimizer.md"), "utf8");
   assert.match(readme, /User checkpoint.*grill-me/);
   assert.match(detail, /## Work contract/);
-  assert.match(detail, /Owned stages: decide/);
+  assert.match(detail, /Owned phases: inspect facts, ask one decision, confirm shared understanding/);
   assert.match(detail, /Selected interview engine: `grilling`/);
   assert.match(detail, /recording decisions and contradictions/);
-  assert.match(detail, /Required result: shared understanding/);
-  assert.doesNotMatch(unrelatedDetail, /## Work contract/);
-  assert.doesNotMatch(unrelatedDetail, /inspect facts -> ask one decision/);
+  assert.match(detail, /Required result: a confirmed decision record/);
+  assert.match(detail, /## Done when/);
+  assert.match(optimizerDetail, /## Work contract/);
+  assert.match(optimizerDetail, /Owned phases: define verification gates/);
+  assert.match(optimizerDetail, /Required result: concrete verification commands/);
+  assert.match(optimizerDetail, /## Done when/);
+  assert.doesNotMatch(optimizerDetail, /## Decision interview/);
   const html = buildHtml(workflow);
   assert.match(html, /user checkpoint: grill-me/);
   assert.match(html, /Decision interview/);
   assert.match(html, /recording decisions and contradictions/);
+  assert.match(html, /Done when/);
+  assert.match(html, /concrete verification commands/);
 });

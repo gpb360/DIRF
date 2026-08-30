@@ -77,6 +77,8 @@ test("Grill Me builds, renders, resumes, and stops at its decision and verificat
   assert.equal(workflow.skill_flow.steps[0].human_checkpoint, true);
   assert.deepEqual(workflow.workflow.gates["confirm shared understanding"], { kind: "decision" });
   assert.deepEqual(workflow.workflow.gates["assign agents and ownership"], { kind: "verify", verify: "dirf validate" });
+  assert.ok(workflow.workflow.phases.slice(0, -1).every((phase) => workflow.workflow.gates[phase]), "every non-final phase must declare a gate");
+  assert.deepEqual(Object.keys(workflow.workflow.agent_contracts).sort(), ["agent-organizer", "dx-optimizer", "workflow-orchestrator"]);
   assert.ok(workflow.agents.every((agent) => agent.status === "installed"));
   assert.doesNotMatch(JSON.stringify(workflow), /\.codex[\\/]skills/);
 
@@ -84,6 +86,8 @@ test("Grill Me builds, renders, resumes, and stops at its decision and verificat
     "README.md",
     "instructions.html",
     join("agents", "workflow-orchestrator.md"),
+    join("agents", "agent-organizer.md"),
+    join("agents", "dx-optimizer.md"),
     join("skills", "01-grill-me", "README.md"),
     join("skills", "02-grilling", "README.md"),
     join("skills", "03-ponytail", "README.md"),
@@ -91,11 +95,20 @@ test("Grill Me builds, renders, resumes, and stops at its decision and verificat
 
   const readme = readFileSync(join(attemptFolder, "README.md"), "utf8");
   const agent = readFileSync(join(attemptFolder, "agents", "workflow-orchestrator.md"), "utf8");
+  const organizer = readFileSync(join(attemptFolder, "agents", "agent-organizer.md"), "utf8");
+  const optimizer = readFileSync(join(attemptFolder, "agents", "dx-optimizer.md"), "utf8");
+  const html = readFileSync(join(attemptFolder, "instructions.html"), "utf8");
   assert.match(readme, /User checkpoint.*grill-me/);
   assert.match(readme, /confirm shared understanding.*decision gate/);
   assert.match(agent, /## Work contract/);
   assert.match(agent, /Selected interview engine: `grilling`/);
   assert.match(agent, /recording decisions and contradictions/);
+  assert.match(agent, /## Done when/);
+  assert.match(organizer, /Owned phases: partition the confirmed work, assign agents and ownership/);
+  assert.match(organizer, /bounded, non-overlapping assignments/);
+  assert.match(optimizer, /Owned phases: define verification gates/);
+  assert.match(optimizer, /concrete verification commands/);
+  assert.equal((html.match(/<h3>Done when<\/h3>/g) || []).length, 3);
 
   const resumed = JSON.parse(run(["resume", built.attempt.id, "--path", target, "--json"], env, target));
   assert.equal(resumed.attempt.id, built.attempt.id);

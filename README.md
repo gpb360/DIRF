@@ -254,9 +254,10 @@ its own promotion policy using its existing review and tracker audit trail.
 
 Each per-agent detail file is self-contained: role, **USE THESE SKILLS**
 (resolved live from the host index, with installed/recommended status),
-**YOUR JOB** (from the agent markdown), **NOT YOUR JOB** (boundary), and a
-task-specific work contract with the ordered phases, required result,
-verification, decision ownership, and done-when checklist.
+**YOUR JOB** (from the agent markdown), and **NOT YOUR JOB** (boundary). When a
+playbook declares role contracts, the listed agents also receive their owned
+phases, required result, verification, and the same done-when checklist in
+Markdown and HTML.
 
 ## CLI reference
 

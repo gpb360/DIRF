@@ -2,11 +2,10 @@
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { AGENTS_DIR, REGISTRY, ROOT, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, loadJson } from "./paths.js";
-import { reconcile } from "./flow.js";
+import { reconcile, validateAgentContracts, validateWorkflowGates } from "./flow.js";
 import { loadPlaybookFolders, resolveGraph } from "./folders.js";
 import { bundledSkills, lintSkillMetadata } from "./skills.js";
 import { ISSUE_POLICY_SCHEMA_VERSION } from "./issue-governance.js";
-import { ARTIFACT_TYPES } from "./artifacts.js";
 import { validatePublicationBoundary } from "./publication-boundary.js";
 
 const FM_RE = /^([A-Za-z0-9_-]+):\s*(.*)$/;
@@ -45,34 +44,10 @@ export function validateSnapshot(data, label = "workflow") {
   // config.workflow.gates flattened at selection time). Absent is fine — old
   // snapshots stay gate-free. Present but malformed is an error so a stale
   // snapshot never silently misleads a host about its gates.
-  if (data.workflow && data.workflow.gates !== undefined) {
-    const gates = data.workflow.gates;
-    if (!gates || typeof gates !== "object" || Array.isArray(gates)) {
-      errors.push(`${label}: workflow.gates must be an object`);
-    } else {
-      const phases = Array.isArray(data.workflow.phases) ? data.workflow.phases : [];
-      for (const [phase, spec] of Object.entries(gates)) {
-        if (!phases.includes(phase)) errors.push(`${label}: workflow.gates references unknown phase ${phase}`);
-        if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
-          errors.push(`${label}: workflow.gates.${phase} must be an object`);
-          continue;
-        }
-        if (!["verify", "decision", "soft"].includes(spec.kind)) {
-          errors.push(`${label}: workflow.gates.${phase}.kind must be verify, decision, or soft`);
-        }
-        if (spec.kind === "verify" && (typeof spec.verify !== "string" || !spec.verify.trim())) {
-          errors.push(`${label}: workflow.gates.${phase}.verify must be a non-empty string for verify gates`);
-        } else if (spec.verify !== undefined && (typeof spec.verify !== "string" || !spec.verify.trim())) {
-          errors.push(`${label}: workflow.gates.${phase}.verify must be a non-empty string`);
-        }
-        if (spec.artifact_type !== undefined) {
-          if (spec.kind !== "decision") errors.push(`${label}: workflow.gates.${phase}.artifact_type is only valid for decision gates`);
-          if (!ARTIFACT_TYPES.includes(spec.artifact_type)) {
-            errors.push(`${label}: workflow.gates.${phase}.artifact_type must be one of ${ARTIFACT_TYPES.join(", ")}`);
-          }
-        }
-      }
-    }
+  if (data.workflow) {
+    errors.push(...validateWorkflowGates(data.workflow, label));
+    const agentNames = Array.isArray(data.agents) ? data.agents.map((agent) => agent?.name) : [];
+    errors.push(...validateAgentContracts(data.workflow, agentNames, label));
   }
 
   const resolvedSkillError = (skill, where, nameKey = "name") => {

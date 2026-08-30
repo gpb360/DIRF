@@ -444,22 +444,34 @@ export function buildInstructions(workflow, outDir, skillBindings = []) {
 }
 
 function agentWorkContract(name, workflow = {}) {
-  if (name !== "workflow-orchestrator") return null;
+  const declared = workflow.workflow?.agent_contracts?.[name];
   const interviewSteps = (workflow.skill_flow?.steps || [])
     .filter((step) => step.capability === "plan interview");
-  if (!interviewSteps.length) return null;
+  const ownsInterview = name === "workflow-orchestrator" && interviewSteps.length > 0;
+  if (!declared && !ownsInterview) return null;
   const executableSteps = interviewSteps.filter((step) => step.invocation !== "user");
   const resultSteps = executableSteps.length ? executableSteps : interviewSteps;
   const decisionPhase = Object.entries(workflow.workflow?.gates || {})
     .find(([, gate]) => gate?.kind === "decision")?.[0];
+  const phases = declared?.phases || [...new Set(interviewSteps.map((step) => step.stage).filter(Boolean))];
+  const result = declared?.output
+    || [...new Set(resultSteps.map((step) => step.output).filter(Boolean))].join("; ")
+    || "a confirmed shared understanding";
+  const verification = declared?.verification
+    || (decisionPhase ? `the "${decisionPhase}" decision gate is accepted` : "the user confirms the shared understanding");
   return {
-    stages: [...new Set(interviewSteps.map((step) => step.stage).filter(Boolean))],
+    phases,
     engines: [...new Set(executableSteps.map((step) => step.skill).filter(Boolean))],
-    result: [...new Set(resultSteps.map((step) => step.output).filter(Boolean))].join("; ") || "a confirmed shared understanding",
-    verification: decisionPhase
-      ? `the "${decisionPhase}" decision gate is accepted`
-      : "the user confirms the shared understanding",
-    procedure: "Follow the selected interview engine for question format, recommendations, and recording decisions and contradictions.",
+    result,
+    verification,
+    procedure: ownsInterview
+      ? "Follow the selected interview engine for question format, recommendations, and recording decisions and contradictions."
+      : "",
+    done: [
+      `The required result is produced: ${result}`,
+      `Verification is satisfied: ${verification}`,
+      "No scope creep into another agent's lane",
+    ],
   };
 }
 
@@ -515,13 +527,14 @@ function writeAgentDetail(agentRef, agentsSub, workflow = {}) {
   const contract = agentWorkContract(name, workflow);
   if (contract) {
     lines.push("## Work contract", "");
-    if (contract.stages.length) lines.push(`Owned stages: ${contract.stages.join(", ")}.`, "");
+    if (contract.phases.length) lines.push(`Owned phases: ${contract.phases.join(", ")}.`, "");
     lines.push(`Required result: ${contract.result}.`, "");
     lines.push(`Verification: ${contract.verification}.`, "");
-    lines.push("## Decision interview", "");
-    if (contract.engines.length) lines.push(`Selected interview engine: ${contract.engines.map((engine) => `\`${engine}\``).join(", ")}.`, "");
-    lines.push(contract.procedure);
-    lines.push("");
+    if (contract.procedure) {
+      lines.push("## Decision interview", "");
+      if (contract.engines.length) lines.push(`Selected interview engine: ${contract.engines.map((engine) => `\`${engine}\``).join(", ")}.`, "");
+      lines.push(contract.procedure, "");
+    }
   }
 
   lines.push(
@@ -534,9 +547,7 @@ function writeAgentDetail(agentRef, agentsSub, workflow = {}) {
     lines.push(
       "## Done when",
       "",
-      `- [ ] The required result is produced: ${contract.result}`,
-      `- [ ] Verification is satisfied: ${contract.verification}`,
-      "- [ ] No scope creep into another agent's lane",
+      ...contract.done.map((item) => `- [ ] ${item}`),
       "",
     );
   }
@@ -702,14 +713,21 @@ export function buildHtml(workflow, skillBindings = []) {
     const contract = agentWorkContract(name, workflow);
     if (contract) {
       parts.push("<h3>Work contract</h3>");
-      if (contract.stages.length) parts.push(`<p><strong>Owned stages:</strong> ${escapeHtml(contract.stages.join(", "))}.</p>`);
+      if (contract.phases.length) parts.push(`<p><strong>Owned phases:</strong> ${escapeHtml(contract.phases.join(", "))}.</p>`);
       parts.push(`<p><strong>Required result:</strong> ${escapeHtml(contract.result)}.</p>`);
       parts.push(`<p><strong>Verification:</strong> ${escapeHtml(contract.verification)}.</p>`);
-      parts.push("<h3>Decision interview</h3>");
-      if (contract.engines.length) parts.push(`<p><strong>Selected interview engine:</strong> ${contract.engines.map((engine) => `<code>${escapeHtml(engine)}</code>`).join(", ")}.</p>`);
-      parts.push(`<p>${escapeHtml(contract.procedure)}</p>`);
+      if (contract.procedure) {
+        parts.push("<h3>Decision interview</h3>");
+        if (contract.engines.length) parts.push(`<p><strong>Selected interview engine:</strong> ${contract.engines.map((engine) => `<code>${escapeHtml(engine)}</code>`).join(", ")}.</p>`);
+        parts.push(`<p>${escapeHtml(contract.procedure)}</p>`);
+      }
     }
     parts.push("<h3>Not your job</h3><p>Hand off to the matching agent rather than expanding scope.</p>");
+    if (contract) {
+      parts.push("<h3>Done when</h3><ul>");
+      parts.push(...contract.done.map((item) => `<li>${escapeHtml(item)}</li>`));
+      parts.push("</ul>");
+    }
     parts.push("</details>");
   }
 

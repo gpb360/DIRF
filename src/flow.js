@@ -5,6 +5,69 @@ import { ARTIFACT_TYPES } from "./artifacts.js";
 
 export const KNOWN_BRANCHES = new Set(["ui", "react", "security", "multi-session", "research"]);
 
+export function validateWorkflowGates(workflow = {}, label = "workflow") {
+  const errors = [];
+  if (workflow.gates === undefined) return errors;
+  const gates = workflow.gates;
+  if (!gates || typeof gates !== "object" || Array.isArray(gates)) {
+    return [`${label}: workflow.gates must be an object`];
+  }
+  const phases = Array.isArray(workflow.phases) ? workflow.phases : [];
+  for (const [phase, spec] of Object.entries(gates)) {
+    if (!phases.includes(phase)) errors.push(`${label}: workflow.gates references unknown phase ${phase}`);
+    if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
+      errors.push(`${label}: workflow.gates.${phase} must be an object`);
+      continue;
+    }
+    if (!["verify", "decision", "soft"].includes(spec.kind)) {
+      errors.push(`${label}: workflow.gates.${phase}.kind must be verify, decision, or soft`);
+    }
+    if (spec.kind === "verify" && (typeof spec.verify !== "string" || !spec.verify.trim())) {
+      errors.push(`${label}: workflow.gates.${phase}.verify must be a non-empty string for verify gates`);
+    } else if (spec.verify !== undefined && (typeof spec.verify !== "string" || !spec.verify.trim())) {
+      errors.push(`${label}: workflow.gates.${phase}.verify must be a non-empty string`);
+    }
+    if (spec.artifact_type !== undefined) {
+      if (spec.kind !== "decision") errors.push(`${label}: workflow.gates.${phase}.artifact_type is only valid for decision gates`);
+      if (!ARTIFACT_TYPES.includes(spec.artifact_type)) {
+        errors.push(`${label}: workflow.gates.${phase}.artifact_type must be one of ${ARTIFACT_TYPES.join(", ")}`);
+      }
+    }
+  }
+  return errors;
+}
+
+export function validateAgentContracts(workflow = {}, agentNames = [], label = "workflow") {
+  const errors = [];
+  if (workflow.agent_contracts === undefined) return errors;
+  const contracts = workflow.agent_contracts;
+  if (!contracts || typeof contracts !== "object" || Array.isArray(contracts)) {
+    return [`${label}: workflow.agent_contracts must be an object`];
+  }
+  const declaredAgents = new Set(agentNames.filter((name) => typeof name === "string" && name));
+  const phases = Array.isArray(workflow.phases) ? workflow.phases : [];
+  for (const [agent, contract] of Object.entries(contracts)) {
+    if (!declaredAgents.has(agent)) errors.push(`${label}: workflow.agent_contracts references undeclared agent ${agent}`);
+    if (!contract || typeof contract !== "object" || Array.isArray(contract)) {
+      errors.push(`${label}: workflow.agent_contracts.${agent} must be an object`);
+      continue;
+    }
+    if (!Array.isArray(contract.phases) || contract.phases.length === 0 || contract.phases.some((phase) => typeof phase !== "string" || !phase.trim())) {
+      errors.push(`${label}: workflow.agent_contracts.${agent}.phases must be a non-empty array of strings`);
+    } else {
+      for (const phase of contract.phases) {
+        if (!phases.includes(phase)) errors.push(`${label}: workflow.agent_contracts.${agent}.phases references unknown phase ${phase}`);
+      }
+    }
+    for (const field of ["output", "verification"]) {
+      if (typeof contract[field] !== "string" || !contract[field].trim()) {
+        errors.push(`${label}: workflow.agent_contracts.${agent}.${field} must be a non-empty string`);
+      }
+    }
+  }
+  return errors;
+}
+
 export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
   const errors = [];
   if (!Object.hasOwn(playbooks || {}, "triage")) errors.push("triage: missing coherent playbook definition");
@@ -27,38 +90,8 @@ export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
           errors.push(`playbook ${name}: workflow.${field} must be a non-empty string`);
         }
       }
-      // Optional per-phase gates (config.workflow.gates): each key must name a
-      // declared phase, with kind verify|decision|soft and an optional verify
-      // command. Flattened into the persisted workflow at selection time.
-      if (playbook.workflow.gates !== undefined) {
-        const gates = playbook.workflow.gates;
-        if (!gates || typeof gates !== "object" || Array.isArray(gates)) {
-          errors.push(`playbook ${name}: workflow.gates must be an object`);
-        } else {
-          const phases = Array.isArray(playbook.workflow.phases) ? playbook.workflow.phases : [];
-          for (const [phase, spec] of Object.entries(gates)) {
-            if (!phases.includes(phase)) errors.push(`playbook ${name}: workflow.gates references unknown phase ${phase}`);
-            if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
-              errors.push(`playbook ${name}: workflow.gates.${phase} must be an object`);
-              continue;
-            }
-            if (!["verify", "decision", "soft"].includes(spec.kind)) {
-              errors.push(`playbook ${name}: workflow.gates.${phase}.kind must be verify, decision, or soft`);
-            }
-            if (spec.kind === "verify" && (typeof spec.verify !== "string" || !spec.verify.trim())) {
-              errors.push(`playbook ${name}: workflow.gates.${phase}.verify must be a non-empty string for verify gates`);
-            } else if (spec.verify !== undefined && (typeof spec.verify !== "string" || !spec.verify.trim())) {
-              errors.push(`playbook ${name}: workflow.gates.${phase}.verify must be a non-empty string`);
-            }
-            if (spec.artifact_type !== undefined) {
-              if (spec.kind !== "decision") errors.push(`playbook ${name}: workflow.gates.${phase}.artifact_type is only valid for decision gates`);
-              if (!ARTIFACT_TYPES.includes(spec.artifact_type)) {
-                errors.push(`playbook ${name}: workflow.gates.${phase}.artifact_type must be one of ${ARTIFACT_TYPES.join(", ")}`);
-              }
-            }
-          }
-        }
-      }
+      errors.push(...validateWorkflowGates(playbook.workflow, `playbook ${name}`));
+      errors.push(...validateAgentContracts(playbook.workflow, playbook.agents || [], `playbook ${name}`));
     }
     const flow = playbook.skill_flow;
     if (!flow) {
