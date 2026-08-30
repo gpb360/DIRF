@@ -34,7 +34,7 @@ export function normalizeModelCatalog(data, sha256 = null) {
   return { models, ...(sha256 ? { sha256 } : {}) };
 }
 
-function requiredCapabilities(skillFlow = {}) {
+export function requiredModelCapabilities(skillFlow = {}) {
   const requirements = new Map();
   for (const step of skillFlow.steps || []) {
     const capability = String(step.capability || "").trim();
@@ -51,7 +51,7 @@ function covers(model, capability) {
 }
 
 export function buildModelAdvice(skillFlow = {}, catalog = null) {
-  const requirements = requiredCapabilities(skillFlow);
+  const requirements = requiredModelCapabilities(skillFlow);
   const base = {
     advisory_only: true,
     invoked_models: false,

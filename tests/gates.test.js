@@ -459,7 +459,7 @@ test("validateSnapshot accepts valid gates and rejects malformed ones", () => {
 
 test("source playbooks and snapshots share agent contract validation", () => {
   const contract = {
-    phases: ["a"],
+    phases: ["a", "b"],
     output: "an owned result",
     verification: "the result is checked",
   };
@@ -483,6 +483,29 @@ test("source playbooks and snapshots share agent contract validation", () => {
     workflow: { ...playbook.workflow },
   };
   assert.deepEqual(validateSnapshot(snapshot, "demo.json"), []);
+
+  const unowned = reconcile({
+    triage: {
+      ...playbook,
+      workflow: { ...playbook.workflow, agent_contracts: { owner: { ...contract, phases: ["a"] } } },
+    },
+  });
+  assert.ok(unowned.some((error) => /workflow phase b must have exactly one agent owner; found none/.test(error)));
+
+  const duplicated = reconcile({
+    triage: {
+      ...playbook,
+      agents: ["owner", "second"],
+      workflow: {
+        ...playbook.workflow,
+        agent_contracts: {
+          owner: contract,
+          second: { ...contract, phases: ["a"] },
+        },
+      },
+    },
+  });
+  assert.ok(duplicated.some((error) => /workflow phase a must have exactly one agent owner; found owner, second/.test(error)));
 
   const badContract = { ...contract, phases: ["missing"], verification: "" };
   const badPlaybook = {

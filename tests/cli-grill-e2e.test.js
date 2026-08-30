@@ -250,6 +250,49 @@ test("a mixed Grill Me request continues into the requested PR review", () => {
   assert.equal(continued.gates.find((gate) => gate.phase === "define verification gates").status, "passed");
 });
 
+test("negated and action-first interview requests stay coherent end to end", () => {
+  const home = mkdtempSync(join(tmpdir(), "dirf-grill-order-home-"));
+  const target = mkdtempSync(join(tmpdir(), "dirf-grill-order-target-"));
+  const env = { DIRF_HOME: home, HOME: home, USERPROFILE: home };
+  execFileSync("git", ["init", "-q"], { cwd: target, timeout: TIMEOUT });
+  execFileSync("git", ["remote", "add", "origin", "https://example.invalid/fixture/dirf-grill-order.git"], { cwd: target, timeout: TIMEOUT });
+  run(["setup", target], env, target);
+
+  writeSkill(home, "grill-me", "A human command that starts a decision interview", "Run a `/grilling` session.", "disable-model-invocation: true");
+  writeSkill(home, "grilling", "A relentless interview to sharpen a plan or design", "Ask one decision at a time.");
+  writeSkill(home, "plan-interview", "Resolve plan decisions without Grill Me", "Ask one decision at a time.");
+  writeSkill(home, "ponytail", "Choose the smallest correct implementation", "Use the reuse ladder.");
+  writeSkill(home, "code-review", "Review code against its contract", "Review the frozen diff.");
+  writeSkill(home, "security-review", "Review applicable trust boundaries", "Check security risks.");
+  writeSkill(home, "testing", "Run focused verification", "Prove or disprove findings.");
+  for (const name of [
+    "workflow-orchestrator", "agent-organizer", "dx-optimizer", "test-engineer",
+    "security-auditor", "performance-benchmarker",
+  ]) writeAgent(home, name);
+
+  const negated = JSON.parse(run([
+    "build", "negated-grill", "Do not grill me; improve the plan another way",
+    "--path", target, "--json",
+  ], env, target));
+  const negatedWorkflow = JSON.parse(readFileSync(negated.workflow, "utf8"));
+  assert.ok(negatedWorkflow.skill_flow.steps.some((step) => step.skill === "plan-interview"));
+  assert.ok(negatedWorkflow.skill_flow.steps.every((step) => !["grill-me", "grilling"].includes(step.skill)));
+
+  const actionFirst = JSON.parse(run([
+    "build", "review-then-grill", "Review PR 47 before you grill me",
+    "--path", target, "--json",
+  ], env, target));
+  const actionWorkflow = JSON.parse(readFileSync(actionFirst.workflow, "utf8"));
+  assert.equal(actionWorkflow.playbook, "pr-review");
+  assert.equal(actionWorkflow.continuation.playbook, "improve-plan");
+  assert.equal(actionWorkflow.continuation.transition, "after-primary");
+  assert.equal(actionWorkflow.model_advice.status, "unavailable");
+  assert.ok(actionWorkflow.model_advice.uncovered_capabilities.includes("plan interview"));
+  const readme = readFileSync(join(dirname(actionFirst.workflow), "README.md"), "utf8");
+  assert.match(readme, /After the primary workflow is complete/);
+  assert.doesNotMatch(readme, /After the interview decision is accepted/);
+});
+
 test("a broken explicit human router fails validation before an attempt is created", () => {
   const home = mkdtempSync(join(tmpdir(), "dirf-grill-broken-home-"));
   const target = mkdtempSync(join(tmpdir(), "dirf-grill-broken-target-"));

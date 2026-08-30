@@ -39,7 +39,7 @@ worktree shares one store.
   `dirf learn <url|file|text>` — intake is provenance-bound (SHA-256);
   continue the new attempt in the same turn through its read-only analysis and
   stop at the decision gate. Do not ask the user to run `DIRF next`. The
-  printed resume command is recovery for a later session. Implementation is
+  `--json` resume command is recovery for a later session. Implementation is
   forbidden until the recommendation is accepted and the decision gate passes.
 - Project playbooks → `dirf build ... --playbooks <dir>` — explicit opt-in
   only; DIRF never scans a repository for playbooks.

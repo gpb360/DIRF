@@ -7,6 +7,7 @@ import { loadPlaybookFolders, resolveGraph } from "./folders.js";
 import { bundledSkills, lintSkillMetadata } from "./skills.js";
 import { ISSUE_POLICY_SCHEMA_VERSION } from "./issue-governance.js";
 import { validatePublicationBoundary } from "./publication-boundary.js";
+import { requiredModelCapabilities } from "./model-advice.js";
 
 const FM_RE = /^([A-Za-z0-9_-]+):\s*(.*)$/;
 
@@ -37,6 +38,10 @@ export function validateSnapshot(data, label = "workflow") {
         if (typeof data.continuation[field] !== "string" || !data.continuation[field].trim()) {
           errors.push(`${label}: continuation.${field} must be a non-empty string`);
         }
+      }
+      if (data.continuation.transition !== undefined &&
+          !["after-decision", "after-primary"].includes(data.continuation.transition)) {
+        errors.push(`${label}: continuation.transition must be after-decision or after-primary`);
       }
     }
   }
@@ -116,6 +121,41 @@ export function validateSnapshot(data, label = "workflow") {
       if (advice.status === "unavailable" && advice.catalog_source !== "not provided" &&
           !hasHostCatalogProvenance) {
         errors.push(`${label}: model_advice unavailable advice from a host catalog requires catalog provenance`);
+      }
+      if (Array.isArray(advice.recommendations) && Array.isArray(advice.uncovered_capabilities)) {
+        const requirements = requiredModelCapabilities(data.skill_flow);
+        const assigned = new Set();
+        for (const [index, recommendation] of advice.recommendations.entries()) {
+          const expectedStages = new Set();
+          for (const capability of Array.isArray(recommendation?.capabilities) ? recommendation.capabilities : []) {
+            if (!requirements.has(capability)) {
+              errors.push(`${label}: model_advice recommendation ${index + 1} references unknown workflow capability ${capability}`);
+              continue;
+            }
+            if (assigned.has(capability)) {
+              errors.push(`${label}: model_advice capability ${capability} is assigned more than once`);
+            }
+            assigned.add(capability);
+            for (const stage of requirements.get(capability)) expectedStages.add(stage);
+          }
+          if (Array.isArray(recommendation?.stages)) {
+            const actualStages = new Set(recommendation.stages);
+            if (actualStages.size !== expectedStages.size || [...expectedStages].some((stage) => !actualStages.has(stage))) {
+              errors.push(`${label}: model_advice recommendation ${index + 1} stages must match its workflow capabilities`);
+            }
+          }
+        }
+        for (const capability of advice.uncovered_capabilities) {
+          if (!requirements.has(capability)) {
+            errors.push(`${label}: model_advice uncovered capability ${capability} is not required by the workflow`);
+          } else if (assigned.has(capability)) {
+            errors.push(`${label}: model_advice capability ${capability} cannot be both recommended and uncovered`);
+          }
+          assigned.add(capability);
+        }
+        for (const capability of requirements.keys()) {
+          if (!assigned.has(capability)) errors.push(`${label}: model_advice does not account for workflow capability ${capability}`);
+        }
       }
       if (typeof advice.rationale !== "string" || !advice.rationale.trim()) {
         errors.push(`${label}: model_advice.rationale must be a non-empty string`);

@@ -2,6 +2,7 @@
 // Selection happens in router.js; this module never classifies a task.
 import { bundledSkills } from "./skills.js";
 import { ARTIFACT_TYPES } from "./artifacts.js";
+import { affirmativeRoutingText } from "./router.js";
 
 export const KNOWN_BRANCHES = new Set(["ui", "react", "security", "multi-session", "research"]);
 
@@ -47,6 +48,7 @@ export function validateAgentContracts(workflow = {}, agentNames = [], label = "
   const declaredAgents = new Set((Array.isArray(agentNames) ? agentNames : [])
     .filter((name) => typeof name === "string" && name));
   const phases = Array.isArray(workflow.phases) ? workflow.phases : [];
+  const owners = new Map(phases.map((phase) => [phase, []]));
   for (const [agent, contract] of Object.entries(contracts)) {
     if (!declaredAgents.has(agent)) errors.push(`${label}: workflow.agent_contracts references undeclared agent ${agent}`);
     if (!contract || typeof contract !== "object" || Array.isArray(contract)) {
@@ -58,6 +60,7 @@ export function validateAgentContracts(workflow = {}, agentNames = [], label = "
     } else {
       for (const phase of contract.phases) {
         if (!phases.includes(phase)) errors.push(`${label}: workflow.agent_contracts.${agent}.phases references unknown phase ${phase}`);
+        else owners.get(phase).push(agent);
       }
     }
     for (const field of ["output", "verification"]) {
@@ -65,6 +68,10 @@ export function validateAgentContracts(workflow = {}, agentNames = [], label = "
         errors.push(`${label}: workflow.agent_contracts.${agent}.${field} must be a non-empty string`);
       }
     }
+  }
+  for (const [phase, phaseOwners] of owners) {
+    if (phaseOwners.length === 0) errors.push(`${label}: workflow phase ${phase} must have exactly one agent owner; found none`);
+    if (phaseOwners.length > 1) errors.push(`${label}: workflow phase ${phase} must have exactly one agent owner; found ${phaseOwners.join(", ")}`);
   }
   return errors;
 }
@@ -294,23 +301,37 @@ function scopedSkillIndex(index, allowedSkills) {
   return Object.fromEntries(Object.entries(index || {}).filter(([name]) => allowed.has(name)));
 }
 
+function withoutNegatedHumanRouters(task, skillIndex) {
+  const affirmativeTask = affirmativeRoutingText(task);
+  const blocked = new Set();
+  for (const [name, item] of Object.entries(skillIndex || {})) {
+    if (item.invocation !== "user") continue;
+    if (!explicitlyRequests(task, name) || explicitlyRequests(affirmativeTask, name)) continue;
+    blocked.add(name);
+    for (const reference of item.references || []) blocked.add(reference);
+  }
+  return Object.fromEntries(Object.entries(skillIndex || {}).filter(([name]) => !blocked.has(name)));
+}
+
 export function buildFlow(selection, context = {}, skillIndex = {}) {
   const flow = selection?.skill_flow;
   if (!flow?.steps) throw new Error(`playbook ${selection?.playbook || "?"}: missing skill_flow`);
 
-  const branches = branchesFor(context.task, selection.agents, context.branches);
+  const affirmativeTask = affirmativeRoutingText(context.task);
+  const branches = branchesFor(affirmativeTask, selection.agents, context.branches);
   const requirements = flow.steps
     .filter((step) => !step.branch || branches.has(step.branch))
     .map(({ branch: _branch, skill: _legacySkill, ...step }) => ({ ...step, capability: step.capability || step.stage }));
   const steps = [];
   const gaps = [];
-  const installed = scopedSkillIndex(withRouterCapabilities(skillIndex), context.allowedSkills);
+  const scoped = scopedSkillIndex(skillIndex, context.allowedSkills);
+  const installed = withRouterCapabilities(withoutNegatedHumanRouters(context.task, scoped));
   // The kit ships zero installed skills; its bundled skills/ folder is a
   // fallback consulted ONLY when the local install has nothing for a
   // capability, and the step is labeled so — never passed off as installed.
   let bundled;
   for (const requirement of requirements) {
-    const explicit = explicitHumanRouter(requirement, context.task, installed);
+    const explicit = explicitHumanRouter(requirement, affirmativeTask, installed);
     if (explicit) {
       const [routerName, router] = explicit;
       const declaredReferences = router.references || [];

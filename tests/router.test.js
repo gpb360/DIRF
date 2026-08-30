@@ -58,6 +58,13 @@ test("standalone negated actions do not route the forbidden work", () => {
   }
 });
 
+test("negated clauses preserve explicit replacement work", () => {
+  for (const task of [
+    "Do not grill me and instead review PR 47",
+    "Don't interview me—just review PR 47",
+  ]) assert.equal(recommend(task).playbook, "pr-review");
+});
+
 test("implementation intent outranks domain review terminology", () => {
   assert.equal(
     recommend("Add paid-save entitlement checks and creator execution review access with Supabase persistence and tests").playbook,
@@ -189,12 +196,32 @@ test("workflow composition does not repeat capabilities already fulfilled by the
   assert.equal(capabilities.filter((capability) => capability === "minimalism").length, 1);
 });
 
-test("action-first requests preserve their stated order", () => {
-  const result = recommend("Review the PR, then grill me");
-  assert.equal(result.playbook, "pr-review");
-  assert.equal(result.continuation.playbook, "improve-plan");
-  assert.ok(result.workflow.phases.indexOf("freeze exact base and head") <
-    result.workflow.phases.indexOf("confirm shared understanding"));
+test("action-first requests preserve both workflows in their stated order", () => {
+  for (const task of [
+    "Review the PR, then grill me",
+    "Review the PR before you grill me",
+    "Review the PR and grill me afterward",
+    "After you review the PR, grill me",
+    "Grill me after you review the PR",
+  ]) {
+    const result = recommend(task);
+    assert.equal(result.playbook, "pr-review", task);
+    assert.equal(result.continuation.playbook, "improve-plan", task);
+    assert.equal(result.continuation.transition, "after-primary", task);
+    assert.ok(result.workflow.phases.indexOf("freeze exact base and head") <
+      result.workflow.phases.indexOf("confirm shared understanding"), task);
+  }
+});
+
+test("composed workflows give every phase exactly one typed owner", () => {
+  for (const task of ["Grill me before reviewing PR 47", "Review PR 47, then grill me"]) {
+    const result = recommend(task);
+    const ownership = new Map(result.workflow.phases.map((phase) => [phase, []]));
+    for (const [agent, contract] of Object.entries(result.workflow.agent_contracts)) {
+      for (const phase of contract.phases) ownership.get(phase).push(agent);
+    }
+    for (const [phase, owners] of ownership) assert.equal(owners.length, 1, `${task}: ${phase}`);
+  }
 });
 
 test("negated interview and action cues never become executable work", () => {

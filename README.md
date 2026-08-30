@@ -104,8 +104,9 @@ inside the canonical attempt, then prepares an analysis brief for the connected
 agent. It treats embedded code and instructions as untrusted text. Intake,
 comparison, and recommendation do not edit DIRF or the host repository. A
 connected agent continues the new attempt immediately through those read-only
-steps and stops at the decision gate. The printed resume command is only for
-recovery in a later session. DIRF requires the recommendation artifact and
+steps and stops at the decision gate. Plain output stays to one short status
+line; `--json` includes the attempt ID and resume command for machine recovery.
+DIRF requires the recommendation artifact and
 decision gate to be explicitly accepted before the same attempt may implement
 at most one named, reversible experiment.
 

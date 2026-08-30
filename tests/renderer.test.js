@@ -376,6 +376,26 @@ test("agent casting statuses surface in README, details, and kickoff prompt", ()
   assert.ok(html.includes("Open questions"));
 });
 
+test("action-first continuations render the persisted transition direction", () => {
+  const outDir = mkdtempSync(join(tmpdir(), "dirf-action-first-"));
+  const workflow = {
+    name: "review-then-grill", task: "Review PR 47, then grill me", playbook: "pr-review",
+    continuation: { playbook: "improve-plan", description: "Confirm remaining decisions", transition: "after-primary" },
+    workflow: { phases: ["review", "interview"], output: "review and decisions", validation: "both complete", recovery: "resume the current phase" },
+    agents: [], baseline_skills: [], questions: [], schema_version: 5,
+    skill_flow: { label: "review then interview", steps: [] }, policy: "policies/workflow-policy.md",
+  };
+  buildInstructions(workflow, outDir);
+  const markdown = readFileSync(join(outDir, "README.md"), "utf8");
+  const html = buildHtml(workflow);
+  const prompt = kickoffPrompt(workflow);
+
+  assert.match(markdown, /After the primary workflow is complete/);
+  assert.match(html, /After the primary workflow is complete/);
+  assert.match(prompt, /after the primary workflow is complete/);
+  assert.doesNotMatch(`${markdown}\n${html}\n${prompt}`, /after the interview decision is accepted/i);
+});
+
 test("decision interviews render the human checkpoint and task-specific orchestrator contract", () => {
   const outDir = mkdtempSync(join(tmpdir(), "dirf-grill-"));
   const workflow = {

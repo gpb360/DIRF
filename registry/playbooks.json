@@ -90,11 +90,45 @@
       "phases": [
         "freeze exact base and head",
         "walk through changed behavior",
-        "review applicable risk axes",
+        "review security and trust-boundary risks",
+        "review performance and regression risks",
         "disprove and verify candidate findings",
         "validate the review artifact",
         "recheck head and deduplicate before posting"
       ],
+      "agent_contracts": {
+        "agent-organizer": {
+          "phases": [
+            "freeze exact base and head",
+            "validate the review artifact",
+            "recheck head and deduplicate before posting"
+          ],
+          "output": "a validated, deduplicated review tied to one exact base and head",
+          "verification": "the recorded base and head still match and review.json validates before posting"
+        },
+        "test-engineer": {
+          "phases": [
+            "walk through changed behavior",
+            "disprove and verify candidate findings"
+          ],
+          "output": "behavior traces and focused evidence for every retained finding",
+          "verification": "each retained finding is reproduced or proved by the narrowest applicable check"
+        },
+        "security-auditor": {
+          "phases": [
+            "review security and trust-boundary risks"
+          ],
+          "output": "applicable security findings or an explicit security all-clear",
+          "verification": "changed trust boundaries, authorization, secrets, injection, and fail-open behavior were checked"
+        },
+        "performance-benchmarker": {
+          "phases": [
+            "review performance and regression risks"
+          ],
+          "output": "applicable performance and regression findings or an explicit all-clear",
+          "verification": "changed hot paths and regression-sensitive behavior were checked with proportionate evidence"
+        }
+      },
       "output": "confidence-scored inline findings plus one PASS, CONDITIONAL, or FAIL gate",
       "validation": "validate review.json and use focused tests, static checks, database proof, or browser evidence as applicable",
       "recovery": "if no PR or diff is available, ask for the branch, commit range, diff, or PR URL; if verification is blocked, emit CONDITIONAL with the exact limitation"
@@ -204,10 +238,56 @@
     "workflow": {
       "phases": [
         "define user outcome",
-        "reuse existing patterns",
-        "implement vertical slice",
-        "verify"
+        "identify the smallest runnable slice",
+        "reuse existing design and code patterns",
+        "implement the user interface slice",
+        "implement the API and data slice",
+        "verify end-to-end behavior"
       ],
+      "agent_contracts": {
+        "ux-researcher": {
+          "phases": [
+            "define user outcome"
+          ],
+          "output": "user-visible success criteria and explicit exclusions",
+          "verification": "the outcome is observable by a user and unresolved decisions remain visible"
+        },
+        "rapid-prototyper": {
+          "phases": [
+            "identify the smallest runnable slice"
+          ],
+          "output": "one bounded vertical slice with success and disposal criteria",
+          "verification": "the slice answers the stated product or technical question without speculative scope"
+        },
+        "ui-designer": {
+          "phases": [
+            "reuse existing design and code patterns"
+          ],
+          "output": "the existing UI and interaction patterns to reuse",
+          "verification": "the selected patterns are traced to current repository code or design guidance"
+        },
+        "frontend-developer": {
+          "phases": [
+            "implement the user interface slice"
+          ],
+          "output": "the smallest accessible user-interface change for the slice",
+          "verification": "the touched UI builds and its user-visible behavior is exercised"
+        },
+        "backend-architect": {
+          "phases": [
+            "implement the API and data slice"
+          ],
+          "output": "the smallest compatible API and persistence change for the slice",
+          "verification": "data integrity, authorization, and compatibility checks pass"
+        },
+        "test-engineer": {
+          "phases": [
+            "verify end-to-end behavior"
+          ],
+          "output": "focused evidence that the vertical slice works across its touched boundaries",
+          "verification": "the narrowest relevant tests and build checks pass"
+        }
+      },
       "output": "small working feature slice",
       "validation": "run focused tests or build for touched surface",
       "recovery": "if contracts are unclear, stop after documenting the needed API/data decision"

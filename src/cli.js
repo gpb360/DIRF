@@ -312,7 +312,7 @@ function assembleTaskRouting(task, path, options = {}) {
     throw new Error(`Task Routing validation failed:\n${blockingGaps.map((gap) => `  - ${gap.question}`).join("\n")}`);
   }
   const modelCatalog = readModelCatalog(options.models);
-  const modelAdvice = (options.models || selection.playbook === "improve-plan")
+  const modelAdvice = (options.models || skillFlow.steps.some((step) => step.capability === "model selection advice"))
     ? buildModelAdvice(skillFlow, modelCatalog)
     : null;
   return { selection, discovered, hostAgents, facts, skillFlow, capabilityProfile: profileSnapshot, modelAdvice };

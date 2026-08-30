@@ -226,6 +226,30 @@ test("an explicitly named human router is preserved before its model engine", ()
   assert.deepEqual(flow.gaps, []);
 });
 
+test("a negated human router and its engine are excluded from capability assembly", () => {
+  const selection = {
+    playbook: "improve-plan", agents: [],
+    skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
+  };
+  const flow = buildFlow(selection, { task: "Do not grill me; improve the plan another way" }, {
+    "grill-me": {
+      path: "/user/grill-me", provider: "codex", invocation: "user",
+      capabilities: ["plan interview"], references: ["grilling"],
+    },
+    grilling: {
+      path: "/model/grilling", provider: "codex", invocation: "model",
+      description: "Relentless interview that sharpens a plan or design",
+    },
+    "plan-interview": {
+      path: "/model/plan-interview", provider: "codex", invocation: "model",
+      capabilities: ["plan interview"], description: "Resolve planning decisions another way",
+    },
+  });
+
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["plan-interview"]);
+  assert.deepEqual(flow.gaps, []);
+});
+
 test("an explicit human router with no installed engine stops with a clear gap", () => {
   const selection = {
     playbook: "improve-plan", agents: [],
@@ -680,11 +704,14 @@ test("validateSnapshot accepts the local-first issue policy and rejects unsafe s
   assert.ok(validateSnapshot({ ...base, issue_policy: { ...issuePolicy, externalCreation: "automatic" } }, "demo").includes("demo: issue_policy.externalCreation must be project_policy_required"));
 });
 
-test("validateSnapshot accepts safe model advice and rejects operational claims", () => {
+test("validateSnapshot accepts safe model advice and rejects operational or incoherent claims", () => {
   const base = {
     schema_version: 5, name: "demo", task: "plan", playbook: "improve-plan", playbook_description: "Plan",
     agents: [], baseline_skills: [], questions: [], capability_gaps: [], policy: "policies/workflow-policy.md",
-    skill_flow: { label: "plan", steps: [] },
+    skill_flow: {
+      label: "plan",
+      steps: [{ stage: "verify", capability: "testing", skill: "testing", reason: "Verify the workflow", status: "recommended" }],
+    },
     attempt: { id: "a", path: "attempts/a" },
     lifecycle: { clarify: "c", prototype: "p", split: "s", implement: "i", review: "r" },
   };
@@ -737,4 +764,18 @@ test("validateSnapshot accepts safe model advice and rejects operational claims"
       uncovered_capabilities: ["testing"],
     },
   }, "demo"), []);
+  assert.ok(validateSnapshot({
+    ...base,
+    model_advice: {
+      ...advice,
+      recommendations: [{ ...advice.recommendations[0], capabilities: ["code review"], stages: ["review"] }],
+    },
+  }, "demo").includes("demo: model_advice recommendation 1 references unknown workflow capability code review"));
+  assert.ok(validateSnapshot({
+    ...base,
+    model_advice: {
+      ...advice,
+      recommendations: [{ ...advice.recommendations[0], stages: ["build"] }],
+    },
+  }, "demo").includes("demo: model_advice recommendation 1 stages must match its workflow capabilities"));
 });

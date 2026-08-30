@@ -51,6 +51,12 @@ function modelAdvicePresentation(advice) {
   };
 }
 
+function continuationTiming(continuation) {
+  return continuation?.transition === "after-primary"
+    ? "the primary workflow is complete"
+    : "the interview decision is accepted";
+}
+
 function assertSnapshot(workflow) {
   if (![2, 3, 4, 5].includes(workflow.schema_version)) throw new Error(`workflow ${workflow.name || "?"}: unsupported schema_version`);
   if (!workflow.skill_flow?.steps) throw new Error(`workflow ${workflow.name || "?"}: missing persisted skill_flow`);
@@ -112,7 +118,7 @@ export function kickoffPrompt(workflow) {
     repoLine,
     ...(workflow.continuation ? [
       "",
-      `Continuation: after the interview decision is accepted, run the ${workflow.continuation.playbook} workflow for the original task.`,
+      `Continuation: after ${continuationTiming(workflow.continuation)}, run the ${workflow.continuation.playbook} workflow for the original task.`,
     ] : []),
     ...(modelAdvice ? [
       "",
@@ -360,7 +366,7 @@ export function buildInstructions(workflow, outDir, skillBindings = []) {
     lines.push(
       "## Continued task",
       "",
-      `After the interview decision is accepted, continue with **${workflow.continuation.playbook}**: ${workflow.continuation.description}`,
+      `After ${continuationTiming(workflow.continuation)}, continue with **${workflow.continuation.playbook}**: ${workflow.continuation.description}`,
       "",
     );
   }
@@ -696,7 +702,7 @@ export function buildHtml(workflow, skillBindings = []) {
 
   if (workflow.continuation) {
     parts.push("<h2>Continued task</h2>");
-    parts.push(`<p>After the interview decision is accepted, continue with <strong>${escapeHtml(workflow.continuation.playbook)}</strong>: ${escapeHtml(workflow.continuation.description || "")}</p>`);
+    parts.push(`<p>After ${escapeHtml(continuationTiming(workflow.continuation))}, continue with <strong>${escapeHtml(workflow.continuation.playbook)}</strong>: ${escapeHtml(workflow.continuation.description || "")}</p>`);
   }
 
   const modelAdvice = modelAdvicePresentation(workflow.model_advice);
