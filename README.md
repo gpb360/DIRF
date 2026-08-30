@@ -154,12 +154,21 @@ node src/cli.js validate
 The rest of this README is the technical reference for how DIRF routes,
 renders, stores, and resumes workflows.
 
-An explicit **Grill Me** request remains a user checkpoint and points to its
-installed model-facing interview engine. A generic request to clarify a plan
-can select that engine directly. Both routes inspect repository facts, ask one
-load-bearing decision at a time, and stop at recorded user confirmation before
-implementation. Persistent glossary or ADR updates require the separate
-stateful discovery branch.
+DIRF keeps the three interview modes distinct:
+
+- **Grill Me** is the human-invoked checkpoint. It inspects available facts,
+  asks one load-bearing question at a time, and records confirmation before
+  implementation.
+- **Grilling** is the model-invoked interview engine. A generic request to
+  clarify a plan can select it directly without pretending the human command
+  is an autonomous skill.
+- **Grill With Docs** uses the same interview, then assigns a documentation
+  owner to update the glossary, project context, or an ADR from accepted
+  decisions only. Unresolved options are not written as settled facts.
+
+When an interview is requested before a review or build, DIRF keeps the
+original task in the same workflow and continues it after the confirmation
+decision. A standalone interview ends with the confirmed plan.
 
 ## Governed agent execution
 

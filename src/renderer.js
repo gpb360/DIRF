@@ -93,6 +93,10 @@ export function kickoffPrompt(workflow) {
     `Task: ${workflow.task || "(ask for the task before starting)"}`,
     "",
     repoLine,
+    ...(workflow.continuation ? [
+      "",
+      `Continuation: after the interview decision is accepted, run the ${workflow.continuation.playbook} workflow for the original task.`,
+    ] : []),
     "",
     "Operating rules:",
     "1. The instruction set's README.md is the authoritative router; each agent role has a detail file under agents/. If you can read files, load ONLY the file for the role you are acting as. If you cannot, ask for it to be pasted before acting as that role.",
@@ -330,6 +334,14 @@ export function buildInstructions(workflow, outDir, skillBindings = []) {
     lines.push("## Required acceptance contract", "");
     for (const requirement of wf.requirements) lines.push(`- ${requirement}`);
     lines.push("");
+  }
+  if (workflow.continuation) {
+    lines.push(
+      "## Continued task",
+      "",
+      `After the interview decision is accepted, continue with **${workflow.continuation.playbook}**: ${workflow.continuation.description}`,
+      "",
+    );
   }
   lines.push("## Phases", "");
   const gatePresentation = workflowGatePresentation(wf);
@@ -643,6 +655,11 @@ export function buildHtml(workflow, skillBindings = []) {
     parts.push("<h2>Required acceptance contract</h2><ul>");
     for (const requirement of wf.requirements) parts.push(`<li>${escapeHtml(requirement)}</li>`);
     parts.push("</ul>");
+  }
+
+  if (workflow.continuation) {
+    parts.push("<h2>Continued task</h2>");
+    parts.push(`<p>After the interview decision is accepted, continue with <strong>${escapeHtml(workflow.continuation.playbook)}</strong>: ${escapeHtml(workflow.continuation.description || "")}</p>`);
   }
 
   const gatePresentation = workflowGatePresentation(wf);

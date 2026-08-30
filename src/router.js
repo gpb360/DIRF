@@ -45,6 +45,7 @@ function contentTokens(pb) {
   return new Set(wordTokens(parts.filter(Boolean).join(" ")));
 }
 const IMPLEMENTATION_INTENT = /\b(add|build|create|fix|implement)\b/;
+const CONTINUATION_ACTION_INTENT = /\b(add|audit|build|code|create|deploy|fix|implement|migrate|redesign|refactor|review|ship|test|verify)\b/;
 const EXPLICIT_SECURITY_AUDIT = /\bsecurity audit\b/;
 const EXPLICIT_UI_REVIEW = /\b(ui\s*(?:\/|\s)\s*ux|visual acceptance|visual regression|frontend design|design(?: |-)?system review)\b/;
 
@@ -178,22 +179,100 @@ function matchesCue(text, cue) {
   return new RegExp(`(?:^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`).test(text);
 }
 
-function resolveWorkflow(taskText, workflow = {}) {
-  const { conditional_contract: contract, ...base } = workflow;
-  if (!contract) return base;
-
+function matchingConditionalContract(taskText, workflow = {}) {
+  const contract = workflow.conditional_contract;
+  if (!contract) return null;
   const matches = (cue) => matchesCue(taskText, cue);
-  const allMatch = (contract.when_all || []).every(matches);
-  const anyMatch = !(contract.when_any || []).length || contract.when_any.some(matches);
-  if (!allMatch || !anyMatch) return base;
+  const allCues = Array.isArray(contract.when_all) ? contract.when_all : [];
+  const anyCues = Array.isArray(contract.when_any) ? contract.when_any : [];
+  const allMatch = allCues.every(matches);
+  const anyMatch = !anyCues.length || anyCues.some(matches);
+  return allMatch && anyMatch ? contract : null;
+}
+
+function resolveWorkflow(taskText, workflow = {}) {
+  const { conditional_contract: _conditionalContract, ...base } = workflow;
+  const contract = matchingConditionalContract(taskText, workflow);
+  if (!contract) return base;
 
   return {
     ...base,
     phases: contract.phases || base.phases,
+    gates: contract.gates || base.gates,
+    agent_contracts: contract.agent_contracts || base.agent_contracts,
     output: contract.output || base.output,
     validation: contract.validation || base.validation,
     recovery: contract.recovery || base.recovery,
-    requirements: contract.requirements || [],
+    requirements: contract.requirements || base.requirements || [],
+  };
+}
+
+function resolveAgents(taskText, playbook = {}) {
+  const contract = matchingConditionalContract(taskText, playbook.workflow);
+  return contract?.agents || playbook.agents || [];
+}
+
+function unique(items) {
+  return [...new Set(items.filter(Boolean))];
+}
+
+function composeInterviewWithContinuation(taskText, result, continuation) {
+  const continuationWorkflow = resolveWorkflow(taskText, continuation.pb.workflow);
+  const primaryPhases = result.workflow.phases || [];
+  const usedPhases = new Set(primaryPhases);
+  const phaseMap = new Map();
+  const continuationPhases = (continuationWorkflow.phases || []).map((phase) => {
+    let mapped = phase;
+    if (usedPhases.has(mapped)) mapped = `${continuation.name}: ${phase}`;
+    let suffix = 2;
+    while (usedPhases.has(mapped)) mapped = `${continuation.name}: ${phase} (${suffix++})`;
+    usedPhases.add(mapped);
+    phaseMap.set(phase, mapped);
+    return mapped;
+  });
+  const continuationGates = Object.fromEntries(Object.entries(continuationWorkflow.gates || {})
+    .map(([phase, gate]) => [phaseMap.get(phase) || phase, gate]));
+  const primaryGates = { ...(result.workflow.gates || {}) };
+  const primaryLastPhase = primaryPhases.at(-1);
+  if (primaryLastPhase && continuationPhases.length && !primaryGates[primaryLastPhase]) {
+    primaryGates[primaryLastPhase] = { kind: "soft" };
+  }
+  const continuationContracts = Object.fromEntries(Object.entries(continuationWorkflow.agent_contracts || {})
+    .map(([agent, contract]) => [agent, {
+      ...contract,
+      phases: (contract.phases || []).map((phase) => phaseMap.get(phase) || phase),
+    }]));
+  const continuationAgents = resolveAgents(taskText, continuation.pb);
+
+  return {
+    ...result,
+    continuation: {
+      playbook: continuation.name,
+      description: continuation.pb.description || "",
+    },
+    alternates: result.alternates.filter(({ playbook }) => playbook !== continuation.name),
+    workflow: {
+      ...result.workflow,
+      phases: [...primaryPhases, ...continuationPhases],
+      gates: { ...primaryGates, ...continuationGates },
+      agent_contracts: {
+        ...(result.workflow.agent_contracts || {}),
+        ...continuationContracts,
+      },
+      requirements: unique([
+        ...(result.workflow.requirements || []),
+        ...(continuationWorkflow.requirements || []),
+      ]),
+      output: `${result.workflow.output} Then continue with ${continuationWorkflow.output}.`,
+      validation: `${result.workflow.validation} Then ${continuationWorkflow.validation}.`,
+      recovery: `${result.workflow.recovery} Once the interview is confirmed, ${continuationWorkflow.recovery}.`,
+    },
+    skill_flow: {
+      label: `${result.skill_flow.label} -> ${continuation.pb.skill_flow.label}`,
+      steps: [...(result.skill_flow.steps || []), ...(continuation.pb.skill_flow.steps || [])],
+    },
+    agents: unique([...result.agents, ...continuationAgents]),
+    questions: unique([...result.questions, ...(continuation.pb.questions || [])]),
   };
 }
 
@@ -304,7 +383,11 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
   // playbook. Derived from the playbook's declared capability and keywords,
   // not from a hardcoded playbook name.
   const interviewIndex = ranked.findIndex(({ pb: playbook }) => explicitlyRequestsInterview(taskText, playbook));
+  let continuation = null;
   if (interviewIndex >= 0) {
+    continuation = CONTINUATION_ACTION_INTENT.test(taskText)
+      ? ranked.find((entry, index) => index !== interviewIndex && entry.score > 0) || null
+      : null;
     ranked[interviewIndex].score = Math.max(ranked[interviewIndex].score, 1);
     if (interviewIndex > 0) ranked.unshift(ranked.splice(interviewIndex, 1)[0]);
   }
@@ -324,7 +407,7 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
     .filter((r) => r.score > 0)
     .map((r) => ({ playbook: r.name, score: r.score, description: (r.pb.description || "") }));
 
-  const result = {
+  let result = {
     playbook: name,
     playbook_description: pb.description || "",
     score,
@@ -333,7 +416,7 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
     alternates,
     workflow: resolveWorkflow(taskText, pb.workflow),
     skill_flow: pb.skill_flow,
-    agents: pb.agents || [],
+    agents: resolveAgents(taskText, pb),
     questions: pb.questions || [],
     baseline_skills: [],
   };
@@ -342,6 +425,9 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
   if (pb.playbook_source) {
     result.playbook_source = pb.playbook_source;
     result.playbook_source_path = pb.playbook_source_path;
+  }
+  if (continuation && explicitlyRequestsInterview(taskText, pb)) {
+    result = composeInterviewWithContinuation(taskText, result, continuation);
   }
   return result;
 }

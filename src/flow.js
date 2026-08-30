@@ -44,7 +44,8 @@ export function validateAgentContracts(workflow = {}, agentNames = [], label = "
   if (!contracts || typeof contracts !== "object" || Array.isArray(contracts)) {
     return [`${label}: workflow.agent_contracts must be an object`];
   }
-  const declaredAgents = new Set(agentNames.filter((name) => typeof name === "string" && name));
+  const declaredAgents = new Set((Array.isArray(agentNames) ? agentNames : [])
+    .filter((name) => typeof name === "string" && name));
   const phases = Array.isArray(workflow.phases) ? workflow.phases : [];
   for (const [agent, contract] of Object.entries(contracts)) {
     if (!declaredAgents.has(agent)) errors.push(`${label}: workflow.agent_contracts references undeclared agent ${agent}`);
@@ -92,6 +93,37 @@ export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
       }
       errors.push(...validateWorkflowGates(playbook.workflow, `playbook ${name}`));
       errors.push(...validateAgentContracts(playbook.workflow, playbook.agents || [], `playbook ${name}`));
+      const conditional = playbook.workflow.conditional_contract;
+      if (conditional !== undefined) {
+        if (!conditional || typeof conditional !== "object" || Array.isArray(conditional)) {
+          errors.push(`playbook ${name}: workflow.conditional_contract must be an object`);
+        } else {
+          for (const field of ["when_all", "when_any"]) {
+            if (conditional[field] !== undefined && (!Array.isArray(conditional[field]) || conditional[field].some((cue) => typeof cue !== "string" || !cue.trim()))) {
+              errors.push(`playbook ${name}: workflow.conditional_contract.${field} must be an array of non-empty strings`);
+            }
+          }
+          const conditionalAgents = conditional.agents === undefined ? playbook.agents : conditional.agents;
+          if (!Array.isArray(conditionalAgents)) errors.push(`playbook ${name}: workflow.conditional_contract.agents must be an array`);
+          const { conditional_contract: _nested, ...baseWorkflow } = playbook.workflow;
+          const resolved = {
+            ...baseWorkflow,
+            ...Object.fromEntries(["phases", "gates", "agent_contracts", "output", "validation", "recovery", "requirements"]
+              .filter((field) => conditional[field] !== undefined)
+              .map((field) => [field, conditional[field]])),
+          };
+          if (!Array.isArray(resolved.phases) || resolved.phases.length === 0) {
+            errors.push(`playbook ${name}: workflow.conditional_contract.phases must resolve to a non-empty array`);
+          }
+          for (const field of ["output", "validation", "recovery"]) {
+            if (typeof resolved[field] !== "string" || !resolved[field]) {
+              errors.push(`playbook ${name}: workflow.conditional_contract.${field} must resolve to a non-empty string`);
+            }
+          }
+          errors.push(...validateWorkflowGates(resolved, `playbook ${name} conditional contract`));
+          errors.push(...validateAgentContracts(resolved, conditionalAgents, `playbook ${name} conditional contract`));
+        }
+      }
     }
     const flow = playbook.skill_flow;
     if (!flow) {

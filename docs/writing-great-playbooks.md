@@ -78,13 +78,16 @@ but it should not call another user-invoked skill. Add a router when several
 user-invoked skills need to work together.
 
 When a user names a human-only router explicitly, DIRF preserves that user
-checkpoint before another requested review or build action. Every skill referenced by that router must be installed and
+checkpoint before another requested review or build action, then continues the
+original action after the decision is confirmed. Every skill referenced by that router must be installed and
 model-invoked. DIRF selects the reference that covers the requested capability
 as the executable engine and binds the remaining references as required
 dependencies. A missing or human-only dependency stops with a plain validation
 error instead of running a partial workflow. A generic task may select the
 engine directly. Keep the router small and put the repeatable process in the
-engine.
+engine. If one router branch changes durable documentation, give that branch a
+named documentation owner and a phase after the acceptance decision. Do not
+add that owner to stateless interview runs.
 
 ## One capability, five connected views
 

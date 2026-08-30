@@ -572,6 +572,22 @@ test("validateSnapshot accepts a valid compaction directive and rejects a malfor
   assert.ok(bad.includes("demo: compaction.protected must be an array of non-empty strings"));
 });
 
+test("validateSnapshot accepts a portable continuation and rejects an incomplete one", () => {
+  const base = {
+    schema_version: 5, name: "demo", task: "review and grill me first", playbook: "improve-plan", playbook_description: "Plan",
+    agents: [], baseline_skills: [], questions: [], capability_gaps: [], policy: "policies/workflow-policy.md",
+    skill_flow: { label: "decide then review", steps: [] },
+    attempt: { id: "demo", path: "attempts/demo" },
+    lifecycle: { clarify: "c", prototype: "p", split: "s", implement: "i", review: "r" },
+  };
+  assert.deepEqual(validateSnapshot({
+    ...base,
+    continuation: { playbook: "pr-review", description: "Review the requested pull request." },
+  }, "demo"), []);
+  assert.ok(validateSnapshot({ ...base, continuation: { playbook: "", description: "" } }, "demo")
+    .includes("demo: continuation.playbook must be a non-empty string"));
+});
+
 test("validateSnapshot tolerates optional per-step output and rejects empty output", () => {
   const base = {
     schema_version: 5, name: "demo", task: "build", playbook: "fullstack-feature", playbook_description: "Build",

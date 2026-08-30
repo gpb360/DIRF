@@ -119,15 +119,30 @@ test("explicit Grill Me and one-question interview requests route to improve-pla
   }
 });
 
+test("Grill With Docs adds a documentation owner after the accepted decision", () => {
+  const result = recommend("grill with docs before implementation");
+  assert.ok(result.agents.includes("documentation-engineer"));
+  assert.ok(result.workflow.phases.indexOf("record accepted domain language and durable decisions") >
+    result.workflow.phases.indexOf("confirm shared understanding"));
+  assert.deepEqual(result.workflow.agent_contracts["documentation-engineer"].phases, [
+    "record accepted domain language and durable decisions",
+  ]);
+  assert.match(result.workflow.agent_contracts["documentation-engineer"].verification, /accepted interview decision/);
+});
+
 test("an explicit interview checkpoint precedes a mixed review or build request", () => {
-  for (const task of [
-    "Review PR 47 and grill me about the risks first",
-    "Grill with docs before you review this pull request",
-    "Build the feature, but interview me one question at a time before implementation",
+  for (const [task, continuation, continuationPhase] of [
+    ["Review PR 47 and grill me about the risks first", "pr-review", "freeze exact base and head"],
+    ["Grill with docs before you review this pull request", "pr-review", "freeze exact base and head"],
+    ["Build the feature, but interview me one question at a time before implementation", "fullstack-feature", "define user outcome"],
   ]) {
     const result = recommend(task);
     assert.equal(result.playbook, "improve-plan");
     assert.deepEqual(result.workflow.gates["confirm shared understanding"], { kind: "decision" });
+    assert.equal(result.continuation.playbook, continuation);
+    assert.ok(result.workflow.phases.indexOf(continuationPhase) > result.workflow.phases.indexOf("confirm shared understanding"));
+    assert.ok(result.workflow.gates["define verification gates"], "the interview's final phase becomes a tracked transition");
+    assert.ok(result.skill_flow.steps.some((step) => step.capability === "code review" || step.capability === "testing"));
   }
 });
 

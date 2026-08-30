@@ -115,7 +115,9 @@ dirf attempt advance <id> --auto [--strict]                            # cross c
 
 `dirf resume` lists any **pending gates** first so you reconcile them before
 continuing, and replays recorded evidence for completed phases instead of
-re-running them.
+re-running them. A soft gate crossed without evidence is reported as `passed`;
+it is history, not a pending blocker. Use `--strict` when soft gates must require
+evidence before they can be crossed.
 
 ### Typed artifacts
 

@@ -491,18 +491,24 @@ function gateRequirement(gates, records, evidence, attempt, phase, strict = fals
 // resolved from an already-loaded attempt (one workflow read — projections
 // must not re-lookup per gate).
 // decision gates: pending (no record) / accepted / denied.
-// verify & soft gates: pending (no evidence) / satisfied (evidence recorded) —
-// a recorded accept also satisfies them.
+// verify gates: pending (no evidence) / satisfied (evidence recorded).
+// soft gates: pending until reached / passed once crossed / satisfied when
+// evidence was recorded. A recorded accept also satisfies either kind.
 export function attemptGateState(slug, attempt) {
   const { phases, gates } = attemptWorkflow(slug, attempt);
   const records = attempt.gates || {};
   const evidence = attempt.evidence || {};
+  const currentIndex = phases.indexOf(attempt.current_phase);
   return {
     phases,
     gates: phases.filter((phase) => gates[phase]).map((phase) => {
+      const phaseIndex = phases.indexOf(phase);
       const record = records[phase] || null;
       const kind = gates[phase].kind || "verify";
       const satisfied = kind !== "decision" && Boolean(evidence[phase]);
+      const crossedSoftGate = kind === "soft" && (
+        attempt.status === "done" || (currentIndex >= 0 && phaseIndex < currentIndex)
+      );
       const artifactType = gates[phase].artifact_type || null;
       const governingArtifact = artifactType ? governingAttemptArtifact(attempt, artifactType) : null;
       const artifactPending = kind === "decision" && record?.status === "accepted" && artifactType && !governingArtifact;
@@ -511,7 +517,7 @@ export function attemptGateState(slug, attempt) {
         kind,
         verify: gates[phase].verify || null,
         ...(artifactType ? { artifact_type: artifactType, artifact_id: governingArtifact?.id || null } : {}),
-        status: artifactPending ? "pending" : record ? record.status : satisfied ? "satisfied" : "pending",
+        status: artifactPending ? "pending" : record ? record.status : satisfied ? "satisfied" : crossedSoftGate ? "passed" : "pending",
         comment: record?.comment || null,
         by: record?.by || null,
         at: record?.at || null,
@@ -524,9 +530,11 @@ export function attemptGates(slug, idOrName) {
   return attemptGateState(slug, getAttempt(slug, idOrName)).gates;
 }
 
-// Gates not yet satisfied — what a resume must reconcile before continuing.
+// Gates that still block or await the current/future phase. Crossed soft gates
+// are history and stay out of the resume blocker list.
 export function pendingGates(slug, idOrName) {
-  return attemptGateState(slug, getAttempt(slug, idOrName)).gates.filter((gate) => gate.status !== "accepted" && gate.status !== "satisfied");
+  return attemptGateState(slug, getAttempt(slug, idOrName)).gates
+    .filter((gate) => !["accepted", "satisfied", "passed"].includes(gate.status));
 }
 
 // Recorded verification evidence per phase (replay-don't-rerun).

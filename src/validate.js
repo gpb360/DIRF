@@ -29,6 +29,17 @@ export function validateSnapshot(data, label = "workflow") {
     else if (!hasType(data[key], type)) errors.push(`${label}: key ${key} must be ${type}`);
   }
   if (![2, 3, 4, 5].includes(data.schema_version)) errors.push(`${label}: unsupported schema_version`);
+  if (data.continuation !== undefined) {
+    if (!data.continuation || typeof data.continuation !== "object" || Array.isArray(data.continuation)) {
+      errors.push(`${label}: continuation must be an object`);
+    } else {
+      for (const field of ["playbook", "description"]) {
+        if (typeof data.continuation[field] !== "string" || !data.continuation[field].trim()) {
+          errors.push(`${label}: continuation.${field} must be a non-empty string`);
+        }
+      }
+    }
+  }
   if (data.issue_policy !== undefined) {
     const policy = data.issue_policy;
     if (!policy || typeof policy !== "object" || Array.isArray(policy)) {
@@ -206,7 +217,10 @@ export function main() {
     for (const key of ["description", "keywords", "agents", "workflow"]) {
       if (!pb[key]) errors.push(`playbook ${name}: missing ${key}`);
     }
-    for (const an of (pb.agents || [])) {
+    const conditionalAgents = Array.isArray(pb.workflow?.conditional_contract?.agents)
+      ? pb.workflow.conditional_contract.agents
+      : [];
+    for (const an of new Set([...(Array.isArray(pb.agents) ? pb.agents : []), ...conditionalAgents])) {
       if (!registryNames.has(an)) errors.push(`playbook ${name}: references unknown agent ${an}`);
     }
   }

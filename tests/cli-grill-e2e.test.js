@@ -134,7 +134,7 @@ test("Grill Me builds, renders, resumes, and respects its decision and soft gate
   ], env, target));
   assert.equal(continuedToFinalPhase.current_phase, "define verification gates");
   assert.equal(continuedToFinalPhase.stopped_at_gate, null);
-  assert.equal(continuedToFinalPhase.gates.find((gate) => gate.phase === "assign agents and ownership").status, "pending");
+  assert.equal(continuedToFinalPhase.gates.find((gate) => gate.phase === "assign agents and ownership").status, "passed");
 
   const rerendered = run(["render", built.attempt.id, "--path", target], env, target);
   assert.match(rerendered, /Spec kit rendered:/);
@@ -158,7 +158,7 @@ test("Grill With Docs binds its interview engine and documentation dependency", 
   writeSkill(home, "grilling", "A relentless interview to sharpen a plan or design", "Ask one decision at a time.");
   writeSkill(home, "domain-modeling", "Maintain a domain glossary and justified ADRs", "Record accepted domain decisions.");
   writeSkill(home, "ponytail", "Choose the smallest correct implementation", "Use the reuse ladder.");
-  for (const name of ["workflow-orchestrator", "agent-organizer", "dx-optimizer"]) writeAgent(home, name);
+  for (const name of ["workflow-orchestrator", "documentation-engineer", "agent-organizer", "dx-optimizer"]) writeAgent(home, name);
 
   const built = JSON.parse(run([
     "build", "grill-docs-e2e", "grill with docs before implementation",
@@ -173,6 +173,57 @@ test("Grill With Docs binds its interview engine and documentation dependency", 
   assert.equal(workflow.skill_flow.steps[0].human_checkpoint, true);
   assert.match(workflow.skill_flow.steps[2].selection_reason, /dependency referenced by explicit human router grill-with-docs/);
   assert.deepEqual(workflow.skill_flow.gaps, []);
+  assert.ok(workflow.workflow.phases.indexOf("record accepted domain language and durable decisions") >
+    workflow.workflow.phases.indexOf("confirm shared understanding"));
+  assert.ok(workflow.agents.some((agent) => agent.name === "documentation-engineer" && agent.status === "installed"));
+  assert.deepEqual(workflow.workflow.agent_contracts["documentation-engineer"].phases, [
+    "record accepted domain language and durable decisions",
+  ]);
+});
+
+test("a mixed Grill Me request continues into the requested PR review", () => {
+  const home = mkdtempSync(join(tmpdir(), "dirf-grill-review-home-"));
+  const target = mkdtempSync(join(tmpdir(), "dirf-grill-review-target-"));
+  const env = { DIRF_HOME: home, HOME: home, USERPROFILE: home };
+  execFileSync("git", ["init", "-q"], { cwd: target, timeout: TIMEOUT });
+  execFileSync("git", ["remote", "add", "origin", "https://example.invalid/fixture/dirf-grill-review.git"], { cwd: target, timeout: TIMEOUT });
+  run(["setup", target], env, target);
+
+  writeSkill(home, "grill-me", "A human command that starts a decision interview", "Run a `/grilling` session.", "disable-model-invocation: true");
+  writeSkill(home, "grilling", "A relentless interview to sharpen a plan or design", "Ask one decision at a time.");
+  writeSkill(home, "ponytail", "Choose the smallest correct implementation", "Use the reuse ladder.");
+  writeSkill(home, "code-review", "Review code against its contract", "Review the frozen diff.");
+  writeSkill(home, "security-review", "Review applicable trust boundaries", "Check security risks.");
+  writeSkill(home, "testing", "Run focused verification", "Prove or disprove findings.");
+  for (const name of [
+    "workflow-orchestrator", "agent-organizer", "dx-optimizer", "test-engineer",
+    "security-auditor", "performance-benchmarker",
+  ]) writeAgent(home, name);
+
+  const built = JSON.parse(run([
+    "build", "grill-review-e2e", "Review PR 47 and grill me about the risks first",
+    "--path", target, "--json",
+  ], env, target));
+  const attemptFolder = dirname(built.workflow);
+  const workflow = JSON.parse(readFileSync(built.workflow, "utf8"));
+  assert.equal(workflow.playbook, "improve-plan");
+  assert.equal(workflow.continuation.playbook, "pr-review");
+  assert.ok(workflow.workflow.phases.indexOf("freeze exact base and head") >
+    workflow.workflow.phases.indexOf("confirm shared understanding"));
+  assert.ok(workflow.skill_flow.steps.some((step) => step.skill === "code-review"));
+  assert.match(readFileSync(join(attemptFolder, "README.md"), "utf8"), /Continued task[\s\S]*pr-review/);
+  assert.match(readFileSync(join(attemptFolder, "instructions.html"), "utf8"), /Continued task[\s\S]*pr-review/);
+
+  run(["resume", built.attempt.id, "--path", target, "--json"], env, target);
+  const stopped = JSON.parse(run(["attempt", "advance", built.attempt.id, "--auto", "--path", target, "--json"], env, target));
+  assert.equal(stopped.stopped_at_gate, "confirm shared understanding");
+  run([
+    "attempt", "gate", built.attempt.id, "confirm shared understanding", "accept",
+    "--comment", "review scope confirmed", "--path", target, "--json",
+  ], env, target);
+  const continued = JSON.parse(run(["attempt", "advance", built.attempt.id, "--auto", "--path", target, "--json"], env, target));
+  assert.equal(continued.current_phase, "recheck head and deduplicate before posting");
+  assert.equal(continued.gates.find((gate) => gate.phase === "define verification gates").status, "passed");
 });
 
 test("a broken explicit human router fails validation before an attempt is created", () => {

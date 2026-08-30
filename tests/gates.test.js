@@ -294,7 +294,7 @@ test("block records wait types; reopen clears them", () => {
   assert.equal(current.wait, null); // absent = blocker by default
 });
 
-test("pendingGates reflects the tri-state: pending → accepted/satisfied", () => {
+test("pendingGates excludes accepted, satisfied, and crossed soft gates", () => {
   const { slug, attempt } = attemptFixture();
   updateAttemptLifecycle(slug, attempt.id, "start");
   assert.deepEqual(pendingGates(slug, attempt.id).map((g) => g.phase), ["design", "build", "verify"]);
@@ -308,6 +308,10 @@ test("pendingGates reflects the tri-state: pending → accepted/satisfied", () =
   assert.equal(gates.find((g) => g.phase === "design").status, "accepted");
   assert.equal(gates.find((g) => g.phase === "build").status, "satisfied");
   assert.equal(gates.find((g) => g.phase === "verify").status, "pending");
+
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+  assert.equal(attemptGates(slug, attempt.id).find((g) => g.phase === "verify").status, "passed");
+  assert.deepEqual(pendingGates(slug, attempt.id), []);
 });
 
 test("evidence is recorded per phase and replayable via recordedEvidence", () => {
@@ -474,6 +478,9 @@ test("source playbooks and snapshots share agent contract validation", () => {
   assert.ok(sourceErrors.some((error) => /references undeclared agent stranger/.test(error)));
   assert.ok(sourceErrors.some((error) => /references unknown phase missing/.test(error)));
   assert.ok(sourceErrors.some((error) => /verification must be a non-empty string/.test(error)));
+
+  const malformedAgents = reconcile({ triage: { ...playbook, agents: "owner" } });
+  assert.ok(malformedAgents.some((error) => /agents must be an array/.test(error)));
 
   const snapshotErrors = validateSnapshot({
     ...snapshot,
