@@ -60,7 +60,9 @@ export function validateSnapshot(data, label = "workflow") {
         if (!["verify", "decision", "soft"].includes(spec.kind)) {
           errors.push(`${label}: workflow.gates.${phase}.kind must be verify, decision, or soft`);
         }
-        if (spec.verify !== undefined && (typeof spec.verify !== "string" || !spec.verify.trim())) {
+        if (spec.kind === "verify" && (typeof spec.verify !== "string" || !spec.verify.trim())) {
+          errors.push(`${label}: workflow.gates.${phase}.verify must be a non-empty string for verify gates`);
+        } else if (spec.verify !== undefined && (typeof spec.verify !== "string" || !spec.verify.trim())) {
           errors.push(`${label}: workflow.gates.${phase}.verify must be a non-empty string`);
         }
         if (spec.artifact_type !== undefined) {
@@ -130,6 +132,12 @@ export function validateSnapshot(data, label = "workflow") {
   }
   if (data.schema_version >= 3 && !Array.isArray(data.capability_gaps)) {
     errors.push(`${label}: capability_gaps must be an array`);
+  } else if (Array.isArray(data.capability_gaps)) {
+    for (const gap of data.capability_gaps) {
+      if (gap?.blocking === true) {
+        errors.push(`${label}: blocking capability gap: ${gap.question || gap.code || "unresolved reference"}`);
+      }
+    }
   }
   // Optional compaction directive (verbatim-line selection under context
   // pressure). Absent is fine — the renderer applies defaults. Present but

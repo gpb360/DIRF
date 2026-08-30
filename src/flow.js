@@ -45,7 +45,9 @@ export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
             if (!["verify", "decision", "soft"].includes(spec.kind)) {
               errors.push(`playbook ${name}: workflow.gates.${phase}.kind must be verify, decision, or soft`);
             }
-            if (spec.verify !== undefined && (typeof spec.verify !== "string" || !spec.verify.trim())) {
+            if (spec.kind === "verify" && (typeof spec.verify !== "string" || !spec.verify.trim())) {
+              errors.push(`playbook ${name}: workflow.gates.${phase}.verify must be a non-empty string for verify gates`);
+            } else if (spec.verify !== undefined && (typeof spec.verify !== "string" || !spec.verify.trim())) {
               errors.push(`playbook ${name}: workflow.gates.${phase}.verify must be a non-empty string`);
             }
             if (spec.artifact_type !== undefined) {
@@ -147,9 +149,9 @@ function explicitlyRequests(task, skillName) {
 // stay explicit because DIRF cannot safely guess which one owns the capability.
 function withRouterCapabilities(skillIndex) {
   const expanded = Object.fromEntries(Object.entries(skillIndex || {}).map(([name, item]) => [name, { ...item }]));
-  for (const [routerName, router] of Object.entries(skillIndex || {})) {
+  for (const router of Object.values(skillIndex || {})) {
     if (router.invocation !== "user") continue;
-    const references = (router.references || []).filter((name) => expanded[name]?.invocation !== "user");
+    const references = (router.references || []).filter((name) => expanded[name] && expanded[name].invocation !== "user");
     if (references.length !== 1) continue;
     const targetName = references[0];
     const target = expanded[targetName];
@@ -159,7 +161,6 @@ function withRouterCapabilities(skillIndex) {
     expanded[targetName] = {
       ...target,
       capabilities: [...new Set([...declaredCapabilities(target), ...inherited])],
-      capability_router: routerName,
     };
   }
   return expanded;
@@ -271,6 +272,8 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
         gaps.push({
           stage: requirement.stage,
           capability: requirement.capability,
+          code: "invalid_router_reference",
+          blocking: true,
           question: `${routerName} is human-invoked but none of its installed model-invoked references covers ${requirement.capability}. Install or repair its engine reference before continuing.`,
           reason: requirement.reason,
           requires_approval: true,

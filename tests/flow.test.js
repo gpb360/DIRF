@@ -224,6 +224,8 @@ test("an explicit human router with no installed engine stops with a clear gap",
   });
 
   assert.deepEqual(flow.steps.map(({ skill }) => skill), ["grill-me"]);
+  assert.equal(flow.gaps[0].code, "invalid_router_reference");
+  assert.equal(flow.gaps[0].blocking, true);
   assert.match(flow.gaps[0].question, /none of its installed model-invoked references covers/);
 });
 
@@ -567,6 +569,25 @@ test("validateSnapshot tolerates optional per-step output and rejects empty outp
   const empty = structuredClone(base);
   empty.skill_flow.steps[0].output = "  ";
   assert.ok(validateSnapshot(empty, "demo").includes("demo: skill_flow step 1 output must be a non-empty string"));
+});
+
+test("validateSnapshot rejects a blocking capability-reference gap", () => {
+  const gap = {
+    code: "invalid_router_reference",
+    blocking: true,
+    question: "grill-me has no installed model-invoked engine",
+  };
+  const snapshot = {
+    schema_version: 5, name: "demo", task: "grill me", playbook: "improve-plan", playbook_description: "Plan",
+    agents: [], baseline_skills: [], questions: [], capability_gaps: [gap], policy: "policies/workflow-policy.md",
+    skill_flow: { label: "decide", steps: [], gaps: [gap] },
+    attempt: { id: "demo", path: "attempts/demo" },
+    lifecycle: { clarify: "c", prototype: "p", split: "s", implement: "i", review: "r" },
+  };
+
+  assert.ok(validateSnapshot(snapshot, "demo").includes(
+    "demo: blocking capability gap: grill-me has no installed model-invoked engine",
+  ));
 });
 
 test("validateSnapshot accepts the local-first issue policy and rejects unsafe shapes", () => {

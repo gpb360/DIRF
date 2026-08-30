@@ -443,6 +443,26 @@ export function buildInstructions(workflow, outDir, skillBindings = []) {
   return written;
 }
 
+function agentWorkContract(name, workflow = {}) {
+  if (name !== "workflow-orchestrator") return null;
+  const interviewSteps = (workflow.skill_flow?.steps || [])
+    .filter((step) => step.capability === "plan interview");
+  if (!interviewSteps.length) return null;
+  const executableSteps = interviewSteps.filter((step) => step.invocation !== "user");
+  const resultSteps = executableSteps.length ? executableSteps : interviewSteps;
+  const decisionPhase = Object.entries(workflow.workflow?.gates || {})
+    .find(([, gate]) => gate?.kind === "decision")?.[0];
+  return {
+    stages: [...new Set(interviewSteps.map((step) => step.stage).filter(Boolean))],
+    engines: [...new Set(executableSteps.map((step) => step.skill).filter(Boolean))],
+    result: [...new Set(resultSteps.map((step) => step.output).filter(Boolean))].join("; ") || "a confirmed shared understanding",
+    verification: decisionPhase
+      ? `the "${decisionPhase}" decision gate is accepted`
+      : "the user confirms the shared understanding",
+    procedure: "Follow the selected interview engine for question format, recommendations, and recording decisions and contradictions.",
+  };
+}
+
 function writeAgentDetail(agentRef, agentsSub, workflow = {}) {
   const name = agentRef.name || "agent";
   const path = join(agentsSub, `${name}.md`);
@@ -492,23 +512,16 @@ function writeAgentDetail(agentRef, agentsSub, workflow = {}) {
     lines.push("", "## Your job", "", parsed.body.trim() || "_(empty)_", "");
   }
 
-  const wf = workflow.workflow || {};
-  lines.push("## Work contract", "");
-  if (wf.phases?.length) lines.push(`Work only within these ordered phases: ${wf.phases.join(" -> ")}.`, "");
-  lines.push(`Required result: ${wf.output || "the assigned phase output"}.`, "");
-  lines.push(`Verification: ${wf.validation || "use the workflow's declared validation"}.`, "");
-  const runsDecisionInterview = name === "workflow-orchestrator" &&
-    (workflow.skill_flow?.steps || []).some((step) => step.capability === "plan interview");
-  if (runsDecisionInterview) {
-    lines.push(
-      "## Decision interview", "",
-      "- Look up repository facts before asking the user.",
-      "- Ask one unresolved decision at a time.",
-      "- Give two to four meaningful choices when the host supports them, recommend one first, and state the material tradeoff.",
-      "- Record the user's answer and keep unresolved contradictions visible.",
-      "- Summarize the shared understanding and stop before implementation until the decision gate is accepted.",
-      "",
-    );
+  const contract = agentWorkContract(name, workflow);
+  if (contract) {
+    lines.push("## Work contract", "");
+    if (contract.stages.length) lines.push(`Owned stages: ${contract.stages.join(", ")}.`, "");
+    lines.push(`Required result: ${contract.result}.`, "");
+    lines.push(`Verification: ${contract.verification}.`, "");
+    lines.push("## Decision interview", "");
+    if (contract.engines.length) lines.push(`Selected interview engine: ${contract.engines.map((engine) => `\`${engine}\``).join(", ")}.`, "");
+    lines.push(contract.procedure);
+    lines.push("");
   }
 
   lines.push(
@@ -517,15 +530,16 @@ function writeAgentDetail(agentRef, agentsSub, workflow = {}) {
     "Hand off to the matching agent rather than expanding scope. See the roster in [README.md](../README.md).",
     "",
   );
-  lines.push(
-    "## Done when",
-    "",
-    `- [ ] The required result is produced: ${wf.output || "the assigned phase output"}`,
-    `- [ ] The workflow validation is satisfied: ${wf.validation || "the declared validation"}`,
-    "- [ ] Every decision gate in your lane has recorded user acceptance",
-    "- [ ] No scope creep into another agent's lane",
-    "",
-  );
+  if (contract) {
+    lines.push(
+      "## Done when",
+      "",
+      `- [ ] The required result is produced: ${contract.result}`,
+      `- [ ] Verification is satisfied: ${contract.verification}`,
+      "- [ ] No scope creep into another agent's lane",
+      "",
+    );
+  }
   writeFileSync(path, lines.join("\n"), "utf-8");
   return path;
 }
@@ -685,19 +699,15 @@ export function buildHtml(workflow, skillBindings = []) {
     } else {
       parts.push(renderMarkdownLite(parsed.body));
     }
-    parts.push("<h3>Work contract</h3>");
-    if (wf.phases?.length) parts.push(`<p>Work only within these ordered phases: ${escapeHtml(wf.phases.join(" -> "))}.</p>`);
-    parts.push(`<p><strong>Required result:</strong> ${escapeHtml(wf.output || "the assigned phase output")}.</p>`);
-    parts.push(`<p><strong>Verification:</strong> ${escapeHtml(wf.validation || "use the workflow's declared validation")}.</p>`);
-    const runsDecisionInterview = name === "workflow-orchestrator" &&
-      (workflow.skill_flow?.steps || []).some((step) => step.capability === "plan interview");
-    if (runsDecisionInterview) {
-      parts.push("<h3>Decision interview</h3><ul>");
-      parts.push("<li>Look up repository facts before asking the user.</li>");
-      parts.push("<li>Ask one unresolved decision at a time.</li>");
-      parts.push("<li>Recommend one of two to four meaningful choices and state the material tradeoff.</li>");
-      parts.push("<li>Stop before implementation until the user accepts the shared understanding.</li>");
-      parts.push("</ul>");
+    const contract = agentWorkContract(name, workflow);
+    if (contract) {
+      parts.push("<h3>Work contract</h3>");
+      if (contract.stages.length) parts.push(`<p><strong>Owned stages:</strong> ${escapeHtml(contract.stages.join(", "))}.</p>`);
+      parts.push(`<p><strong>Required result:</strong> ${escapeHtml(contract.result)}.</p>`);
+      parts.push(`<p><strong>Verification:</strong> ${escapeHtml(contract.verification)}.</p>`);
+      parts.push("<h3>Decision interview</h3>");
+      if (contract.engines.length) parts.push(`<p><strong>Selected interview engine:</strong> ${contract.engines.map((engine) => `<code>${escapeHtml(engine)}</code>`).join(", ")}.</p>`);
+      parts.push(`<p>${escapeHtml(contract.procedure)}</p>`);
     }
     parts.push("<h3>Not your job</h3><p>Hand off to the matching agent rather than expanding scope.</p>");
     parts.push("</details>");

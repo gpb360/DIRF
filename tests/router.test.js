@@ -108,6 +108,8 @@ test("explicit large-work decision mapping routes to the optional planning playb
 test("explicit Grill Me and one-question interview requests route to improve-plan", () => {
   for (const task of [
     "grill me about a design before implementation",
+    "grill with docs before implementation",
+    "grill-with-docs before implementation",
     "interview me one question at a time to sharpen a software plan before implementation",
   ]) {
     const result = recommend(task);

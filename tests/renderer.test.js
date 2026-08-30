@@ -355,7 +355,10 @@ test("decision interviews render the human checkpoint and task-specific orchestr
       validation: "the user accepted the shared understanding",
       recovery: "ask the next unresolved decision and stop",
     },
-    agents: [{ name: "workflow-orchestrator", file: "agents/workflow-orchestrator.md", tags: ["orchestration"], skills: [], status: "fallback" }],
+    agents: [
+      { name: "workflow-orchestrator", file: "agents/workflow-orchestrator.md", tags: ["orchestration"], skills: [], status: "fallback" },
+      { name: "dx-optimizer", file: "agents/dx-optimizer.md", tags: ["developer-experience"], skills: [], status: "fallback" },
+    ],
     baseline_skills: [], questions: [], schema_version: 5,
     skill_flow: {
       label: "decision interview", branches: [], gaps: [],
@@ -369,11 +372,17 @@ test("decision interviews render the human checkpoint and task-specific orchestr
   buildInstructions(workflow, outDir);
   const readme = readFileSync(join(outDir, "README.md"), "utf8");
   const detail = readFileSync(join(outDir, "agents", "workflow-orchestrator.md"), "utf8");
+  const unrelatedDetail = readFileSync(join(outDir, "agents", "dx-optimizer.md"), "utf8");
   assert.match(readme, /User checkpoint.*grill-me/);
   assert.match(detail, /## Work contract/);
-  assert.match(detail, /Ask one unresolved decision at a time/);
-  assert.match(detail, /stop before implementation until the decision gate is accepted/);
-  assert.match(detail, /Required result: a confirmed decision record/);
-  assert.match(buildHtml(workflow), /user checkpoint: grill-me/);
-  assert.match(buildHtml(workflow), /Decision interview/);
+  assert.match(detail, /Owned stages: decide/);
+  assert.match(detail, /Selected interview engine: `grilling`/);
+  assert.match(detail, /recording decisions and contradictions/);
+  assert.match(detail, /Required result: shared understanding/);
+  assert.doesNotMatch(unrelatedDetail, /## Work contract/);
+  assert.doesNotMatch(unrelatedDetail, /inspect facts -> ask one decision/);
+  const html = buildHtml(workflow);
+  assert.match(html, /user checkpoint: grill-me/);
+  assert.match(html, /Decision interview/);
+  assert.match(html, /recording decisions and contradictions/);
 });

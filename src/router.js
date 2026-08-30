@@ -1,7 +1,8 @@
 // Task -> playbook matching. Node built-ins only.
 //
 // Two signals, both data-driven from the registry — nothing routes by name:
-//   1. keyword phrases (curated per playbook): matched * 3 — the strong signal
+//   1. keyword phrases (curated per playbook): each matched word * 3 — the
+//      strong signal, so an exact phrase outranks one broad noun
 //   2. content overlap with what the playbook DOES (description, workflow
 //      phases/output, agent roster): capped at +2 so it can discriminate ties
 //      and catch keyword-less tasks, but never outvote a keyword match
@@ -99,7 +100,9 @@ function matchedKeywords(haystack, playbook) {
 function scorePlaybook(haystack, taskTokens, playbook) {
   const matched = matchedKeywords(haystack, playbook);
   const context = [...taskTokens].filter((t) => contentTokens(playbook).has(t)).sort();
-  const score = matched.length * KEYWORD_WEIGHT + Math.min(context.length, CONTEXT_CAP);
+  const keywordScore = matched.reduce((total, keyword) =>
+    total + Math.max(1, wordTokens(keyword).length) * KEYWORD_WEIGHT, 0);
+  const score = keywordScore + Math.min(context.length, CONTEXT_CAP);
   return { score, count: matched.length, context };
 }
 

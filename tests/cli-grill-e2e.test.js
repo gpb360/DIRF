@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -76,7 +76,7 @@ test("Grill Me builds, renders, resumes, and stops at its decision and verificat
   assert.equal(workflow.skill_flow.steps[0].invocation, "user");
   assert.equal(workflow.skill_flow.steps[0].human_checkpoint, true);
   assert.deepEqual(workflow.workflow.gates["confirm shared understanding"], { kind: "decision" });
-  assert.deepEqual(workflow.workflow.gates["assign agents and ownership"], { kind: "verify" });
+  assert.deepEqual(workflow.workflow.gates["assign agents and ownership"], { kind: "verify", verify: "dirf validate" });
   assert.ok(workflow.agents.every((agent) => agent.status === "installed"));
   assert.doesNotMatch(JSON.stringify(workflow), /\.codex[\\/]skills/);
 
@@ -94,8 +94,8 @@ test("Grill Me builds, renders, resumes, and stops at its decision and verificat
   assert.match(readme, /User checkpoint.*grill-me/);
   assert.match(readme, /confirm shared understanding.*decision gate/);
   assert.match(agent, /## Work contract/);
-  assert.match(agent, /Ask one unresolved decision at a time/);
-  assert.match(agent, /stop before implementation until the decision gate is accepted/);
+  assert.match(agent, /Selected interview engine: `grilling`/);
+  assert.match(agent, /recording decisions and contradictions/);
 
   const resumed = JSON.parse(run(["resume", built.attempt.id, "--path", target, "--json"], env, target));
   assert.equal(resumed.attempt.id, built.attempt.id);
@@ -119,6 +119,41 @@ test("Grill Me builds, renders, resumes, and stops at its decision and verificat
   assert.equal(stoppedAtVerification.current_phase, "assign agents and ownership");
   assert.equal(stoppedAtVerification.stopped_at_gate, "assign agents and ownership");
 
+  const validation = run(["validate"], env, target);
+  assert.match(validation, /Validation passed/);
+  const verified = JSON.parse(run([
+    "attempt", "advance", built.attempt.id, "--auto", "--evidence", "dirf validate", "--path", target, "--json",
+  ], env, target));
+  assert.equal(verified.gates.find((gate) => gate.phase === "assign agents and ownership").status, "satisfied");
+  assert.notEqual(verified.stopped_at_gate, "assign agents and ownership");
+
   const rerendered = run(["render", built.attempt.id, "--path", target], env, target);
   assert.match(rerendered, /Spec kit rendered:/);
+});
+
+test("a broken explicit human router fails validation before an attempt is created", () => {
+  const home = mkdtempSync(join(tmpdir(), "dirf-grill-broken-home-"));
+  const target = mkdtempSync(join(tmpdir(), "dirf-grill-broken-target-"));
+  const env = { ...process.env, DIRF_HOME: home, HOME: home, USERPROFILE: home };
+  execFileSync("git", ["init", "-q"], { cwd: target, timeout: TIMEOUT });
+  execFileSync("git", ["remote", "add", "origin", "https://example.invalid/fixture/dirf-grill-broken.git"], { cwd: target, timeout: TIMEOUT });
+  run(["setup", target], env, target);
+  writeSkill(
+    home,
+    "grill-me",
+    "A human command that starts a decision interview",
+    "Run a `/missing-engine` session.",
+    "disable-model-invocation: true",
+  );
+
+  const result = spawnSync(process.execPath, [
+    CLI, "build", "broken-grill", "grill me before implementation", "--path", target,
+  ], { cwd: target, encoding: "utf8", timeout: TIMEOUT, env });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Task Routing validation failed/);
+  assert.match(result.stderr, /grill-me is human-invoked but none of its installed model-invoked references covers plan interview/);
+  const slug = readdirSync(join(home, "projects"))[0];
+  const attempts = join(home, "projects", slug, "attempts");
+  assert.equal(existsSync(attempts) ? readdirSync(attempts).length : 0, 0);
 });

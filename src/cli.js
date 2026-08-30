@@ -289,6 +289,10 @@ function assembleTaskRouting(task, path, options = {}) {
     skillFlow.steps = skillFlow.steps.filter((step) => planningStages.has(step.stage));
     skillFlow.gaps = skillFlow.gaps.filter((gap) => planningStages.has(gap.stage));
   }
+  const blockingGaps = skillFlow.gaps.filter((gap) => gap.blocking === true);
+  if (blockingGaps.length) {
+    throw new Error(`Task Routing validation failed:\n${blockingGaps.map((gap) => `  - ${gap.question}`).join("\n")}`);
+  }
   return { selection, discovered, hostAgents, facts, skillFlow, capabilityProfile: profileSnapshot };
 }
 
