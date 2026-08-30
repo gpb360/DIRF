@@ -190,6 +190,19 @@ test("soft gates advance without a record unless --strict", () => {
   assert.equal(current.current_phase, "ship");
 });
 
+test("crossed soft gates preserve satisfied status when evidence was recorded", () => {
+  const { slug, attempt } = attemptFixture();
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+  updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "design", decision: "accept", comment: "ok" });
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+  updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "node --test" } });
+  updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "manual verification" } });
+
+  assert.equal(attemptGates(slug, attempt.id).find((gate) => gate.phase === "verify").status, "satisfied");
+  assert.ok(!pendingGates(slug, attempt.id).some((gate) => gate.phase === "verify"));
+});
+
 test("autoAdvance crosses covered phases and stops at the first unsatisfied gate", () => {
   const { slug, attempt } = attemptFixture();
   updateAttemptLifecycle(slug, attempt.id, "start");

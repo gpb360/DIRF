@@ -48,9 +48,15 @@ const IMPLEMENTATION_INTENT = /\b(add|adding|build|building|change|changing|crea
 const DOCUMENTATION_TARGET = /\b(docs?|documentation|readme|changelog|manual)\b/;
 const CONTINUATION_ACTION_WORDS = "add|adding|audit|auditing|build|building|change|changing|coding|create|creating|deploy|deploying|fix|fixing|implement|implementing|migrate|migrating|modify|modifying|redesign|redesigning|refactor|refactoring|review|reviewing|ship|shipping|test|testing|update|updating|verify|verifying|write|writing";
 const CONTINUATION_ACTION_INTENT = new RegExp(`\\b(?:${CONTINUATION_ACTION_WORDS})\\b`);
-const NEGATED_ROUTING_CUE = new RegExp(
-  `\\b(?:(?:i\\s+)?(?:do\\s+not|don't|dont)\\s+(?:want\\s+(?:you\\s+)?to\\s+)?|never\\s+|without\\s+|not\\s+)(?:you\\s+)?(?:grill(?:\\s+me)?|interview\\s+me|question\\s+me|${CONTINUATION_ACTION_WORDS})\\b`,
+const NEGATED_ROUTING_CLAUSE = new RegExp(
+  `(?:\\b(?:but|and(?:\\s+then)?|then)\\s+)?` +
+  `\\b(?:(?:i\\s+)?(?:do\\s+not|don't|dont)\\s+(?:want\\s+(?:you\\s+)?to\\s+)?|never\\s+|without\\s+|not\\s+)` +
+  `(?:you\\s+)?(?:grill(?:\\s+me)?|interview\\s+me|question\\s+me|${CONTINUATION_ACTION_WORDS})\\b` +
+  `[^,.;!?]*?(?=\\s+\\b(?:but|and\\s+then|then)\\b|[,.;!?]|$)`,
   "g",
+);
+const INTERVIEW_FIRST_TARGET = new RegExp(
+  `(?:${CONTINUATION_ACTION_INTENT.source}|implementation|execution|delivery|coding|changes?)`,
 );
 const EXPLICIT_SECURITY_AUDIT = /\bsecurity audit\b/;
 const EXPLICIT_UI_REVIEW = /\b(ui\s*(?:\/|\s)\s*ux|visual acceptance|visual regression|frontend design|design(?: |-)?system review)\b/;
@@ -122,22 +128,45 @@ function explicitlyRequestsInterview(taskText, playbook) {
 }
 
 function affirmativeRoutingText(taskText) {
-  return String(taskText || "").toLowerCase().replace(NEGATED_ROUTING_CUE, " ");
+  return String(taskText || "").toLowerCase()
+    .replace(NEGATED_ROUTING_CLAUSE, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-function requestsContinuation(taskText, interviewPlaybook) {
+function interviewCueIndex(taskText, interviewPlaybook) {
   const interviewKeywords = matchedKeywords(taskText, interviewPlaybook)
     .filter((keyword) => /\b(?:grill|interview|question)\b/.test(keyword.replaceAll("-", " ")));
-  const interviewIndex = interviewKeywords
+  return interviewKeywords
     .map((keyword) => taskText.indexOf(keyword.toLowerCase()))
     .filter((index) => index >= 0)
     .sort((a, b) => a - b)[0];
+}
+
+function explicitlyInterviewFirst(taskText, interviewIndex) {
+  const afterInterview = taskText.slice(interviewIndex);
+  return /\bfirst\b/.test(afterInterview) ||
+    new RegExp(`\\bbefore\\b[^,.;!?]{0,100}${INTERVIEW_FIRST_TARGET.source}`).test(afterInterview);
+}
+
+function requestsContinuation(taskText, interviewPlaybook) {
+  const interviewIndex = interviewCueIndex(taskText, interviewPlaybook);
   if (interviewIndex === undefined) return false;
-  if (CONTINUATION_ACTION_INTENT.test(taskText.slice(0, interviewIndex))) return true;
+  if (CONTINUATION_ACTION_INTENT.test(taskText.slice(0, interviewIndex))) {
+    return explicitlyInterviewFirst(taskText, interviewIndex);
+  }
   const afterInterview = taskText.slice(interviewIndex);
   return new RegExp(
     `\\b(?:before|then|next|after(?:ward|wards| that)?|and(?: then)?)\\b[^,.;!?]{0,100}${CONTINUATION_ACTION_INTENT.source}`,
   ).test(afterInterview);
+}
+
+function requestsPostActionInterview(taskText, interviewPlaybook) {
+  const interviewIndex = interviewCueIndex(taskText, interviewPlaybook);
+  if (interviewIndex === undefined || explicitlyInterviewFirst(taskText, interviewIndex)) return false;
+  const beforeInterview = taskText.slice(0, interviewIndex);
+  return CONTINUATION_ACTION_INTENT.test(beforeInterview) &&
+    /\b(?:then|after(?:ward|wards)?|and\s+then)\b[^,.;!?]*$/.test(beforeInterview);
 }
 
 // ─── Stack-aware affinity (derived, agnostic) ────────────────────────────────
@@ -242,7 +271,7 @@ function unique(items) {
   return [...new Set(items.filter(Boolean))];
 }
 
-function composeInterviewWithContinuation(taskText, result, continuation) {
+function composeSequentialWorkflows(taskText, result, continuation) {
   const continuationWorkflow = resolveWorkflow(taskText, continuation.pb.workflow);
   const primaryPhases = result.workflow.phases || [];
   const usedPhases = new Set(primaryPhases);
@@ -269,6 +298,11 @@ function composeInterviewWithContinuation(taskText, result, continuation) {
       phases: (contract.phases || []).map((phase) => phaseMap.get(phase) || phase),
     }]));
   const continuationAgents = resolveAgents(taskText, continuation.pb);
+  const fulfilledCapabilities = new Set((result.skill_flow.steps || [])
+    .map((step) => step.capability)
+    .filter(Boolean));
+  const continuationSteps = (continuation.pb.skill_flow.steps || [])
+    .filter((step) => !step.capability || !fulfilledCapabilities.has(step.capability));
   const mergedContracts = { ...(result.workflow.agent_contracts || {}) };
   for (const [agent, contract] of Object.entries(continuationContracts)) {
     const primary = mergedContracts[agent];
@@ -299,11 +333,11 @@ function composeInterviewWithContinuation(taskText, result, continuation) {
       ]),
       output: `${result.workflow.output} Then continue with ${continuationWorkflow.output}.`,
       validation: `${result.workflow.validation} Then ${continuationWorkflow.validation}.`,
-      recovery: `${result.workflow.recovery} Once the interview is confirmed, ${continuationWorkflow.recovery}.`,
+      recovery: `${result.workflow.recovery} After the first workflow is complete, ${continuationWorkflow.recovery}.`,
     },
     skill_flow: {
       label: `${result.skill_flow.label} -> ${continuation.pb.skill_flow.label}`,
-      steps: [...(result.skill_flow.steps || []), ...(continuation.pb.skill_flow.steps || [])],
+      steps: [...(result.skill_flow.steps || []), ...continuationSteps],
     },
     agents: unique([...result.agents, ...continuationAgents]),
     questions: unique([...result.questions, ...(continuation.pb.questions || [])]),
@@ -341,7 +375,7 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
   const routingTaskText = affirmativeRoutingText(taskText);
   let haystack = routingTaskText;
   const taskHasRoutingCue = Object.entries(playbooks).some(([name, playbook]) =>
-    name !== FALLBACK_PLAYBOOK && matchedKeywords(routingTaskText, playbook).length > 0,
+    name !== FALLBACK_PLAYBOOK && matchedKeywords(taskText, playbook).length > 0,
   );
   if (!taskHasRoutingCue && facts && facts.length) haystack += " " + facts.join(" ").toLowerCase();
   // Documentation verbs such as "update docs" must not receive the generic
@@ -422,12 +456,23 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
   // not from a hardcoded playbook name.
   const interviewIndex = ranked.findIndex(({ pb: playbook }) => explicitlyRequestsInterview(routingTaskText, playbook));
   let continuation = null;
+  let postActionInterview = null;
   if (interviewIndex >= 0) {
-    continuation = requestsContinuation(routingTaskText, ranked[interviewIndex].pb)
-      ? ranked.find((entry, index) => index !== interviewIndex && entry.score > 0) || null
-      : null;
-    ranked[interviewIndex].score = Math.max(ranked[interviewIndex].score, 1);
-    if (interviewIndex > 0) ranked.unshift(ranked.splice(interviewIndex, 1)[0]);
+    const interviewEntry = ranked[interviewIndex];
+    if (requestsPostActionInterview(routingTaskText, interviewEntry.pb)) {
+      const actionEntry = ranked.find((entry, index) => index !== interviewIndex && entry.score > 0) || null;
+      if (actionEntry) {
+        postActionInterview = interviewEntry;
+        const actionIndex = ranked.indexOf(actionEntry);
+        if (actionIndex > 0) ranked.unshift(ranked.splice(actionIndex, 1)[0]);
+      }
+    } else {
+      continuation = requestsContinuation(routingTaskText, interviewEntry.pb)
+        ? ranked.find((entry, index) => index !== interviewIndex && entry.score > 0) || null
+        : null;
+      interviewEntry.score = Math.max(interviewEntry.score, 1);
+      if (interviewIndex > 0) ranked.unshift(ranked.splice(interviewIndex, 1)[0]);
+    }
   }
 
   let name, pb, score, context;
@@ -465,7 +510,9 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
     result.playbook_source_path = pb.playbook_source_path;
   }
   if (continuation && explicitlyRequestsInterview(routingTaskText, pb)) {
-    result = composeInterviewWithContinuation(routingTaskText, result, continuation);
+    result = composeSequentialWorkflows(routingTaskText, result, continuation);
+  } else if (postActionInterview && !explicitlyRequestsInterview(routingTaskText, pb)) {
+    result = composeSequentialWorkflows(routingTaskText, result, postActionInterview);
   }
   return result;
 }

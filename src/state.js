@@ -517,7 +517,7 @@ export function attemptGateState(slug, attempt) {
       if (kind === "decision" && record) status = record.status;
       if (record?.status === "denied") status = "denied";
       if (satisfied) status = "satisfied";
-      if (crossedSoftGate) status = "passed";
+      if (crossedSoftGate && !satisfied) status = "passed";
       if (artifactPending) status = "pending";
       return {
         phase,

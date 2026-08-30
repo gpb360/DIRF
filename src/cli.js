@@ -499,13 +499,7 @@ async function cmdLearn(args) {
       next: `dirf resume ${attempt.id} --path ${JSON.stringify(target)}`,
     };
     if (args.json) console.log(JSON.stringify(result, null, 2));
-    else {
-      console.log(`Learning source saved: ${source.title}`);
-      console.log(`Attempt: ${attempt.id}`);
-      console.log("Repository changes: none");
-      console.log("Agent action: continue this attempt now and stop at its decision gate");
-      console.log(`Resume later: ${result.next}`);
-    }
+    else console.log("DIRF source saved; repo unchanged. Continuing review unless a decision is needed.");
   } catch (error) {
     updateAttemptLifecycle(slug, attempt.id, "block", { reason: `Learning intake failed: ${error.message}` });
     throw error;

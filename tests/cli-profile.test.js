@@ -67,8 +67,12 @@ test("create --profile routes only through the named skills and records missing 
     ["plan", "Plan", ["profiled-plan", "build a feature"]],
     ["learn", "Attempt", ["profile source text"]],
   ]) {
-    const commandOutput = run([command, ...args, "--path", target, "--profile", profilePath], env, target);
-    const commandAttemptId = commandOutput.match(new RegExp(`${label}(?: saved)?: (\\S+)`))?.[1];
+    const commandArgs = [command, ...args, "--path", target, "--profile", profilePath];
+    if (command === "learn") commandArgs.push("--json");
+    const commandOutput = run(commandArgs, env, target);
+    const commandAttemptId = command === "learn"
+      ? JSON.parse(commandOutput).attempt
+      : commandOutput.match(new RegExp(`${label}(?: saved)?: (\\S+)`))?.[1];
     assert.ok(commandAttemptId, commandOutput);
     const commandWorkflow = JSON.parse(readFileSync(
       join(home, "projects", slug, "attempts", commandAttemptId, "workflow.json"), "utf8",

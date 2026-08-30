@@ -701,4 +701,40 @@ test("validateSnapshot accepts safe model advice and rejects operational claims"
   assert.ok(unsafe.includes("demo: model_advice.pricing_lookup must be false"));
   assert.ok(validateSnapshot({ ...base, model_advice: { ...advice, catalog_sha256: "path/to/models.json" } }, "demo")
     .includes("demo: model_advice.catalog_sha256 must be a lowercase SHA-256 digest"));
+  assert.ok(validateSnapshot({
+    ...base,
+    model_advice: {
+      ...advice,
+      recommendations: [],
+      catalog_source: "not provided",
+      catalog_sha256: undefined,
+    },
+  }, "demo").includes("demo: model_advice.status recommended requires at least one recommendation"));
+  assert.ok(validateSnapshot({
+    ...base,
+    model_advice: { ...advice, uncovered_capabilities: ["testing"] },
+  }, "demo").includes("demo: model_advice.status recommended requires no uncovered capabilities"));
+  assert.ok(validateSnapshot({
+    ...base,
+    model_advice: { ...advice, status: "partial", uncovered_capabilities: [] },
+  }, "demo").includes("demo: model_advice.status partial requires at least one uncovered capability"));
+  assert.ok(validateSnapshot({
+    ...base,
+    model_advice: { ...advice, status: "unavailable" },
+  }, "demo").includes("demo: model_advice.status unavailable requires no recommendations"));
+  assert.ok(validateSnapshot({
+    ...base,
+    model_advice: { ...advice, catalog_source: "some catalog" },
+  }, "demo").includes("demo: model_advice.status recommended requires host catalog provenance"));
+  assert.deepEqual(validateSnapshot({
+    ...base,
+    model_advice: {
+      ...advice,
+      status: "unavailable",
+      catalog_source: "not provided",
+      catalog_sha256: undefined,
+      recommendations: [],
+      uncovered_capabilities: ["testing"],
+    },
+  }, "demo"), []);
 });

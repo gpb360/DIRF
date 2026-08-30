@@ -84,8 +84,38 @@ export function validateSnapshot(data, label = "workflow") {
       if (!Array.isArray(advice.uncovered_capabilities) || advice.uncovered_capabilities.some((value) => typeof value !== "string" || !value.trim())) {
         errors.push(`${label}: model_advice.uncovered_capabilities must be an array of non-empty strings`);
       }
+      if (typeof advice.catalog_source !== "string" || !advice.catalog_source.trim()) {
+        errors.push(`${label}: model_advice.catalog_source must be a non-empty string`);
+      }
       if (advice.catalog_sha256 !== undefined && !/^[a-f0-9]{64}$/.test(advice.catalog_sha256)) {
         errors.push(`${label}: model_advice.catalog_sha256 must be a lowercase SHA-256 digest`);
+      }
+      const recommendationCount = Array.isArray(advice.recommendations) ? advice.recommendations.length : null;
+      const uncoveredCount = Array.isArray(advice.uncovered_capabilities) ? advice.uncovered_capabilities.length : null;
+      if (advice.status === "recommended" && recommendationCount !== null && recommendationCount === 0) {
+        errors.push(`${label}: model_advice.status recommended requires at least one recommendation`);
+      }
+      if (advice.status === "recommended" && uncoveredCount !== null && uncoveredCount > 0) {
+        errors.push(`${label}: model_advice.status recommended requires no uncovered capabilities`);
+      }
+      if (advice.status === "partial" && recommendationCount !== null && recommendationCount === 0) {
+        errors.push(`${label}: model_advice.status partial requires at least one recommendation`);
+      }
+      if (advice.status === "partial" && uncoveredCount !== null && uncoveredCount === 0) {
+        errors.push(`${label}: model_advice.status partial requires at least one uncovered capability`);
+      }
+      if (advice.status === "unavailable" && recommendationCount !== null && recommendationCount > 0) {
+        errors.push(`${label}: model_advice.status unavailable requires no recommendations`);
+      }
+      const hasHostCatalogProvenance = advice.catalog_source === "host-provided file" &&
+        /^[a-f0-9]{64}$/.test(advice.catalog_sha256 || "");
+      if (["recommended", "partial"].includes(advice.status) &&
+          !hasHostCatalogProvenance) {
+        errors.push(`${label}: model_advice.status ${advice.status} requires host catalog provenance`);
+      }
+      if (advice.status === "unavailable" && advice.catalog_source !== "not provided" &&
+          !hasHostCatalogProvenance) {
+        errors.push(`${label}: model_advice unavailable advice from a host catalog requires catalog provenance`);
       }
       if (typeof advice.rationale !== "string" || !advice.rationale.trim()) {
         errors.push(`${label}: model_advice.rationale must be a non-empty string`);

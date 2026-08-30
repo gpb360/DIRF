@@ -47,6 +47,17 @@ test("negated implementation language does not override explicit PR review", () 
   assert.equal(recommend("Review PR #900 and do not add split behavior").playbook, "pr-review");
 });
 
+test("standalone negated actions do not route the forbidden work", () => {
+  for (const [task, forbidden] of [
+    ["Do not deploy the release", "deployment"],
+    ["Do not review PR 47", "pr-review"],
+    ["Do not implement the feature", "fullstack-feature"],
+  ]) {
+    assert.notEqual(recommend(task).playbook, forbidden);
+    assert.equal(recommend(task).playbook, "triage");
+  }
+});
+
 test("implementation intent outranks domain review terminology", () => {
   assert.equal(
     recommend("Add paid-save entitlement checks and creator execution review access with Supabase persistence and tests").playbook,
@@ -169,6 +180,21 @@ test("sequenced change, update, and writing verbs preserve requested continuatio
     assert.equal(result.playbook, "improve-plan");
     assert.equal(result.continuation.playbook, "fullstack-feature");
   }
+});
+
+test("workflow composition does not repeat capabilities already fulfilled by the interview", () => {
+  const result = recommend("Grill me before changing the checkout flow");
+  const capabilities = result.skill_flow.steps.map((step) => step.capability);
+  assert.equal(capabilities.filter((capability) => capability === "plan interview").length, 1);
+  assert.equal(capabilities.filter((capability) => capability === "minimalism").length, 1);
+});
+
+test("action-first requests preserve their stated order", () => {
+  const result = recommend("Review the PR, then grill me");
+  assert.equal(result.playbook, "pr-review");
+  assert.equal(result.continuation.playbook, "improve-plan");
+  assert.ok(result.workflow.phases.indexOf("freeze exact base and head") <
+    result.workflow.phases.indexOf("confirm shared understanding"));
 });
 
 test("negated interview and action cues never become executable work", () => {
