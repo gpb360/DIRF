@@ -146,6 +146,60 @@ test("an explicit interview checkpoint precedes a mixed review or build request"
   }
 });
 
+test("standalone interview topics do not invent continuation work", () => {
+  for (const task of [
+    "Grill me about the code architecture decisions",
+    "Grill me about security review expectations",
+  ]) {
+    const result = recommend(task);
+    assert.equal(result.playbook, "improve-plan");
+    assert.equal(result.continuation, undefined);
+  }
+});
+
+test("sequenced update and writing verbs preserve requested continuation work", () => {
+  for (const task of [
+    "Grill me before updating the checkout flow",
+    "Grill me, then write the approved feature",
+  ]) {
+    const result = recommend(task);
+    assert.equal(result.playbook, "improve-plan");
+    assert.equal(result.continuation.playbook, "fullstack-feature");
+  }
+});
+
+test("negated interview and action cues never become executable work", () => {
+  assert.equal(recommend("do not grill me, just review PR 47").playbook, "pr-review");
+  for (const task of [
+    "grill me about release risks but do not deploy anything",
+    "grill me about the design but do not implement it",
+  ]) {
+    const result = recommend(task);
+    assert.equal(result.playbook, "improve-plan");
+    assert.equal(result.continuation, undefined);
+  }
+});
+
+test("continuation composition merges contracts owned by the same agent", () => {
+  const playbooks = structuredClone(loadPlaybooks());
+  const continuation = playbooks["fullstack-feature"];
+  continuation.agents = [...new Set([...continuation.agents, "workflow-orchestrator"])];
+  continuation.workflow.agent_contracts = {
+    "workflow-orchestrator": {
+      phases: ["define user outcome"],
+      output: "an implementation outcome",
+      verification: "the implementation outcome is verified",
+    },
+  };
+
+  const result = recommend("Build the feature, but grill me first", [], playbooks);
+  const contract = result.workflow.agent_contracts["workflow-orchestrator"];
+  assert.ok(contract.phases.includes("inspect repository facts and existing decisions"));
+  assert.ok(contract.phases.includes("define user outcome"));
+  assert.match(contract.output, /confirmed decision record.*implementation outcome/);
+  assert.match(contract.verification, /decision gate is accepted.*implementation outcome is verified/);
+});
+
 test("ordinary understood feature work bypasses decision mapping", () => {
   assert.equal(
     recommend("Build the approved account settings feature from the existing specification").playbook,

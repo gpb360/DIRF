@@ -21,7 +21,7 @@ test("no model catalog produces explicit unavailable advice without side effects
     catalog_source: "not provided",
     recommendations: [],
     uncovered_capabilities: ["code review", "testing"],
-    rationale: "This host did not provide a model catalog, so DIRF made no model recommendation.",
+    rationale: "This host did not provide a model catalog, so DIRF made no preflight model recommendation.",
   });
 });
 

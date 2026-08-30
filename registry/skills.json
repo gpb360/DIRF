@@ -204,7 +204,7 @@
         "agent-organizer",
         "workflow-orchestrator"
       ],
-      "summary": "Portable model suggestions from host-declared capabilities and cost tiers without invocation, monitoring, or live pricing",
+      "summary": "Portable preflight model suggestions from host-declared capabilities and cost tiers without invocation, monitoring, or live pricing",
       "capabilities": [
         "model selection advice"
       ]

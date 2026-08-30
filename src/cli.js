@@ -1464,7 +1464,7 @@ function cmdFlow(args) {
     for (const gap of flow.gaps) console.log(`  ${gap.question}`);
   }
   if (modelAdvice) {
-    console.log("\n[model advice — diagnostic only]");
+    console.log("\n[model advice — diagnostic preflight]");
     console.log(`  ${modelAdvice.rationale}`);
     for (const recommendation of modelAdvice.recommendations) {
       console.log(`  ${recommendation.model} (${recommendation.cost_tier}): ${recommendation.capabilities.join(", ")}`);
@@ -1472,7 +1472,7 @@ function cmdFlow(args) {
     if (modelAdvice.uncovered_capabilities.length) {
       console.log(`  Uncovered: ${modelAdvice.uncovered_capabilities.join(", ")}`);
     }
-    console.log("  Advisory only; DIRF did not invoke a model, monitor a session, query live pricing, or authorize spend.");
+    console.log("  Preflight advice only; DIRF did not invoke a model, monitor a session, query live pricing, or authorize spend.");
   }
 }
 

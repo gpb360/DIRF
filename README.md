@@ -65,11 +65,12 @@ skills:
 DIRF prepares and records the route. Your agent host still performs the work,
 and you keep control of consequential actions.
 
-DIRF can add diagnostic model advice when the host supplies `--models FILE`.
-It selects the lowest host-reported cost tier that declares each required
-capability and stores the catalog hash with the advice. Without a catalog it
-says advice is unavailable. It never queries live prices, invokes a model,
-monitors a session, or authorizes spend.
+DIRF can add diagnostic preflight model advice when the host supplies
+`--models FILE`. It selects the lowest host-reported cost tier that declares
+each capability known when the workflow is built and stores the catalog hash.
+Without a catalog it says advice is unavailable. It does not claim to cover
+work discovered later, query live prices, invoke a model, monitor a session, or
+authorize spend.
 
 ## Install
 
@@ -404,7 +405,7 @@ useful:
 ```
 
 Pass it with `--models FILE` to `build`, `plan`, `create`, or `flow`. DIRF
-matches declared workflow capabilities, chooses the lowest reported tier, and
+matches declared preflight workflow capabilities, chooses the lowest reported tier, and
 stores only portable advice plus the catalog SHA-256. The flag does not run a
 model, check current prices, monitor work, or grant spending authority.
 

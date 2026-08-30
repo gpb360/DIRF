@@ -65,7 +65,7 @@ export function buildModelAdvice(skillFlow = {}, catalog = null) {
       catalog_source: "not provided",
       recommendations: [],
       uncovered_capabilities: [...requirements.keys()],
-      rationale: "This host did not provide a model catalog, so DIRF made no model recommendation.",
+      rationale: "This host did not provide a model catalog, so DIRF made no preflight model recommendation.",
     };
   }
 
@@ -107,9 +107,9 @@ export function buildModelAdvice(skillFlow = {}, catalog = null) {
     recommendations,
     uncovered_capabilities: uncovered,
     rationale: status === "recommended"
-      ? "Every workflow capability has a suggestion from the host-provided catalog."
+      ? "Every declared preflight workflow capability has a suggestion from the host-provided catalog."
       : status === "partial"
-        ? "Some workflow capabilities have no declared match in the host-provided catalog."
-        : "No host-reported model declares the workflow capabilities, so DIRF made no recommendation.",
+        ? "Some declared preflight workflow capabilities have no match in the host-provided catalog."
+        : "No host-reported model declares the preflight workflow capabilities, so DIRF made no recommendation.",
   };
 }

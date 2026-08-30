@@ -41,13 +41,13 @@ function modelAdvicePresentation(advice) {
     summary: advice.rationale,
     recommendations: (advice.recommendations || []).map((recommendation) => ({
       label: `${recommendation.model} (${recommendation.cost_tier})`,
-      detail: `${recommendation.capabilities.join(", ")} — ${recommendation.rationale}`,
+      detail: `${recommendation.capabilities.join(", ")} for preflight stages ${recommendation.stages.join(", ")} — ${recommendation.rationale}`,
     })),
     uncovered: advice.uncovered_capabilities || [],
     catalog: advice.catalog_sha256
       ? `Host catalog SHA-256: ${advice.catalog_sha256}`
       : `Catalog: ${advice.catalog_source || "not provided"}`,
-    rules: "Advisory only. DIRF did not invoke a model, monitor a session, query live pricing, or authorize spend.",
+    rules: "Preflight advice only. DIRF did not invoke a model, monitor a session, query live pricing, or authorize spend.",
   };
 }
 
@@ -366,7 +366,7 @@ export function buildInstructions(workflow, outDir, skillBindings = []) {
   }
   const modelAdvice = modelAdvicePresentation(workflow.model_advice);
   if (modelAdvice) {
-    lines.push("## Model advice (diagnostic only)", "", modelAdvice.summary, "");
+    lines.push("## Model advice (diagnostic preflight)", "", modelAdvice.summary, "");
     for (const recommendation of modelAdvice.recommendations) {
       lines.push(`- **${recommendation.label}:** ${recommendation.detail}`);
     }
@@ -529,6 +529,14 @@ function agentWorkContract(name, workflow = {}) {
   };
 }
 
+function defaultAgentDone() {
+  return [
+    "The assigned contribution is complete and handed back to the workflow owner",
+    "Relevant validation evidence is recorded",
+    "No scope creep into another agent's lane",
+  ];
+}
+
 function writeAgentDetail(agentRef, agentsSub, workflow = {}) {
   const name = agentRef.name || "agent";
   const path = join(agentsSub, `${name}.md`);
@@ -597,14 +605,13 @@ function writeAgentDetail(agentRef, agentsSub, workflow = {}) {
     "Hand off to the matching agent rather than expanding scope. See the roster in [README.md](../README.md).",
     "",
   );
-  if (contract) {
-    lines.push(
-      "## Done when",
-      "",
-      ...contract.done.map((item) => `- [ ] ${item}`),
-      "",
-    );
-  }
+  const done = contract?.done || defaultAgentDone();
+  lines.push(
+    "## Done when",
+    "",
+    ...done.map((item) => `- [ ] ${item}`),
+    "",
+  );
   writeFileSync(path, lines.join("\n"), "utf-8");
   return path;
 }
@@ -694,7 +701,7 @@ export function buildHtml(workflow, skillBindings = []) {
 
   const modelAdvice = modelAdvicePresentation(workflow.model_advice);
   if (modelAdvice) {
-    parts.push("<h2>Model advice (diagnostic only)</h2>");
+    parts.push("<h2>Model advice (diagnostic preflight)</h2>");
     parts.push(`<p>${escapeHtml(modelAdvice.summary)}</p><ul>`);
     for (const recommendation of modelAdvice.recommendations) {
       parts.push(`<li><strong>${escapeHtml(recommendation.label)}:</strong> ${escapeHtml(recommendation.detail)}</li>`);
@@ -800,11 +807,10 @@ export function buildHtml(workflow, skillBindings = []) {
       }
     }
     parts.push("<h3>Not your job</h3><p>Hand off to the matching agent rather than expanding scope.</p>");
-    if (contract) {
-      parts.push("<h3>Done when</h3><ul>");
-      parts.push(...contract.done.map((item) => `<li>${escapeHtml(item)}</li>`));
-      parts.push("</ul>");
-    }
+    const done = contract?.done || defaultAgentDone();
+    parts.push("<h3>Done when</h3><ul>");
+    parts.push(...done.map((item) => `<li>${escapeHtml(item)}</li>`));
+    parts.push("</ul>");
     parts.push("</details>");
   }
 

@@ -110,7 +110,7 @@ test("Grill Me builds, renders, resumes, and respects its decision and soft gate
   assert.match(agent, /Selected interview engine: `grilling`/);
   assert.match(agent, /recording decisions and contradictions/);
   assert.match(agent, /## Done when/);
-  assert.match(organizer, /Owned phases: partition the confirmed work, draft advisory model assignments, assign agents and ownership/);
+  assert.match(organizer, /Owned phases: review preflight model advice, partition the confirmed work, assign agents and ownership/);
   assert.match(organizer, /bounded, non-overlapping agent assignments/);
   assert.match(optimizer, /Owned phases: define verification gates/);
   assert.match(optimizer, /concrete verification commands/);
@@ -118,8 +118,8 @@ test("Grill Me builds, renders, resumes, and respects its decision and soft gate
   assert.match(html, /decision gate/);
   assert.match(html, /soft check/);
   assert.match(html, /Gate rules: advancing past a verify phase requires recorded evidence/);
-  assert.match(readme, /Model advice \(diagnostic only\)[\s\S]*did not provide a model catalog/);
-  assert.match(html, /Model advice \(diagnostic only\)[\s\S]*did not provide a model catalog/);
+  assert.match(readme, /Model advice \(diagnostic preflight\)[\s\S]*did not provide a model catalog/);
+  assert.match(html, /Model advice \(diagnostic preflight\)[\s\S]*did not provide a model catalog/);
 
   const resumed = JSON.parse(run(["resume", built.attempt.id, "--path", target, "--json"], env, target));
   assert.equal(resumed.attempt.id, built.attempt.id);

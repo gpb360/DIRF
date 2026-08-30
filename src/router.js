@@ -44,8 +44,13 @@ function contentTokens(pb) {
   const parts = [pb.description, ...(wf.phases || []), wf.output, ...(pb.agents || [])];
   return new Set(wordTokens(parts.filter(Boolean).join(" ")));
 }
-const IMPLEMENTATION_INTENT = /\b(add|build|create|fix|implement)\b/;
-const CONTINUATION_ACTION_INTENT = /\b(add|audit|build|code|create|deploy|fix|implement|migrate|redesign|refactor|review|ship|test|verify)\b/;
+const IMPLEMENTATION_INTENT = /\b(add|adding|build|building|create|creating|fix|fixing|implement|implementing|update|updating|write|writing)\b/;
+const CONTINUATION_ACTION_WORDS = "add|adding|audit|auditing|build|building|coding|create|creating|deploy|deploying|fix|fixing|implement|implementing|migrate|migrating|redesign|redesigning|refactor|refactoring|review|reviewing|ship|shipping|test|testing|update|updating|verify|verifying|write|writing";
+const CONTINUATION_ACTION_INTENT = new RegExp(`\\b(?:${CONTINUATION_ACTION_WORDS})\\b`);
+const NEGATED_ROUTING_CUE = new RegExp(
+  `\\b(?:do\\s+not|don't|dont|never|without|not)\\s+(?:you\\s+)?(?:grill(?:\\s+me)?|interview\\s+me|question\\s+me|${CONTINUATION_ACTION_WORDS})\\b`,
+  "g",
+);
 const EXPLICIT_SECURITY_AUDIT = /\bsecurity audit\b/;
 const EXPLICIT_UI_REVIEW = /\b(ui\s*(?:\/|\s)\s*ux|visual acceptance|visual regression|frontend design|design(?: |-)?system review)\b/;
 
@@ -113,6 +118,25 @@ function explicitlyRequestsInterview(taskText, playbook) {
   if (!hasInterviewStep) return false;
   return matchedKeywords(taskText, playbook)
     .some((keyword) => /\b(?:grill|interview|question)\b/.test(keyword.replaceAll("-", " ")));
+}
+
+function affirmativeRoutingText(taskText) {
+  return String(taskText || "").toLowerCase().replace(NEGATED_ROUTING_CUE, " ");
+}
+
+function requestsContinuation(taskText, interviewPlaybook) {
+  const interviewKeywords = matchedKeywords(taskText, interviewPlaybook)
+    .filter((keyword) => /\b(?:grill|interview|question)\b/.test(keyword.replaceAll("-", " ")));
+  const interviewIndex = interviewKeywords
+    .map((keyword) => taskText.indexOf(keyword.toLowerCase()))
+    .filter((index) => index >= 0)
+    .sort((a, b) => a - b)[0];
+  if (interviewIndex === undefined) return false;
+  if (CONTINUATION_ACTION_INTENT.test(taskText.slice(0, interviewIndex))) return true;
+  const afterInterview = taskText.slice(interviewIndex);
+  return new RegExp(
+    `\\b(?:before|then|next|after(?:ward|wards| that)?|and(?: then)?)\\b[^,.;!?]{0,100}${CONTINUATION_ACTION_INTENT.source}`,
+  ).test(afterInterview);
 }
 
 // ─── Stack-aware affinity (derived, agnostic) ────────────────────────────────
@@ -244,6 +268,17 @@ function composeInterviewWithContinuation(taskText, result, continuation) {
       phases: (contract.phases || []).map((phase) => phaseMap.get(phase) || phase),
     }]));
   const continuationAgents = resolveAgents(taskText, continuation.pb);
+  const mergedContracts = { ...(result.workflow.agent_contracts || {}) };
+  for (const [agent, contract] of Object.entries(continuationContracts)) {
+    const primary = mergedContracts[agent];
+    mergedContracts[agent] = primary ? {
+      ...primary,
+      ...contract,
+      phases: unique([...(primary.phases || []), ...(contract.phases || [])]),
+      output: unique([primary.output, contract.output]).join("; then "),
+      verification: unique([primary.verification, contract.verification]).join("; and "),
+    } : contract;
+  }
 
   return {
     ...result,
@@ -256,10 +291,7 @@ function composeInterviewWithContinuation(taskText, result, continuation) {
       ...result.workflow,
       phases: [...primaryPhases, ...continuationPhases],
       gates: { ...primaryGates, ...continuationGates },
-      agent_contracts: {
-        ...(result.workflow.agent_contracts || {}),
-        ...continuationContracts,
-      },
+      agent_contracts: mergedContracts,
       requirements: unique([
         ...(result.workflow.requirements || []),
         ...(continuationWorkflow.requirements || []),
@@ -305,16 +337,16 @@ export function loadPlaybooks({ projectPlaybookDir } = {}) {
 export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null) {
   // Pick the best playbook for a task. Returns a recommendation object.
   const taskText = (task || "").toLowerCase();
-  let haystack = taskText;
+  const routingTaskText = affirmativeRoutingText(taskText);
+  let haystack = routingTaskText;
   const taskHasRoutingCue = Object.entries(playbooks).some(([name, playbook]) =>
-    name !== FALLBACK_PLAYBOOK && matchedKeywords(taskText, playbook).length > 0,
+    name !== FALLBACK_PLAYBOOK && matchedKeywords(routingTaskText, playbook).length > 0,
   );
   if (!taskHasRoutingCue && facts && facts.length) haystack += " " + facts.join(" ").toLowerCase();
-  const affirmativeTaskText = taskText.replace(/\b(?:do not|don't|dont|without)\s+(?:add|build|create|fix|implement)\b/g, "");
-  const isImplementation = IMPLEMENTATION_INTENT.test(affirmativeTaskText);
-  const isExplicitSecurityAudit = EXPLICIT_SECURITY_AUDIT.test(taskText);
-  const isExplicitUiReview = EXPLICIT_UI_REVIEW.test(taskText);
-  const hasCodeStructureIntent = CODE_STRUCTURE_INTENT.test(taskText);
+  const isImplementation = IMPLEMENTATION_INTENT.test(routingTaskText);
+  const isExplicitSecurityAudit = EXPLICIT_SECURITY_AUDIT.test(routingTaskText);
+  const isExplicitUiReview = EXPLICIT_UI_REVIEW.test(routingTaskText);
+  const hasCodeStructureIntent = CODE_STRUCTURE_INTENT.test(routingTaskText);
   if (isImplementation) haystack += " feature";
 
   // Stack-aware affinity is active only when we actually profiled the target
@@ -358,7 +390,7 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
     //     false keyword match — drop its score to 0 so a real software playbook
     //     (boosted or not) wins. Stack-agnostic: corrects a misread of the task.
     const matchedKws = count > 0 ? matchedKeywords(haystack, pb) : [];
-    if (score > 0 && shouldDemoteLoneMediumNoun(taskText, matchedKws, pb)) {
+    if (score > 0 && shouldDemoteLoneMediumNoun(routingTaskText, matchedKws, pb)) {
       score = 0;
       count = 0;
     }
@@ -383,10 +415,10 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
   // checkpoint even when the rest of the sentence strongly matches another
   // playbook. Derived from the playbook's declared capability and keywords,
   // not from a hardcoded playbook name.
-  const interviewIndex = ranked.findIndex(({ pb: playbook }) => explicitlyRequestsInterview(taskText, playbook));
+  const interviewIndex = ranked.findIndex(({ pb: playbook }) => explicitlyRequestsInterview(routingTaskText, playbook));
   let continuation = null;
   if (interviewIndex >= 0) {
-    continuation = CONTINUATION_ACTION_INTENT.test(taskText)
+    continuation = requestsContinuation(routingTaskText, ranked[interviewIndex].pb)
       ? ranked.find((entry, index) => index !== interviewIndex && entry.score > 0) || null
       : null;
     ranked[interviewIndex].score = Math.max(ranked[interviewIndex].score, 1);
@@ -415,9 +447,9 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
     matched_keywords: matched,
     matched_context: context,
     alternates,
-    workflow: resolveWorkflow(taskText, pb.workflow),
+    workflow: resolveWorkflow(routingTaskText, pb.workflow),
     skill_flow: pb.skill_flow,
-    agents: resolveAgents(taskText, pb),
+    agents: resolveAgents(routingTaskText, pb),
     questions: pb.questions || [],
     baseline_skills: [],
   };
@@ -427,8 +459,8 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
     result.playbook_source = pb.playbook_source;
     result.playbook_source_path = pb.playbook_source_path;
   }
-  if (continuation && explicitlyRequestsInterview(taskText, pb)) {
-    result = composeInterviewWithContinuation(taskText, result, continuation);
+  if (continuation && explicitlyRequestsInterview(routingTaskText, pb)) {
+    result = composeInterviewWithContinuation(routingTaskText, result, continuation);
   }
   return result;
 }
