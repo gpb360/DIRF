@@ -45,7 +45,7 @@ function writeAgent(home, name) {
   ].join("\n"));
 }
 
-test("Grill Me builds, renders, resumes, and stops at its decision and verification gates", () => {
+test("Grill Me builds, renders, resumes, and respects its decision and soft gates", () => {
   const home = mkdtempSync(join(tmpdir(), "dirf-grill-home-"));
   const target = mkdtempSync(join(tmpdir(), "dirf-grill-target-"));
   const env = { DIRF_HOME: home, HOME: home, USERPROFILE: home };
@@ -76,7 +76,7 @@ test("Grill Me builds, renders, resumes, and stops at its decision and verificat
   assert.equal(workflow.skill_flow.steps[0].invocation, "user");
   assert.equal(workflow.skill_flow.steps[0].human_checkpoint, true);
   assert.deepEqual(workflow.workflow.gates["confirm shared understanding"], { kind: "decision" });
-  assert.deepEqual(workflow.workflow.gates["assign agents and ownership"], { kind: "verify", verify: "dirf validate" });
+  assert.deepEqual(workflow.workflow.gates["assign agents and ownership"], { kind: "soft" });
   assert.ok(workflow.workflow.phases.slice(0, -1).every((phase) => workflow.workflow.gates[phase]), "every non-final phase must declare a gate");
   assert.deepEqual(Object.keys(workflow.workflow.agent_contracts).sort(), ["agent-organizer", "dx-optimizer", "workflow-orchestrator"]);
   assert.ok(workflow.agents.every((agent) => agent.status === "installed"));
@@ -110,8 +110,7 @@ test("Grill Me builds, renders, resumes, and stops at its decision and verificat
   assert.match(optimizer, /concrete verification commands/);
   assert.equal((html.match(/<h3>Done when<\/h3>/g) || []).length, 3);
   assert.match(html, /decision gate/);
-  assert.match(html, /verify gate/);
-  assert.match(html, /dirf validate/);
+  assert.match(html, /soft check/);
   assert.match(html, /Gate rules: advancing past a verify phase requires recorded evidence/);
 
   const resumed = JSON.parse(run(["resume", built.attempt.id, "--path", target, "--json"], env, target));
@@ -130,19 +129,12 @@ test("Grill Me builds, renders, resumes, and stops at its decision and verificat
   ], env, target));
   assert.equal(accepted.gates.find((gate) => gate.phase === "confirm shared understanding").status, "accepted");
 
-  const stoppedAtVerification = JSON.parse(run([
+  const continuedToFinalPhase = JSON.parse(run([
     "attempt", "advance", built.attempt.id, "--auto", "--path", target, "--json",
   ], env, target));
-  assert.equal(stoppedAtVerification.current_phase, "assign agents and ownership");
-  assert.equal(stoppedAtVerification.stopped_at_gate, "assign agents and ownership");
-
-  const validation = run(["validate"], env, target);
-  assert.match(validation, /Validation passed/);
-  const verified = JSON.parse(run([
-    "attempt", "advance", built.attempt.id, "--auto", "--evidence", "dirf validate", "--path", target, "--json",
-  ], env, target));
-  assert.equal(verified.gates.find((gate) => gate.phase === "assign agents and ownership").status, "satisfied");
-  assert.notEqual(verified.stopped_at_gate, "assign agents and ownership");
+  assert.equal(continuedToFinalPhase.current_phase, "define verification gates");
+  assert.equal(continuedToFinalPhase.stopped_at_gate, null);
+  assert.equal(continuedToFinalPhase.gates.find((gate) => gate.phase === "assign agents and ownership").status, "pending");
 
   const rerendered = run(["render", built.attempt.id, "--path", target], env, target);
   assert.match(rerendered, /Spec kit rendered:/);
@@ -199,7 +191,7 @@ test("a broken explicit human router fails validation before an attempt is creat
   );
 
   const result = spawnSync(process.execPath, [
-    CLI, "build", "broken-grill", "grill me before implementation", "--path", target,
+    CLI, "build", "broken-grill", "Review PR 47 and grill me about the risks first", "--path", target,
   ], { cwd: target, encoding: "utf8", timeout: TIMEOUT, env });
 
   assert.notEqual(result.status, 0);

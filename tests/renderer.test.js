@@ -290,7 +290,11 @@ test("rendered workflow preserves repository context and points to the installed
 test("buildHtml is self-contained and collapsible", () => {
   const workflow = {
     name: "demo", task: "build a landing page",
-    workflow: { phases: ["a"], output: "a page", validation: "v", recovery: "r" },
+    workflow: {
+      phases: ["a", "b"],
+      gates: { a: { kind: "verify", verify: "node --test checks/a.test.js" } },
+      output: "a page", validation: "v", recovery: "r",
+    },
     agents: [{ name: "frontend-developer", file: "agents/frontend-developer.md", tags: ["frontend"], skills: [{ name: "ponytail", status: "recommended" }] }],
     baseline_skills: [{ name: "ponytail", status: "recommended" }],
     skill_flow: { label: "persisted", branches: [], steps: [{ stage: "verify", skill: "persisted-only", reason: "Use the snapshot", status: "recommended" }] },
@@ -303,6 +307,9 @@ test("buildHtml is self-contained and collapsible", () => {
   assert.ok(html.includes("frontend-developer"));
   assert.ok(html.includes("persisted-only"));
   assert.ok(html.includes("<h2>Next step</h2>"));
+  assert.match(html, /verify gate/);
+  assert.match(html, /node --test checks\/a\.test\.js/);
+  assert.match(html, /Gate rules: advancing past a verify phase requires recorded evidence/);
   assert.ok(html.includes("Each step points to the installed skill"));
   assert.ok(!/codex|claude/i.test(html));
   assert.ok(html.includes("Definition of Done"));

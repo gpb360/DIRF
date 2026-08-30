@@ -106,6 +106,14 @@ function scorePlaybook(haystack, taskTokens, playbook) {
   return { score, count: matched.length, context };
 }
 
+function explicitlyRequestsInterview(taskText, playbook) {
+  const hasInterviewStep = (playbook.skill_flow?.steps || [])
+    .some((step) => step.capability === "plan interview");
+  if (!hasInterviewStep) return false;
+  return matchedKeywords(taskText, playbook)
+    .some((keyword) => /\b(?:grill|interview|question)\b/.test(keyword.replaceAll("-", " ")));
+}
+
 // ─── Stack-aware affinity (derived, agnostic) ────────────────────────────────
 // A playbook is a "content-production" playbook when its declared capabilities
 // describe producing media/copy (video, motion, brand copy, youtube seo). These
@@ -289,6 +297,16 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
       ranked[uiIndex].score = Math.max(ranked[uiIndex].score, 1);
       if (uiIndex > 0) ranked.unshift(ranked.splice(uiIndex, 1)[0]);
     }
+  }
+  // An explicitly requested interview is a sequencing instruction: settle the
+  // decision first, then continue the review/build task. Preserve that human
+  // checkpoint even when the rest of the sentence strongly matches another
+  // playbook. Derived from the playbook's declared capability and keywords,
+  // not from a hardcoded playbook name.
+  const interviewIndex = ranked.findIndex(({ pb: playbook }) => explicitlyRequestsInterview(taskText, playbook));
+  if (interviewIndex >= 0) {
+    ranked[interviewIndex].score = Math.max(ranked[interviewIndex].score, 1);
+    if (interviewIndex > 0) ranked.unshift(ranked.splice(interviewIndex, 1)[0]);
   }
 
   let name, pb, score, context;

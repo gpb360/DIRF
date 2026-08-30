@@ -119,6 +119,18 @@ test("explicit Grill Me and one-question interview requests route to improve-pla
   }
 });
 
+test("an explicit interview checkpoint precedes a mixed review or build request", () => {
+  for (const task of [
+    "Review PR 47 and grill me about the risks first",
+    "Grill with docs before you review this pull request",
+    "Build the feature, but interview me one question at a time before implementation",
+  ]) {
+    const result = recommend(task);
+    assert.equal(result.playbook, "improve-plan");
+    assert.deepEqual(result.workflow.gates["confirm shared understanding"], { kind: "decision" });
+  }
+});
+
 test("ordinary understood feature work bypasses decision mapping", () => {
   assert.equal(
     recommend("Build the approved account settings feature from the existing specification").playbook,
