@@ -72,9 +72,9 @@ test("Grill Me builds, renders, resumes, and respects its decision and soft gate
   const workflow = JSON.parse(readFileSync(built.workflow, "utf8"));
 
   assert.equal(workflow.playbook, "improve-plan");
-  assert.deepEqual(workflow.skill_flow.steps.map(({ skill }) => skill), ["grill-me", "grilling", "ponytail", "model-advice"]);
-  assert.equal(workflow.skill_flow.steps[0].invocation, "user");
-  assert.equal(workflow.skill_flow.steps[0].human_checkpoint, true);
+  assert.deepEqual(workflow.skill_flow.steps.map(({ skill }) => skill), ["model-advice", "grill-me", "grilling", "ponytail"]);
+  assert.equal(workflow.skill_flow.steps[1].invocation, "user");
+  assert.equal(workflow.skill_flow.steps[1].human_checkpoint, true);
   assert.deepEqual(workflow.workflow.gates["confirm shared understanding"], { kind: "decision" });
   assert.deepEqual(workflow.workflow.gates["assign agents and ownership"], { kind: "soft" });
   assert.ok(workflow.workflow.phases.slice(0, -1).every((phase) => workflow.workflow.gates[phase]), "every non-final phase must declare a gate");
@@ -93,10 +93,10 @@ test("Grill Me builds, renders, resumes, and respects its decision and soft gate
     join("agents", "workflow-orchestrator.md"),
     join("agents", "agent-organizer.md"),
     join("agents", "dx-optimizer.md"),
-    join("skills", "01-grill-me", "README.md"),
-    join("skills", "02-grilling", "README.md"),
-    join("skills", "03-ponytail", "README.md"),
-    join("skills", "04-model-advice", "README.md"),
+    join("skills", "01-model-advice", "README.md"),
+    join("skills", "02-grill-me", "README.md"),
+    join("skills", "03-grilling", "README.md"),
+    join("skills", "04-ponytail", "README.md"),
   ]) assert.equal(existsSync(join(attemptFolder, relative)), true, `missing rendered file ${relative}`);
 
   const readme = readFileSync(join(attemptFolder, "README.md"), "utf8");
@@ -182,10 +182,10 @@ test("Grill With Docs binds its interview engine and documentation dependency", 
 
   assert.equal(workflow.playbook, "improve-plan");
   assert.deepEqual(workflow.skill_flow.steps.map(({ skill }) => skill), [
-    "grill-with-docs", "grilling", "domain-modeling", "ponytail", "model-advice",
+    "model-advice", "grill-with-docs", "grilling", "domain-modeling", "ponytail",
   ]);
-  assert.equal(workflow.skill_flow.steps[0].human_checkpoint, true);
-  assert.match(workflow.skill_flow.steps[2].selection_reason, /dependency referenced by explicit human router grill-with-docs/);
+  assert.equal(workflow.skill_flow.steps[1].human_checkpoint, true);
+  assert.match(workflow.skill_flow.steps[3].selection_reason, /dependency referenced by explicit human router grill-with-docs/);
   assert.deepEqual(workflow.skill_flow.gaps, []);
   assert.ok(workflow.workflow.phases.indexOf("record accepted domain language and durable decisions") >
     workflow.workflow.phases.indexOf("confirm shared understanding"));

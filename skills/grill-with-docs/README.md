@@ -7,6 +7,7 @@ details: []
 inputs: ["idea", "repository context"]
 outputs: ["confirmed scope", "updated glossary", "justified ADRs"]
 capabilities: ["stateful discovery", "plan interview"]
+disable-model-invocation: true
 ---
 
 # Grill with docs

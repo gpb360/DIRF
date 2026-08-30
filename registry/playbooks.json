@@ -222,7 +222,7 @@
         {
           "stage": "discover",
           "reason": "Resolve load-bearing decisions before planning.",
-          "capability": "stateful discovery",
+          "capability": "plan interview",
           "output": "every open question either has a recorded answer or is explicitly deferred with the blocker named"
         },
         {
@@ -526,7 +526,7 @@
         {
           "stage": "discover",
           "reason": "Name the destination and expose only questions that can change the route.",
-          "capability": "stateful discovery",
+          "capability": "plan interview",
           "output": "one destination, exit condition, and bounded uncertainty inventory"
         },
         {
@@ -1172,8 +1172,14 @@
       "What outcome should this plan optimize for?"
     ],
     "skill_flow": {
-      "label": "facts -> one-decision interview -> confirmed plan",
+      "label": "preflight model advice -> one-decision interview -> confirmed plan",
       "steps": [
+        {
+          "stage": "route",
+          "reason": "Suggest the lowest host-reported cost tier that declares each preflight workflow capability; do not invoke or monitor models.",
+          "capability": "model selection advice",
+          "output": "portable preflight capability advice with catalog evidence, or an explicit no-catalog result"
+        },
         {
           "stage": "decide",
           "reason": "Resolve load-bearing decisions one at a time before implementation.",
@@ -1185,12 +1191,6 @@
           "reason": "Use the cheapest sufficient execution shape.",
           "capability": "minimalism",
           "output": "the smallest executable plan with owned work and verification"
-        },
-        {
-          "stage": "route",
-          "reason": "Suggest the lowest host-reported cost tier that declares each preflight workflow capability; do not invoke or monitor models.",
-          "capability": "model selection advice",
-          "output": "portable preflight capability advice with catalog evidence, or an explicit no-catalog result"
         }
       ]
     }

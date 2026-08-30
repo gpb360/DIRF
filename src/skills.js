@@ -154,6 +154,21 @@ function parseBool(value) {
   return undefined;
 }
 
+function metadataList(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
+  const text = String(value || "").trim();
+  if (!text) return [];
+  if (text.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) return parsed.map((item) => String(item).trim()).filter(Boolean);
+    } catch {
+      // Fall through to the tolerant comma-separated form.
+    }
+  }
+  return text.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
 function codexAllowsImplicitInvocation(folder) {
   const policyFile = join(folder, "agents", "openai.yaml");
   if (!existsSync(policyFile)) return undefined;
@@ -319,6 +334,7 @@ function indexOne(path, index) {
   // Claude and Codex declare human-only skills differently. Either declaration
   // keeps the skill out of automatic routing; absent flags keep the default.
   const invocation = skillInvocation(folder, fm);
+  const capabilities = metadataList(typeof fm === "object" ? fm.capabilities : undefined);
   // Self-references (a skill's help text mentioning its own /name) are not
   // dependencies — drop them so the reference graph stays meaningful.
   const references = backtickSkillRefs(body).filter((ref) => ref !== name);
@@ -333,6 +349,7 @@ function indexOne(path, index) {
     body_lines: lineCount,
     body_chars: body.length,
     // Only emitted when present — plain skills keep their historical shape.
+    ...(capabilities.length ? { capabilities } : {}),
     ...(references.length ? { references } : {}),
   };
 }

@@ -493,7 +493,8 @@ function gateRequirement(gates, records, evidence, attempt, phase, strict = fals
 // decision gates: pending (no record) / accepted / denied.
 // verify gates: pending (no evidence) / satisfied (evidence recorded).
 // soft gates: pending until reached / passed once crossed / satisfied when
-// evidence was recorded. A recorded accept also satisfies either kind.
+// evidence was recorded. Accept/deny records are decisions only; a legacy
+// accept record on a verify or soft gate never substitutes for evidence.
 export function attemptGateState(slug, attempt) {
   const { phases, gates } = attemptWorkflow(slug, attempt);
   const records = attempt.gates || {};
@@ -512,12 +513,18 @@ export function attemptGateState(slug, attempt) {
       const artifactType = gates[phase].artifact_type || null;
       const governingArtifact = artifactType ? governingAttemptArtifact(attempt, artifactType) : null;
       const artifactPending = kind === "decision" && record?.status === "accepted" && artifactType && !governingArtifact;
+      let status = "pending";
+      if (kind === "decision" && record) status = record.status;
+      if (record?.status === "denied") status = "denied";
+      if (satisfied) status = "satisfied";
+      if (crossedSoftGate) status = "passed";
+      if (artifactPending) status = "pending";
       return {
         phase,
         kind,
         verify: gates[phase].verify || null,
         ...(artifactType ? { artifact_type: artifactType, artifact_id: governingArtifact?.id || null } : {}),
-        status: artifactPending ? "pending" : record ? record.status : satisfied ? "satisfied" : crossedSoftGate ? "passed" : "pending",
+        status,
         comment: record?.comment || null,
         by: record?.by || null,
         at: record?.at || null,

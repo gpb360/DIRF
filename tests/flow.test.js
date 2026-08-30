@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { buildFlow, findCapabilityGaps, reconcile } from "../src/flow.js";
 import { bundledSkills } from "../src/skills.js";
 import { validateSnapshot } from "../src/validate.js";
+import { recommend } from "../src/router.js";
 
 const WORKFLOW = {
   phases: ["classify"],
@@ -391,6 +392,25 @@ test("bundled human-only skills stay out of automatic routing", () => {
   const flow = buildFlow(selection, { bundledIndex: bundled, allowedSkills: ["wait-what"] }, {});
   assert.deepEqual(flow.steps, []);
   assert.equal(flow.gaps[0].capability, "plain-language repair");
+});
+
+test("generic planning uses plan-interview instead of the explicit Grill With Docs branch", () => {
+  const selection = {
+    playbook: "improve-plan", agents: [],
+    skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
+  };
+  const bundled = bundledSkills();
+  assert.equal(bundled["grill-with-docs"].invocation, "user");
+  const flow = buildFlow(selection, { task: "clarify the plan", bundledIndex: bundled }, {});
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["plan-interview"]);
+  assert.equal(flow.steps[0].status, "fallback");
+});
+
+test("a generic feature uses plan-interview and never auto-selects Grill With Docs", () => {
+  const selection = recommend("build a simple API");
+  const flow = buildFlow(selection, { task: "build a simple API", bundledIndex: bundledSkills() }, {});
+  assert.equal(flow.steps[0].skill, "plan-interview");
+  assert.ok(!flow.steps.some(({ skill }) => skill === "grill-with-docs"));
 });
 
 test("buildFlow rejects incidental one-word overlap", () => {

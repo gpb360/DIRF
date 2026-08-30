@@ -102,6 +102,7 @@ test("explicit large-work decision mapping routes to the optional planning playb
     kind: "decision",
     artifact_type: "research",
   });
+  assert.equal(result.skill_flow.steps[0].capability, "plan interview");
   assert.ok(result.workflow.phases.every((phase) => !/implement|build|execute/.test(phase)));
 });
 
@@ -157,8 +158,10 @@ test("standalone interview topics do not invent continuation work", () => {
   }
 });
 
-test("sequenced update and writing verbs preserve requested continuation work", () => {
+test("sequenced change, update, and writing verbs preserve requested continuation work", () => {
   for (const task of [
+    "Grill me before changing the checkout flow",
+    "Grill me before modifying the checkout flow",
     "Grill me before updating the checkout flow",
     "Grill me, then write the approved feature",
   ]) {
@@ -172,12 +175,20 @@ test("negated interview and action cues never become executable work", () => {
   assert.equal(recommend("do not grill me, just review PR 47").playbook, "pr-review");
   for (const task of [
     "grill me about release risks but do not deploy anything",
+    "grill me, then I do not want you to deploy anything",
     "grill me about the design but do not implement it",
   ]) {
     const result = recommend(task);
     assert.equal(result.playbook, "improve-plan");
     assert.equal(result.continuation, undefined);
   }
+});
+
+test("documentation changes keep their specific playbook with or without an interview", () => {
+  assert.equal(recommend("update docs").playbook, "documentation");
+  const result = recommend("grill me then update docs");
+  assert.equal(result.playbook, "improve-plan");
+  assert.equal(result.continuation.playbook, "documentation");
 });
 
 test("continuation composition merges contracts owned by the same agent", () => {

@@ -59,6 +59,15 @@ test("model advice reports uncovered capabilities instead of guessing", () => {
   assert.deepEqual(advice.recommendations[0].capabilities, ["testing"]);
 });
 
+test("equal-cost model advice uses locale-independent code-point ordering", () => {
+  const catalog = normalizeModelCatalog({ models: [
+    { name: "a-model", cost_tier: "low", capabilities: ["testing"] },
+    { name: "Z-model", cost_tier: "low", capabilities: ["testing"] },
+  ] });
+  const advice = buildModelAdvice(flow, catalog);
+  assert.equal(advice.recommendations.find((item) => item.capabilities.includes("testing")).model, "Z-model");
+});
+
 test("model catalogs reject ambiguous or malformed entries", () => {
   assert.throws(() => normalizeModelCatalog({}), /models.*array/);
   assert.throws(() => normalizeModelCatalog({ models: [

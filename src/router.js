@@ -44,11 +44,12 @@ function contentTokens(pb) {
   const parts = [pb.description, ...(wf.phases || []), wf.output, ...(pb.agents || [])];
   return new Set(wordTokens(parts.filter(Boolean).join(" ")));
 }
-const IMPLEMENTATION_INTENT = /\b(add|adding|build|building|create|creating|fix|fixing|implement|implementing|update|updating|write|writing)\b/;
-const CONTINUATION_ACTION_WORDS = "add|adding|audit|auditing|build|building|coding|create|creating|deploy|deploying|fix|fixing|implement|implementing|migrate|migrating|redesign|redesigning|refactor|refactoring|review|reviewing|ship|shipping|test|testing|update|updating|verify|verifying|write|writing";
+const IMPLEMENTATION_INTENT = /\b(add|adding|build|building|change|changing|create|creating|fix|fixing|implement|implementing|modify|modifying|update|updating|write|writing)\b/;
+const DOCUMENTATION_TARGET = /\b(docs?|documentation|readme|changelog|manual)\b/;
+const CONTINUATION_ACTION_WORDS = "add|adding|audit|auditing|build|building|change|changing|coding|create|creating|deploy|deploying|fix|fixing|implement|implementing|migrate|migrating|modify|modifying|redesign|redesigning|refactor|refactoring|review|reviewing|ship|shipping|test|testing|update|updating|verify|verifying|write|writing";
 const CONTINUATION_ACTION_INTENT = new RegExp(`\\b(?:${CONTINUATION_ACTION_WORDS})\\b`);
 const NEGATED_ROUTING_CUE = new RegExp(
-  `\\b(?:do\\s+not|don't|dont|never|without|not)\\s+(?:you\\s+)?(?:grill(?:\\s+me)?|interview\\s+me|question\\s+me|${CONTINUATION_ACTION_WORDS})\\b`,
+  `\\b(?:(?:i\\s+)?(?:do\\s+not|don't|dont)\\s+(?:want\\s+(?:you\\s+)?to\\s+)?|never\\s+|without\\s+|not\\s+)(?:you\\s+)?(?:grill(?:\\s+me)?|interview\\s+me|question\\s+me|${CONTINUATION_ACTION_WORDS})\\b`,
   "g",
 );
 const EXPLICIT_SECURITY_AUDIT = /\bsecurity audit\b/;
@@ -343,7 +344,11 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
     name !== FALLBACK_PLAYBOOK && matchedKeywords(routingTaskText, playbook).length > 0,
   );
   if (!taskHasRoutingCue && facts && facts.length) haystack += " " + facts.join(" ").toLowerCase();
-  const isImplementation = IMPLEMENTATION_INTENT.test(routingTaskText);
+  // Documentation verbs such as "update docs" must not receive the generic
+  // feature boost. The documentation playbook is the more specific contract;
+  // mixed work can still be stated as a separate implementation clause.
+  const isImplementation = IMPLEMENTATION_INTENT.test(routingTaskText) &&
+    !DOCUMENTATION_TARGET.test(routingTaskText);
   const isExplicitSecurityAudit = EXPLICIT_SECURITY_AUDIT.test(routingTaskText);
   const isExplicitUiReview = EXPLICIT_UI_REVIEW.test(routingTaskText);
   const hasCodeStructureIntent = CODE_STRUCTURE_INTENT.test(routingTaskText);

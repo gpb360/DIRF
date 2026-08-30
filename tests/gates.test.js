@@ -101,6 +101,8 @@ test("verify gates block advance until evidence is recorded", () => {
   assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "" } }), /evidence command must not be empty/);
   // gate record alone does NOT satisfy a verify gate — evidence does
   updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "build", decision: "accept", comment: "not how verify works" });
+  assert.equal(attemptGates(slug, attempt.id).find((gate) => gate.phase === "build").status, "pending");
+  assert.ok(pendingGates(slug, attempt.id).some((gate) => gate.phase === "build"));
   assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "advance"), /verify gate/);
   assert.throws(
     () => updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "npm test" } }),

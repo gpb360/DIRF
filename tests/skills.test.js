@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ROOT } from "../src/paths.js";
 import * as skills from "../src/skills.js";
+import { buildFlow } from "../src/flow.js";
 
 function makeRoot() {
   // Fresh temp project root with a skills/ folder.
@@ -130,6 +131,27 @@ test("discover indexes invocation class from Claude and Codex metadata", () => {
   assert.equal(idx["yes-skill"].invocation, "user");
   assert.equal(idx["codex-user"].invocation, "user");
   assert.equal(idx["codex-model"].invocation, "model");
+});
+
+test("an unknown human router keeps declared capabilities and binds its engine", () => {
+  const root = makeRoot();
+  write(join(root, "skills", "clarity-checkpoint"), "SKILL.md",
+    "---\nname: clarity-checkpoint\ndescription: Human-only decision checkpoint.\ndisable-model-invocation: true\ncapabilities: [\"plan interview\"]\n---\nRun `/clarity-engine`.");
+  write(join(root, "skills", "clarity-engine"), "SKILL.md",
+    "---\nname: clarity-engine\ndescription: Resolve planning decisions one at a time.\n---\nAsk one question.");
+
+  const discovered = skills.discover(root);
+  assert.deepEqual(discovered["clarity-checkpoint"].capabilities, ["plan interview"]);
+  const flow = buildFlow({
+    playbook: "improve-plan",
+    agents: [],
+    skill_flow: {
+      label: "decide",
+      steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }],
+    },
+  }, { task: "use clarity checkpoint before implementation" }, discovered);
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["clarity-checkpoint", "clarity-engine"]);
+  assert.deepEqual(flow.gaps, []);
 });
 
 test("discover indexes progressive-disclosure files and body size", () => {

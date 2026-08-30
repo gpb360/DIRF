@@ -73,7 +73,8 @@ export function buildModelAdvice(skillFlow = {}, catalog = null) {
   const uncovered = [];
   for (const [capability, stages] of requirements) {
     const eligible = catalog.models.filter((model) => covers(model, capability))
-      .sort((a, b) => COST_ORDER.get(a.cost_tier) - COST_ORDER.get(b.cost_tier) || a.name.localeCompare(b.name));
+      .sort((a, b) => COST_ORDER.get(a.cost_tier) - COST_ORDER.get(b.cost_tier) ||
+        (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     const chosen = eligible[0];
     if (!chosen) {
       uncovered.push(capability);
