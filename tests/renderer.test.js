@@ -287,7 +287,8 @@ test("rendered workflow preserves repository context and points to the installed
   assert.equal(existsSync(join(outDir, "skills", "01-graphify", "SOURCE.md")), false);
 });
 
-test("buildHtml is self-contained and collapsible", () => {
+test("Markdown and HTML preserve verify-gate semantics", () => {
+  const outDir = mkdtempSync(join(tmpdir(), "dirf-gate-parity-"));
   const workflow = {
     name: "demo", task: "build a landing page",
     workflow: {
@@ -301,6 +302,8 @@ test("buildHtml is self-contained and collapsible", () => {
     schema_version: 2,
   };
   const html = buildHtml(workflow);
+  buildInstructions(workflow, outDir);
+  const markdown = readFileSync(join(outDir, "README.md"), "utf8");
   assert.ok(html.startsWith("<!doctype html>"));
   assert.ok(html.includes("<style>")); // inline CSS
   assert.ok(html.includes("<details>") && html.includes("<summary>")); // collapsible
@@ -310,6 +313,9 @@ test("buildHtml is self-contained and collapsible", () => {
   assert.match(html, /verify gate/);
   assert.match(html, /node --test checks\/a\.test\.js/);
   assert.match(html, /Gate rules: advancing past a verify phase requires recorded evidence/);
+  assert.match(markdown, /a \(verify gate\)/);
+  assert.match(markdown, /Verify a: `node --test checks\/a\.test\.js`/);
+  assert.match(markdown, /Gate rules: advancing past a verify phase requires recorded evidence/);
   assert.ok(html.includes("Each step points to the installed skill"));
   assert.ok(!/codex|claude/i.test(html));
   assert.ok(html.includes("Definition of Done"));
