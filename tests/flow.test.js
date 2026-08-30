@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildFlow, findCapabilityGaps, reconcile, validateAgentContracts } from "../src/flow.js";
 import { bundledSkills } from "../src/skills.js";
-import { validateSnapshot } from "../src/validate.js";
+import { validatePlaybookAgentReferences, validateSnapshot } from "../src/validate.js";
 import { recommend } from "../src/router.js";
 
 const WORKFLOW = {
@@ -103,6 +103,41 @@ test("Reconciliation rejects a conditional contract without a cue", () => {
   assert.ok(errors.includes("playbook triage: workflow.conditional_contract requires at least one when_all or when_any cue"));
 });
 
+test("Reconciliation fully validates the non-interview skill flow", () => {
+  const errors = reconcile({
+    triage: {
+      description: "Classify", keywords: [], agents: [],
+      workflow: {
+        ...WORKFLOW,
+        non_interview_contract: {
+          phases: ["classify"], output: "A route", validation: "Check the route", recovery: "Record the gap",
+          skill_flow: {
+            label: "",
+            steps: [{ capability: "minimalism", reason: "", branch: "unknown", output: "" }],
+          },
+        },
+      },
+      skill_flow: { label: "triage", steps: [{ stage: "route", skill: "grill-me", reason: "Classify" }] },
+    },
+  });
+  assert.ok(errors.includes("playbook triage non-interview contract: skill_flow.label must be a non-empty string"));
+  assert.ok(errors.includes("playbook triage non-interview contract: step 1 missing stage"));
+  assert.ok(errors.includes("playbook triage non-interview contract: step 1 missing reason"));
+  assert.ok(errors.includes("playbook triage non-interview contract: step 1 output must be a non-empty string"));
+  assert.ok(errors.includes("playbook triage non-interview contract: step 1 references unknown branch unknown"));
+});
+
+test("registry validation includes agents declared only by a non-interview contract", () => {
+  assert.deepEqual(validatePlaybookAgentReferences({
+    triage: {
+      agents: ["known"],
+      workflow: { non_interview_contract: { agents: ["known", "fabricated-fallback"] } },
+    },
+  }, new Set(["known"])), [
+    "playbook triage: references unknown agent fabricated-fallback",
+  ]);
+});
+
 test("Reconciliation tolerates an optional per-step output contract", () => {
   // Present and non-empty -> no error. Absent -> no error. Empty -> error.
   const ok = reconcile({
@@ -137,7 +172,7 @@ test("buildFlow assembles an existing Selection without classifying again", () =
     label: "build a feature",
     steps: [{
       stage: "build", capability: "testing", skill: "tdd", type: "skill", reason: "Drive one behavior",
-      output: "", status: "installed", provider: "project", path: "skills/tdd", selection_reason: "best installed match (105) for testing", rejected_candidates: [],
+      status: "installed", provider: "project", path: "skills/tdd", selection_reason: "best installed match (105) for testing", rejected_candidates: [],
     }],
     gaps: [],
     branches: [],
@@ -710,10 +745,14 @@ test("validateSnapshot accepts a portable continuation and rejects an incomplete
   };
   assert.deepEqual(validateSnapshot({
     ...base,
-    continuation: { playbook: "pr-review", description: "Review the requested pull request." },
+    continuation: { playbook: "pr-review", description: "Review the requested pull request.", questions: ["Which head?"] },
   }, "demo"), []);
   assert.ok(validateSnapshot({ ...base, continuation: { playbook: "", description: "" } }, "demo")
     .includes("demo: continuation.playbook must be a non-empty string"));
+  assert.ok(validateSnapshot({
+    ...base,
+    continuation: { playbook: "pr-review", description: "Review it", questions: [""] },
+  }, "demo").includes("demo: continuation.questions must be an array of non-empty strings"));
 });
 
 test("validateSnapshot tolerates optional per-step output and rejects empty output", () => {

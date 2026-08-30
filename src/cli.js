@@ -25,7 +25,7 @@ import { ROOT, REGISTRY, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, fileHash, fold
 import { collectRoutingFacts, loadPlaybooks, recommend } from "./router.js";
 import { bundledSkills, discover, discoverAgents, enrichDiscovered, lintSkillMetadata, loadRegistry, loadTrustedSources, providerForPath, resolveAgentSkills, tokenBudget } from "./skills.js";
 import { FOCUSED_OUTPUT_RULES, buildInstructions, buildHtml } from "./renderer.js";
-import { main as validateMain } from "./validate.js";
+import { main as validateMain, validateSnapshot } from "./validate.js";
 import { inspect, detectStackProfile } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
@@ -52,6 +52,48 @@ const LIFECYCLE = {
   implement: "Execute one ticket per fresh context.",
   review: "Review independently against both the specification and repository standards.",
 };
+
+function planningContract(includeResearch = false) {
+  const phases = [
+    "resolve load-bearing decisions",
+    "model domain language and durable decisions",
+    ...(includeResearch ? ["research unresolved decisions against primary sources"] : []),
+    "write the approved specification",
+    "split the specification into dependency-ordered tickets",
+    "write the execution handoff",
+  ];
+  const agents = [
+    "workflow-orchestrator",
+    "knowledge-synthesizer",
+    ...(includeResearch ? ["research-analyst"] : []),
+    "agent-organizer",
+  ];
+  const agentContracts = {
+    "workflow-orchestrator": {
+      phases: ["resolve load-bearing decisions", "write the execution handoff"],
+      output: "accepted planning decisions and an exact execution handoff",
+      verification: "every unresolved decision is explicit and the handoff names one next action",
+    },
+    "knowledge-synthesizer": {
+      phases: ["model domain language and durable decisions", "write the approved specification"],
+      output: "consistent domain language, justified durable decisions, and a build-ready specification",
+      verification: "the specification traces every requirement to accepted context or recorded evidence",
+    },
+    "agent-organizer": {
+      phases: ["split the specification into dependency-ordered tickets"],
+      output: "dependency-ordered tickets with bounded ownership and verification",
+      verification: "every ticket traces to the approved specification and has a checkable result",
+    },
+  };
+  if (includeResearch) {
+    agentContracts["research-analyst"] = {
+      phases: ["research unresolved decisions against primary sources"],
+      output: "provenance-bound evidence for the unresolved planning decisions",
+      verification: "every factual recommendation cites a primary source and separates fact from inference",
+    };
+  }
+  return { phases, agents, agentContracts };
+}
 
 function enrichAgents(agentNames) {
   // Resolve playbook agent names into full entries (file, tags, skills) from the registry.
@@ -269,15 +311,11 @@ function assembleTaskRouting(task, path, options = {}) {
     };
   }
   if (options.planningOnly) {
+    const planning = planningContract(options.branches?.includes("research"));
+    selection.agents = planning.agents;
     selection.workflow = {
-      phases: [
-        "resolve load-bearing decisions",
-        "model domain language and durable decisions",
-        ...(options.branches?.includes("research") ? ["research unresolved decisions against primary sources"] : []),
-        "write the approved specification",
-        "split the specification into dependency-ordered tickets",
-        "write the execution handoff",
-      ],
+      phases: planning.phases,
+      agent_contracts: planning.agentContracts,
       output: "approved context, justified ADRs, a build-ready specification, dependency-ordered tickets, and an execution handoff",
       validation: "every ticket traces to the approved specification and every durable decision traces to context, an ADR, or cited research",
       recovery: "if a load-bearing decision remains unresolved, stop in discovery and record the blocker instead of producing speculative tickets",
@@ -321,9 +359,14 @@ function assembleTaskRouting(task, path, options = {}) {
 function savePlan(plan, attempt, target) {
   const path = join(attempt.folder, "workflow.json");
   plan.attempt = { id: attempt.id, path: attempt.relativePath };
+  const snapshot = portablePlan(plan);
+  const validationErrors = validateSnapshot(snapshot, `generated workflow ${attempt.id}`);
+  if (validationErrors.length) {
+    throw new Error(`Generated workflow validation failed:\n${validationErrors.map((error) => `  - ${error}`).join("\n")}`);
+  }
   const slug = resolveProject(target).slug;
   writeAttemptSkillBindings(slug, attempt.id, bindingsFromPlan(plan, target));
-  writeFileSync(path, JSON.stringify(portablePlan(plan), null, 2), "utf-8");
+  writeFileSync(path, JSON.stringify(snapshot, null, 2), "utf-8");
   const handoff = join(attempt.folder, "HANDOFF.md");
   if (!existsSync(handoff)) writeFileSync(handoff, [
     "# DIRF Handoff", "",

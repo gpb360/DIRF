@@ -65,6 +65,33 @@ test("negated clauses preserve explicit replacement work", () => {
   ]) assert.equal(recommend(task).playbook, "pr-review");
 });
 
+test("common interview exclusions are normalized before routing", () => {
+  for (const task of [
+    "Do not ask me questions; improve the plan another way",
+    "Improve the plan without an interview",
+    "Improve the plan; no questions",
+    "Improve the plan; skip the interview",
+    "Improve the plan; avoid interview",
+  ]) {
+    const result = recommend(task);
+    assert.equal(result.playbook, "improve-plan", task);
+    assert.equal(result.questions.length, 0, task);
+    assert.ok(result.skill_flow.steps.every((step) => step.capability !== "plan interview"), task);
+    assert.ok(result.workflow.phases.includes("draft the smallest evidence-based plan"), task);
+  }
+  assert.equal(recommend("Review PR 47, but do not use Grill Me").playbook, "pr-review");
+});
+
+test("explicit interview replacements remove only the excluded mode", () => {
+  const plain = recommend("Do not use Grill With Docs; use Grill Me instead");
+  assert.equal(plain.playbook, "improve-plan");
+  assert.ok(!plain.agents.includes("documentation-engineer"));
+
+  const documented = recommend("Do not use Grill Me; use Grill With Docs instead");
+  assert.equal(documented.playbook, "improve-plan");
+  assert.ok(documented.agents.includes("documentation-engineer"));
+});
+
 test("implementation intent outranks domain review terminology", () => {
   assert.equal(
     recommend("Add paid-save entitlement checks and creator execution review access with Supabase persistence and tests").playbook,
@@ -206,6 +233,9 @@ test("action-first requests preserve both workflows in their stated order", () =
     "Grill me after you review the PR",
     "Grill me after you review the PR first",
     "Grill me after you first review the PR",
+    "Once you review PR 47, grill me",
+    "When you finish reviewing PR 47, grill me",
+    "Only after reviewing PR 47, grill me",
   ]) {
     const result = recommend(task);
     assert.equal(result.playbook, "pr-review", task);
@@ -213,6 +243,8 @@ test("action-first requests preserve both workflows in their stated order", () =
     assert.equal(result.continuation.transition, "after-primary", task);
     assert.ok(result.workflow.phases.indexOf("freeze exact base and head") <
       result.workflow.phases.indexOf("confirm shared understanding"), task);
+    assert.ok(result.continuation.questions.includes("What outcome should this plan optimize for?"), task);
+    assert.ok(!result.questions.includes("What outcome should this plan optimize for?"), task);
   }
 });
 

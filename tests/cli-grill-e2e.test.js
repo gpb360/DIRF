@@ -283,6 +283,11 @@ test("negated and action-first interview requests stay coherent end to end", () 
   for (const [name, task] of [
     ["negated-interview", "Do not interview me; improve the plan another way"],
     ["negated-question", "Do not question me; improve the plan another way"],
+    ["negated-ask", "Do not ask me questions; improve the plan another way"],
+    ["negated-without", "Improve the plan without an interview"],
+    ["negated-no-questions", "Improve the plan; no questions"],
+    ["negated-skip", "Improve the plan; skip the interview"],
+    ["negated-avoid", "Improve the plan; avoid interview"],
   ]) {
     const built = JSON.parse(run(["build", name, task, "--path", target, "--json"], env, target));
     const workflow = JSON.parse(readFileSync(built.workflow, "utf8"));
@@ -297,7 +302,7 @@ test("negated and action-first interview requests stay coherent end to end", () 
   }
 
   const withDocs = JSON.parse(run([
-    "build", "replace-grill", "Do not grill me; grill with docs instead",
+    "build", "replace-grill", "Do not use Grill Me; use Grill With Docs instead",
     "--path", target, "--json",
   ], env, target));
   const withDocsWorkflow = JSON.parse(readFileSync(withDocs.workflow, "utf8"));
@@ -306,7 +311,7 @@ test("negated and action-first interview requests stay coherent end to end", () 
   assert.ok(withDocsWorkflow.skill_flow.steps.every((step) => step.skill !== "grill-me"));
 
   const withoutDocs = JSON.parse(run([
-    "build", "replace-docs-grill", "Do not grill with docs; grill me without documentation",
+    "build", "replace-docs-grill", "Do not use Grill With Docs; use Grill Me instead",
     "--path", target, "--json",
   ], env, target));
   const withoutDocsWorkflow = JSON.parse(readFileSync(withoutDocs.workflow, "utf8"));
@@ -323,11 +328,26 @@ test("negated and action-first interview requests stay coherent end to end", () 
   assert.equal(actionWorkflow.playbook, "pr-review");
   assert.equal(actionWorkflow.continuation.playbook, "improve-plan");
   assert.equal(actionWorkflow.continuation.transition, "after-primary");
+  assert.ok(actionWorkflow.continuation.questions.includes("What outcome should this plan optimize for?"));
+  assert.ok(!actionWorkflow.questions.includes("What outcome should this plan optimize for?"));
   assert.equal(actionWorkflow.model_advice.status, "unavailable");
   assert.ok(actionWorkflow.model_advice.uncovered_capabilities.includes("plan interview"));
   const readme = readFileSync(join(dirname(actionFirst.workflow), "README.md"), "utf8");
   assert.match(readme, /After the primary workflow is complete/);
+  assert.match(readme, /Questions for the continued task[\s\S]*What outcome should this plan optimize for\?/);
   assert.doesNotMatch(readme, /After the interview decision is accepted/);
+
+  for (const [name, task] of [
+    ["once-review-then-grill", "Once you review PR 47, grill me"],
+    ["finish-review-then-grill", "When you finish reviewing PR 47, grill me"],
+    ["only-after-review-grill", "Only after reviewing PR 47, grill me"],
+  ]) {
+    const built = JSON.parse(run(["build", name, task, "--path", target, "--json"], env, target));
+    const workflow = JSON.parse(readFileSync(built.workflow, "utf8"));
+    assert.equal(workflow.playbook, "pr-review", task);
+    assert.equal(workflow.continuation.playbook, "improve-plan", task);
+    assert.equal(workflow.continuation.transition, "after-primary", task);
+  }
 });
 
 test("a broken explicit human router fails validation before an attempt is created", () => {

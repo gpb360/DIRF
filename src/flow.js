@@ -80,6 +80,35 @@ export function validateAgentContracts(workflow = {}, agentNames = [], label = "
   return errors;
 }
 
+export function validateSkillFlow(flow, label = "workflow", knownBranches = KNOWN_BRANCHES) {
+  const errors = [];
+  if (!flow) return [`${label}: missing skill_flow`];
+  if (typeof flow.label !== "string" || !flow.label) {
+    errors.push(`${label}: skill_flow.label must be a non-empty string`);
+  }
+  if (!Array.isArray(flow.steps) || flow.steps.length === 0) {
+    errors.push(`${label}: skill_flow.steps must be a non-empty array`);
+    return errors;
+  }
+  flow.steps.forEach((step, index) => {
+    if (!step || typeof step !== "object" || Array.isArray(step)) {
+      errors.push(`${label}: step ${index + 1} must be an object`);
+      return;
+    }
+    for (const field of ["stage", "reason"]) {
+      if (!step[field]) errors.push(`${label}: step ${index + 1} missing ${field}`);
+    }
+    if (step.output !== undefined && (typeof step.output !== "string" || !step.output.trim())) {
+      errors.push(`${label}: step ${index + 1} output must be a non-empty string`);
+    }
+    if (!step.capability && !step.skill) errors.push(`${label}: step ${index + 1} missing capability`);
+    if (step.branch && !knownBranches.has(step.branch)) {
+      errors.push(`${label}: step ${index + 1} references unknown branch ${step.branch}`);
+    }
+  });
+  return errors;
+}
+
 export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
   const errors = [];
   if (!Object.hasOwn(playbooks || {}, "triage")) errors.push("triage: missing coherent playbook definition");
@@ -166,9 +195,9 @@ export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
               errors.push(`playbook ${name}: workflow.non_interview_contract.${field} must resolve to a non-empty string`);
             }
           }
-          if (!nonInterview.skill_flow || !Array.isArray(nonInterview.skill_flow.steps) || !nonInterview.skill_flow.steps.length) {
-            errors.push(`playbook ${name}: workflow.non_interview_contract.skill_flow must contain at least one step`);
-          } else if (nonInterview.skill_flow.steps.some((step) => step.capability === "plan interview")) {
+          errors.push(...validateSkillFlow(nonInterview.skill_flow, `playbook ${name} non-interview contract`, knownBranches));
+          if (Array.isArray(nonInterview.skill_flow?.steps) &&
+              nonInterview.skill_flow.steps.some((step) => step?.capability === "plan interview")) {
             errors.push(`playbook ${name}: workflow.non_interview_contract.skill_flow must not contain plan interview`);
           }
           errors.push(...validateWorkflowGates(resolved, `playbook ${name} non-interview contract`));
@@ -176,35 +205,7 @@ export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
         }
       }
     }
-    const flow = playbook.skill_flow;
-    if (!flow) {
-      errors.push(`playbook ${name}: missing skill_flow`);
-      continue;
-    }
-    if (typeof flow.label !== "string" || !flow.label) errors.push(`playbook ${name}: skill_flow.label must be a non-empty string`);
-    if (!Array.isArray(flow.steps) || flow.steps.length === 0) {
-      errors.push(`playbook ${name}: skill_flow.steps must be a non-empty array`);
-      continue;
-    }
-    flow.steps.forEach((step, index) => {
-      if (!step || typeof step !== "object" || Array.isArray(step)) {
-        errors.push(`playbook ${name}: step ${index + 1} must be an object`);
-        return;
-      }
-      for (const field of ["stage", "reason"]) {
-        if (!step[field]) errors.push(`playbook ${name}: step ${index + 1} missing ${field}`);
-      }
-      // Optional per-step output contract (a step's output is
-      // checkable, not just invoked). When present it must be a non-empty
-      // string so the rendered checkpoint is meaningful.
-      if (step.output !== undefined && (typeof step.output !== "string" || !step.output.trim())) {
-        errors.push(`playbook ${name}: step ${index + 1} output must be a non-empty string`);
-      }
-      if (!step.capability && !step.skill) errors.push(`playbook ${name}: step ${index + 1} missing capability`);
-      if (step.branch && !knownBranches.has(step.branch)) {
-        errors.push(`playbook ${name}: step ${index + 1} references unknown branch ${step.branch}`);
-      }
-    });
+    errors.push(...validateSkillFlow(playbook.skill_flow, `playbook ${name}`, knownBranches));
   }
   return errors;
 }
@@ -324,7 +325,7 @@ function selectCapability(requirement, selection, context, skillIndex) {
     skill: chosen.name,
     type: chosen.item.type || "skill",
     reason: requirement.reason,
-    output: requirement.output || "",
+    ...(requirement.output ? { output: requirement.output } : {}),
     status: "installed",
     provider: chosen.item.provider || "project",
     path: chosen.item.path,

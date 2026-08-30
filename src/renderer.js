@@ -119,6 +119,9 @@ export function kickoffPrompt(workflow) {
     ...(workflow.continuation ? [
       "",
       `Continuation: after ${continuationTiming(workflow.continuation)}, run the ${workflow.continuation.playbook} workflow for the original task.`,
+      ...(workflow.continuation.questions?.length ? [
+        `Ask these continuation questions only then: ${workflow.continuation.questions.join(" | ")}`,
+      ] : []),
     ] : []),
     ...(modelAdvice ? [
       "",
@@ -370,6 +373,16 @@ export function buildInstructions(workflow, outDir, skillBindings = []) {
       `After ${continuationTiming(workflow.continuation)}, continue with **${workflow.continuation.playbook}**: ${workflow.continuation.description}`,
       "",
     );
+    if (workflow.continuation.questions?.length) {
+      lines.push(
+        "### Questions for the continued task",
+        "",
+        `Ask these only after ${continuationTiming(workflow.continuation)}, immediately before the continued workflow begins:`,
+        "",
+      );
+      for (const question of workflow.continuation.questions) lines.push(`- ${question}`);
+      lines.push("");
+    }
   }
   const modelAdvice = modelAdvicePresentation(workflow.model_advice);
   if (modelAdvice) {
@@ -704,6 +717,12 @@ export function buildHtml(workflow, skillBindings = []) {
   if (workflow.continuation) {
     parts.push("<h2>Continued task</h2>");
     parts.push(`<p>After ${escapeHtml(continuationTiming(workflow.continuation))}, continue with <strong>${escapeHtml(workflow.continuation.playbook)}</strong>: ${escapeHtml(workflow.continuation.description || "")}</p>`);
+    if (workflow.continuation.questions?.length) {
+      parts.push("<h3>Questions for the continued task</h3>");
+      parts.push(`<p class='mute'>Ask these only after ${escapeHtml(continuationTiming(workflow.continuation))}, immediately before the continued workflow begins.</p><ul>`);
+      for (const question of workflow.continuation.questions) parts.push(`<li>${escapeHtml(question)}</li>`);
+      parts.push("</ul>");
+    }
   }
 
   const modelAdvice = modelAdvicePresentation(workflow.model_advice);

@@ -389,7 +389,10 @@ test("action-first continuations render the persisted transition direction", () 
   const outDir = mkdtempSync(join(tmpdir(), "dirf-action-first-"));
   const workflow = {
     name: "review-then-grill", task: "Review PR 47, then grill me", playbook: "pr-review",
-    continuation: { playbook: "improve-plan", description: "Confirm remaining decisions", transition: "after-primary" },
+    continuation: {
+      playbook: "improve-plan", description: "Confirm remaining decisions", transition: "after-primary",
+      questions: ["What outcome should this plan optimize for?"],
+    },
     workflow: { phases: ["review", "interview"], output: "review and decisions", validation: "both complete", recovery: "resume the current phase" },
     agents: [], baseline_skills: [], questions: [], schema_version: 5,
     skill_flow: { label: "review then interview", steps: [] }, policy: "policies/workflow-policy.md",
@@ -400,8 +403,12 @@ test("action-first continuations render the persisted transition direction", () 
   const prompt = kickoffPrompt(workflow);
 
   assert.match(markdown, /After the primary workflow is complete/);
+  assert.match(markdown, /Questions for the continued task[\s\S]*Ask these only after the primary workflow is complete[\s\S]*What outcome should this plan optimize for\?/);
   assert.match(html, /After the primary workflow is complete/);
+  assert.match(html, /Questions for the continued task[\s\S]*Ask these only after the primary workflow is complete[\s\S]*What outcome should this plan optimize for\?/);
   assert.match(prompt, /after the primary workflow is complete/);
+  assert.match(prompt, /Ask these continuation questions only then: What outcome should this plan optimize for\?/);
+  assert.doesNotMatch(markdown, /Open questions \(settle with the user before starting\)[\s\S]*What outcome should this plan optimize for\?/);
   assert.doesNotMatch(`${markdown}\n${html}\n${prompt}`, /after the interview decision is accepted/i);
 });
 

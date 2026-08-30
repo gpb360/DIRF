@@ -48,12 +48,19 @@ const IMPLEMENTATION_INTENT = /\b(add|adding|build|building|change|changing|crea
 const DOCUMENTATION_TARGET = /\b(docs?|documentation|readme|changelog|manual)\b/;
 const CONTINUATION_ACTION_WORDS = "add|adding|audit|auditing|build|building|change|changing|coding|create|creating|deploy|deploying|fix|fixing|implement|implementing|migrate|migrating|modify|modifying|redesign|redesigning|refactor|refactoring|review|reviewing|ship|shipping|test|testing|update|updating|verify|verifying|write|writing";
 const CONTINUATION_ACTION_INTENT = new RegExp(`\\b(?:${CONTINUATION_ACTION_WORDS})\\b`);
+const INTERVIEW_ROUTING_TARGETS = "grill(?:[- ]with[- ]docs|(?:\\s+me)?)|interview(?:\\s+me)?|question(?:\\s+me)?|ask\\s+(?:me\\s+)?(?:any\\s+)?questions?|questions?";
 const NEGATED_ROUTING_CLAUSE = new RegExp(
   `(?:\\b(?:but|and(?:\\s+then)?|then)\\s+)?` +
-  `\\b(?:(?:i\\s+)?(?:do\\s+not|don't|dont)\\s+(?:want\\s+(?:you\\s+)?to\\s+)?|never\\s+|without\\s+|not\\s+)` +
-  `(?:you\\s+)?(?:grill(?:\\s+me)?|interview\\s+me|question\\s+me|${CONTINUATION_ACTION_WORDS})\\b` +
+  `\\b(?:(?:(?:i\\s+)?(?:do\\s+not|don't|dont)\\s+(?:want\\s+(?:you\\s+)?to\\s+)?|never\\s+|not\\s+)(?:you\\s+)?(?:use\\s+|run\\s+|invoke\\s+|start\\s+)?|without\\s+(?:(?:an?|the)\\s+)?|(?:skip|avoid)\\s+(?:(?:an?|the)\\s+)?|no\\s+)` +
+  `(?:${INTERVIEW_ROUTING_TARGETS}|${CONTINUATION_ACTION_WORDS})\\b` +
   `[^,.;!?—–]*?(?=\\s+\\b(?:but|and\\s+(?:then|instead)|then|instead|just)\\b|[,.;!?—–]|$)`,
   "g",
+);
+const GENERIC_INTERVIEW_NEGATION = new RegExp(
+  `\\b(?:(?:(?:i\\s+)?(?:do\\s+not|don't|dont)\\s+(?:want\\s+(?:you\\s+)?to\\s+)?|never\\s+|not\\s+)(?:you\\s+)?` +
+  `(?:interview(?:\\s+me)?|question(?:\\s+me)?|ask\\s+(?:me\\s+)?(?:any\\s+)?questions?)|` +
+  `without\\s+(?:(?:an?|the)\\s+)?(?:interview|questions?)|` +
+  `(?:skip|avoid)\\s+(?:(?:an?|the)\\s+)?(?:interview|questions?)|no\\s+questions?)\\b`,
 );
 const INTERVIEW_FIRST_TARGET = new RegExp(
   `(?:${CONTINUATION_ACTION_INTENT.source}|implementation|execution|delivery|coding|changes?)`,
@@ -136,9 +143,9 @@ export function affirmativeRoutingText(taskText) {
 
 export function negatesInterviewCapability(taskText) {
   const text = String(taskText || "").toLowerCase();
-  const negatesGenericInterview = /\b(?:(?:i\s+)?(?:do\s+not|don't|dont)\s+(?:want\s+(?:you\s+)?to\s+)?|never\s+|without\s+|not\s+)(?:you\s+)?(?:interview|question)\s+me\b/.test(text);
+  const negatesGenericInterview = GENERIC_INTERVIEW_NEGATION.test(text);
   if (!negatesGenericInterview) return false;
-  return !/\b(?:grill(?:\s+me)?|interview\s+me|question\s+me)\b/.test(affirmativeRoutingText(text));
+  return !/\b(?:grill(?:[- ]with[- ]docs|(?:\s+me)?)|interview(?:\s+me)?|question(?:\s+me)?)\b/.test(affirmativeRoutingText(text));
 }
 
 function interviewCueIndex(taskText, interviewPlaybook) {
@@ -182,7 +189,9 @@ function requestsPostActionInterview(taskText, interviewPlaybook) {
   const afterInterview = taskText.slice(interviewIndex);
   const actionBefore = CONTINUATION_ACTION_INTENT.test(beforeInterview);
   const actionAfter = CONTINUATION_ACTION_INTENT.test(afterInterview);
+  const completionBefore = actionBefore && /\b(?:once|when|only\s+after)\b/.test(beforeInterview);
   return (actionBefore && (
+    completionBefore ||
     /^\s*after\b/.test(taskText) ||
     /\b(?:and(?:\s+then)?|then|before(?:\s+you)?|after(?:ward|wards)?)\b[^,.;!?]*$/.test(beforeInterview) ||
     /\bafter(?:ward|wards)?\b/.test(afterInterview)
@@ -382,6 +391,7 @@ function composeSequentialWorkflows(taskText, result, continuation, transition) 
       playbook: continuation.name,
       description: continuation.pb.description || "",
       transition,
+      questions: unique(continuation.pb.questions || []),
     },
     alternates: result.alternates.filter(({ playbook }) => playbook !== continuation.name),
     workflow: {
@@ -402,7 +412,7 @@ function composeSequentialWorkflows(taskText, result, continuation, transition) 
       steps: [...(result.skill_flow.steps || []), ...continuationSteps],
     },
     agents: unique([...result.agents, ...continuationAgents]),
-    questions: unique([...result.questions, ...(continuation.pb.questions || [])]),
+    questions: unique(result.questions),
   };
 }
 

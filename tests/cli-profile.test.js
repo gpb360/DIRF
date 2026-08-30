@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateSnapshot } from "../src/validate.js";
 
 const CLI = join(resolve(dirname(fileURLToPath(import.meta.url)), ".."), "src", "cli.js");
 const TIMEOUT = 30_000;
@@ -78,6 +79,38 @@ test("create --profile routes only through the named skills and records missing 
       join(home, "projects", slug, "attempts", commandAttemptId, "workflow.json"), "utf8",
     ));
     assert.deepEqual(commandWorkflow.capability_profile, workflow.capability_profile);
+  }
+});
+
+test("dirf plan persists a narrow planning roster with exactly one owner per phase", () => {
+  const home = mkdtempSync(join(tmpdir(), "dirf-plan-contract-home-"));
+  const target = mkdtempSync(join(tmpdir(), "dirf-plan-contract-target-"));
+  const env = { DIRF_HOME: home, HOME: home, USERPROFILE: home };
+  execFileSync("git", ["init", "-q"], { cwd: target, timeout: TIMEOUT });
+  run(["setup", target], env, target);
+
+  for (const [name, extraArgs, expectedAgents] of [
+    ["plan-contract", [], ["workflow-orchestrator", "knowledge-synthesizer", "agent-organizer"]],
+    ["plan-contract-research", ["--research"], ["workflow-orchestrator", "knowledge-synthesizer", "research-analyst", "agent-organizer"]],
+  ]) {
+    const output = run(["plan", name, "plan a large feature", "--path", target, ...extraArgs], env, target);
+    const attemptId = output.match(/Plan saved: (\S+)/)?.[1];
+    assert.ok(attemptId, output);
+    const slug = readdirSync(join(home, "projects"))[0];
+    const workflow = JSON.parse(readFileSync(
+      join(home, "projects", slug, "attempts", attemptId, "workflow.json"), "utf8",
+    ));
+    assert.deepEqual(workflow.agents.map((agent) => agent.name), expectedAgents);
+    assert.deepEqual(validateSnapshot(workflow, `${name}.json`), []);
+
+    const owners = new Map(workflow.workflow.phases.map((phase) => [phase, []]));
+    for (const [agent, contract] of Object.entries(workflow.workflow.agent_contracts)) {
+      for (const phase of contract.phases) owners.get(phase).push(agent);
+    }
+    for (const [phase, phaseOwners] of owners) {
+      assert.equal(phaseOwners.length, 1, `${name}: ${phase}`);
+    }
+    assert.equal(workflow.workflow.phases.includes("research unresolved decisions against primary sources"), extraArgs.includes("--research"));
   }
 });
 

@@ -23,6 +23,24 @@ function hasType(value, type) {
   return typeof value === type;
 }
 
+export function validatePlaybookAgentReferences(playbooks = {}, registryNames = new Set()) {
+  const known = registryNames instanceof Set ? registryNames : new Set(registryNames || []);
+  const errors = [];
+  for (const [name, playbook] of Object.entries(playbooks || {})) {
+    const baseAgents = Array.isArray(playbook?.agents) ? playbook.agents : [];
+    const conditionalAgents = Array.isArray(playbook?.workflow?.conditional_contract?.agents)
+      ? playbook.workflow.conditional_contract.agents
+      : [];
+    const nonInterviewAgents = Array.isArray(playbook?.workflow?.non_interview_contract?.agents)
+      ? playbook.workflow.non_interview_contract.agents
+      : [];
+    for (const agent of new Set([...baseAgents, ...conditionalAgents, ...nonInterviewAgents])) {
+      if (!known.has(agent)) errors.push(`playbook ${name}: references unknown agent ${agent}`);
+    }
+  }
+  return errors;
+}
+
 export function validateSnapshot(data, label = "workflow") {
   const errors = [];
   for (const [key, type] of Object.entries(REQUIRED_PLAN_KEYS)) {
@@ -42,6 +60,11 @@ export function validateSnapshot(data, label = "workflow") {
       if (data.continuation.transition !== undefined &&
           !["after-decision", "after-primary"].includes(data.continuation.transition)) {
         errors.push(`${label}: continuation.transition must be after-decision or after-primary`);
+      }
+      if (data.continuation.questions !== undefined &&
+          (!Array.isArray(data.continuation.questions) ||
+           data.continuation.questions.some((question) => typeof question !== "string" || !question.trim()))) {
+        errors.push(`${label}: continuation.questions must be an array of non-empty strings`);
       }
     }
   }
@@ -329,13 +352,8 @@ export function main() {
     for (const key of ["description", "keywords", "agents", "workflow"]) {
       if (!pb[key]) errors.push(`playbook ${name}: missing ${key}`);
     }
-    const conditionalAgents = Array.isArray(pb.workflow?.conditional_contract?.agents)
-      ? pb.workflow.conditional_contract.agents
-      : [];
-    for (const an of new Set([...(Array.isArray(pb.agents) ? pb.agents : []), ...conditionalAgents])) {
-      if (!registryNames.has(an)) errors.push(`playbook ${name}: references unknown agent ${an}`);
-    }
   }
+  errors.push(...validatePlaybookAgentReferences(playbooks, registryNames));
   errors.push(...reconcile(playbooks));
 
   // --- folder-native units ---
