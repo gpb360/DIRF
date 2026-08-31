@@ -83,6 +83,12 @@ test("common interview exclusions are normalized before routing", () => {
     "Improve the plan; I don't want an interview",
     "Improve the plan; no more questions",
     "Improve the plan; do not ask any more questions",
+    "Improve the plan; I don't want any questions",
+    "Improve the plan without any questions",
+    "Improve the plan; avoid any more questions",
+    "Improve the plan; skip any further questions",
+    "Improve the plan; I don't want any more questions",
+    "Improve the plan; I don't want to be interviewed",
   ]) {
     const result = recommend(task);
     assert.equal(result.playbook, "improve-plan", task);

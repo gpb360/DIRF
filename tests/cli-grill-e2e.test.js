@@ -298,6 +298,10 @@ test("negated and action-first interview requests stay coherent end to end", () 
     ["negated-dont-want", "Improve the plan; I don't want an interview"],
     ["negated-more-questions", "Improve the plan; no more questions"],
     ["negated-ask-more", "Improve the plan; do not ask any more questions"],
+    ["negated-dont-want-any", "Improve the plan; I don't want any questions"],
+    ["negated-without-any", "Improve the plan without any questions"],
+    ["negated-avoid-any-more", "Improve the plan; avoid any more questions"],
+    ["negated-dont-want-passive", "Improve the plan; I don't want to be interviewed"],
   ]) {
     const built = JSON.parse(run(["build", name, task, "--path", target, "--json"], env, target));
     const workflow = JSON.parse(readFileSync(built.workflow, "utf8"));
