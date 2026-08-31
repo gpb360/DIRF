@@ -62,10 +62,12 @@ Priority meanings:
 - P0: immediate catastrophic impact or broadly exploitable compromise; block all release activity.
 - P1: high-impact correctness, security, data-loss, or availability defect; block merge.
 - P2: real defect with bounded impact or an important missing failure-path guarantee; fix before release unless explicitly accepted.
-- P3: low-impact but concrete defect; fix or log with ownership.
+- P3: low-impact but concrete defect; fix and verify before the PR-review loop is complete.
 
 Confidence measures whether the specific finding is true, not how severe it would be. Do not inflate severity to compensate for weak evidence.
 
 `quality` measures review completeness across the changed surface. `evidence` measures how much of the verdict is backed by executed or directly inspected proof. Both are independent of individual finding confidence.
 
 The renderer derives the verdict; do not place a hand-authored verdict in the artifact.
+
+The renderer also derives an A-F readiness grade and explicit P0-P3 counts. A grade is not a substitute for the gate: definition of done requires `PASS`, zero findings in every priority bucket, and a review bound to the latest head.

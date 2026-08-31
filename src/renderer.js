@@ -8,10 +8,20 @@ const FM_RE = /^([A-Za-z0-9_-]+):\s*(.*)$/;
 export const FOCUSED_OUTPUT_RULES = [
   "Lead with the result or current state.",
   "Include concrete validation evidence. Keep lists to five relevant items or fewer.",
-  "For PR review updates, use `Fixed`, `Proof`, `Status`, and `Next`; omit a label only when it has nothing useful to say.",
   "State failures plainly and name the affected step.",
   "End with exactly one next action, or `Complete`.",
 ];
+
+const PR_REVIEW_OUTPUT_RULES = [
+  "For PR review updates, use `Fixed`, `Proof`, `Status`, and `Next`; omit a label only when it has nothing useful to say.",
+  "Show the A-F grade, quality and evidence confidence, P0/P1/P2/P3 counts, and whether the zero-finding definition of done is met.",
+  "Publish or link the rendered findings ledger so every retained finding shows its P0-P3 priority and confidence score.",
+];
+
+function focusedOutputRules(workflow) {
+  const includesPrReview = workflow.playbook === "pr-review" || workflow.continuation?.playbook === "pr-review";
+  return includesPrReview ? [...FOCUSED_OUTPUT_RULES, ...PR_REVIEW_OUTPUT_RULES] : FOCUSED_OUTPUT_RULES;
+}
 
 function usesFocusedOutput(workflow) {
   return workflow.focused_output !== false;
@@ -142,7 +152,7 @@ export function kickoffPrompt(workflow) {
   if (wf.requirements?.length) lines.push(`${nextRule++}. Required acceptance contract: ${wf.requirements.join(" | ")}`);
   lines.push(`${nextRule++}. When your context is nearly exhausted, write a handoff note (completed work, decisions, changed files, validation, blockers, exact next action) and stop.`);
   if (usesFocusedOutput(workflow)) {
-    lines.push(`${nextRule}. For status updates, validation summaries, and handoffs: ${FOCUSED_OUTPUT_RULES.join(" ")} This does not constrain task-specific or creative output.`);
+    lines.push(`${nextRule}. For status updates, validation summaries, and handoffs: ${focusedOutputRules(workflow).join(" ")} This does not constrain task-specific or creative output.`);
   }
   if (workflow.issue_policy) {
     lines.push("", ...issueGovernanceLines(workflow.issue_policy));
@@ -332,7 +342,7 @@ export function buildInstructions(workflow, outDir, skillBindings = []) {
   ];
   if (usesFocusedOutput(workflow)) {
     lines.push("", "## Focused output", "", "For status updates, validation summaries, and handoffs:");
-    for (const rule of FOCUSED_OUTPUT_RULES) lines.push(`- ${rule}`);
+    for (const rule of focusedOutputRules(workflow)) lines.push(`- ${rule}`);
     lines.push("", "Task-specific and creative output is unchanged.");
   }
   if (workflow.issue_policy) lines.push("", ...issueGovernanceLines(workflow.issue_policy));
@@ -690,7 +700,7 @@ export function buildHtml(workflow, skillBindings = []) {
 
   if (usesFocusedOutput(workflow)) {
     parts.push("<h2>Focused output</h2><p>For status updates, validation summaries, and handoffs:</p><ul>");
-    for (const rule of FOCUSED_OUTPUT_RULES) parts.push(`<li>${inline(rule)}</li>`);
+    for (const rule of focusedOutputRules(workflow)) parts.push(`<li>${inline(rule)}</li>`);
     parts.push("</ul><p class='mute'>Task-specific and creative output is unchanged.</p>");
   }
 

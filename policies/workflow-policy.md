@@ -40,7 +40,7 @@ Use this policy in every generated workflow prompt.
 
 ## PR Merge Readiness
 - Do not infer readiness from GitHub's mechanical mergeable or ready status, a green build, or a prior review.
-- After every final push, refresh the exact PR head; collect all review comments, unresolved threads, and checks; reconcile every P0, P1, and P2 finding; fix and verify each applicable finding; then rerun the relevant checks.
+- After every final push, refresh the exact PR head; collect all review comments, unresolved threads, and checks; reconcile every P0, P1, P2, and P3 finding; fix and verify each finding; then rerun the relevant checks and review the new head.
 - Re-fetch that exact head's reviews, unresolved threads, checks, mergeability, and diff. Report "ready to merge" only when no unresolved review findings remain and all required gates pass.
 - Identify every waived or dismissed finding and obtain explicit user approval. Otherwise report "not ready" and state the exact remaining action.
 
@@ -59,6 +59,12 @@ Use this policy in every generated workflow prompt.
   "All checks passed and no review issues remain. May I merge PR #N into staging?"
 - Format PR review-loop updates with four short labels: `Fixed`, `Proof`,
   `Status`, and `Next`. Omit a label only when it has nothing useful to say.
+- Every PR review status must show its A-F grade, quality/evidence confidence,
+  and explicit `P0`, `P1`, `P2`, and `P3` counts. `Complete` requires a latest-
+  head PASS with all four counts at zero and proof that the corrected behavior
+  functions; resolved comments or green checks alone are not completion.
+- Publish or link the validated rendered findings ledger. Every retained finding
+  must visibly include its P0-P3 priority and confidence score.
 - Separate code pushed, PR text posted, checks completed, and review completed.
   Never present one as proof of another.
 - Include the PR number and current head when they matter. Link the published PR

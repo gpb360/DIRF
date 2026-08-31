@@ -159,6 +159,16 @@ node src/cli.js state which --path "../my-project"
 node src/cli.js validate
 ```
 
+### PR-review completion
+
+The `pr-review` playbook publishes a validated review ledger with an A-F grade,
+quality and evidence confidence, and explicit P0, P1, P2, and P3 counts. Every
+retained finding includes its own priority and confidence score. The loop is
+complete only after every P0-P3 finding is fixed, the corrected behavior is
+verified, and a fresh review of the latest head returns PASS with all counts at
+zero. Resolved comments, a pushed commit, or green checks do not satisfy this
+definition of done by themselves.
+
 ## Documentation map
 
 - Use DIRF in another project: [Agent Guide](docs/AGENT_GUIDE.md).

@@ -25,14 +25,21 @@ Produce a review another maintainer can act on without reconstructing your reaso
    - `node skills/code-review/scripts/review-report.mjs render review.json`
    Completion: validation exits zero and the rendered verdict agrees with the findings and confidence gates.
 7. Before posting, confirm the PR head still equals `head_sha` and search existing review markers for the same head. Completion: stale-head and duplicate reviews are not posted.
+8. When any P0, P1, P2, or P3 finding exists, fix it, verify the affected behavior, and perform a fresh review of the new exact head. Completion: the loop ends only when all four priority counts are zero and the latest artifact is `PASS`.
 
 ## Decision rules
 
 - `FAIL`: at least one P0 or P1 finding.
 - `CONDITIONAL`: at least one P2 or P3 finding, or review quality/evidence confidence is below the PASS threshold.
 - `PASS`: no actionable findings, quality confidence is at least 85, and evidence confidence is at least 80.
+- `Grade A`: PASS with quality and evidence confidence both at least 90.
+- `Grade B`: PASS at the minimum confidence thresholds.
+- `Grade C`: P3 findings, limitations, or insufficient confidence; not done.
+- `Grade D`: at least one P2 finding; not done.
+- `Grade F`: at least one P0 or P1 finding; not done.
 - A clean review with blocked or insufficient verification is `CONDITIONAL`, never `PASS`.
 - Low-confidence concerns are recorded as limitations or follow-up questions, not inline accusations.
 - Style preferences, speculative risks without a reachable failure path, and issues outside the changed behavior are not findings.
+- A dismissed false positive is not a finding. A retained finding cannot be waived to manufacture PASS; it must be fixed and the new head re-reviewed.
 
 Use incremental mode only for commits newer than the last reviewed head. Re-run full mode after force-pushes, base changes, cross-cutting contract changes, or when the previous review artifact cannot be trusted.
