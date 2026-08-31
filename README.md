@@ -39,20 +39,23 @@ checks. A later session or a different agent can continue from the same state.
 - **Better handoffs:** another person, model, or session can see what changed,
   what passed, what is blocked, and what happens next.
 
-## What's new in 0.28.1
+## What's new in 0.29.0
 
-This patch fixes skill activation in Git worktrees without copying installed
-skills:
+A planning request often combines a task with one of two choices: ask questions
+first, or continue without questions. DIRF now keeps that choice separate from
+the task and builds one complete workflow in the order the user stated.
 
-- **Small skill pointers:** DIRF saves the name, provider, and current location
-  of each selected skill outside the repository.
-- **Fast resume:** DIRF checks those saved locations first and scans installed
-  skills only when a saved file is missing or has moved.
-- **Safe worktree handling:** repository skills resolve inside the active
-  worktree, and resume checks ownership before changing shared attempt state.
-- **Clear missing-skill failures:** a required skill that is no longer installed
-  is reported accurately and prevents the workflow from starting.
-- **No setup breakage:** existing `dirf setup` behavior is unchanged.
+- **Human checkpoints stay human-controlled:** Grill Me and Grill With Docs
+  start only when the user asks for them. Their interview engine can still run
+  as an ordinary workflow skill.
+- **Mixed tasks keep both halves:** “review this PR, then grill me” reviews
+  first; “grill me, then implement it” confirms the plan before implementation.
+- **No-interview requests are complete:** phases, owners, gates, questions, and
+  rendered instructions all use the non-interview plan.
+- **Every phase has one owner:** generated Markdown and HTML name the result and
+  verification expected from that owner.
+- **[Model advice](skills/model-advice/README.md) is diagnostic:** a host can
+  provide `--models FILE` so DIRF can record a suggestion before work begins.
 
 ## What DIRF is not
 
@@ -65,12 +68,9 @@ skills:
 DIRF prepares and records the route. Your agent host still performs the work,
 and you keep control of consequential actions.
 
-DIRF can add diagnostic preflight model advice when the host supplies
-`--models FILE`. It selects the lowest host-reported cost tier that declares
-each capability known when the workflow is built and stores the catalog hash.
-Without a catalog it says advice is unavailable. It does not claim to cover
-work discovered later, query live prices, invoke a model, monitor a session, or
-authorize spend.
+DIRF can add diagnostic [model advice](skills/model-advice/README.md) before work
+begins. It may suggest a model from information supplied by the host, but it
+does not run or monitor the work.
 
 ## Install
 
@@ -158,6 +158,15 @@ node src/cli.js list --path "../my-project"
 node src/cli.js state which --path "../my-project"
 node src/cli.js validate
 ```
+
+## Documentation map
+
+- Use DIRF in another project: [Agent Guide](docs/AGENT_GUIDE.md).
+- Add or change playbooks and agents:
+  [Writing great playbooks and agents](docs/writing-great-playbooks.md).
+- Configure ZCode: [DIRF system prompt for ZCode](docs/dirf-zcode-system-prompt.md).
+- Understand shared worktree state:
+  [Central state design](docs/design/central-state.md).
 
 The rest of this README is the technical reference for how DIRF routes,
 renders, stores, and resumes workflows.
@@ -406,9 +415,9 @@ useful:
 ```
 
 Pass it with `--models FILE` to `build`, `plan`, `create`, or `flow`. DIRF
-matches declared preflight workflow capabilities, chooses the lowest reported tier, and
-stores only portable advice plus the catalog SHA-256. The flag does not run a
-model, check current prices, monitor work, or grant spending authority.
+stores a stable recommendation for the workflow capabilities known before
+execution. See the [model-advice contract](skills/model-advice/README.md) for
+the matching rules, recorded evidence, and boundaries.
 
 **Scan roots** (all optional): `~/.agents/skills/`, `~/.codex/skills/`,
 `~/.claude/skills/`, `~/.zcode/.../skills/`, plus project-local equivalents.
@@ -425,7 +434,7 @@ reflects the target project's skills (e.g. a repo's own `.agents/skills/`).
 DIRF also discovers the **agents** installed on the host (`~/.agents/agents/`,
 `~/.codex/agents/`, `~/.claude/agents/`, plus project-local equivalents and a
 project `agents/` folder). Playbook roles are cast against that index — exact
-name match first, then name/tag overlap. The 21 agent definitions bundled in
+name match first, then name/tag overlap. The 22 agent definitions bundled in
 this repo's `agents/` folder are **defaults of last resort**: they fill a role
 only when no installed agent matches, the role is labeled `bundled default` in
 the roster, and when a host has no agents at all the workflow opens with an
@@ -449,7 +458,7 @@ explicit question asking whether to use them. Your own agents always win.
 ## Project layout
 
 ```
-src/             CLI, folder resolver, router, discovery, renderer, validation, state core, MCP server
+src/             CLI, folder resolver, router, model advice, discovery, renderer, validation, state core, MCP server
 playbooks/       authoritative reusable playbook folders
 skills/          bounded task-oriented skill folders
 tools/           isolated tool invocation folders

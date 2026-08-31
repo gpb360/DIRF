@@ -1,6 +1,6 @@
 {
   "name": "amf-dirf",
-"version": "0.28.1",
+  "version": "0.29.0",
   "description": "DIRF maps available project capabilities into lean, resumable, verifiable workflows.",
   "type": "module",
   "bin": {

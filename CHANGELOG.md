@@ -7,6 +7,33 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+## [0.29.0] — 2026-08-30
+
+### Added
+- **Human-controlled plan interviews:** explicit Grill Me and Grill With Docs
+  requests now use the installed interview workflow while remaining under the
+  user's control.
+- **Diagnostic model advice:** `--models FILE` lets a host provide model names,
+  capabilities, and cost tiers. DIRF records the cheapest declared match for
+  work known before execution, or states that no match is available.
+- **Per-phase ownership:** generated workflows give each phase one owner, one
+  expected result, and one verification check in both Markdown and HTML.
+
+### Changed
+- A request that combines an interview with a review or implementation keeps
+  both tasks and runs them in the order the user stated.
+- Continuation questions now appear at the transition where they are needed,
+  and generated plans are validated before they are written to attempt state.
+
+### Fixed
+- Plain-English exclusions such as “no interview,” “without interviewing me,”
+  and “do not ask more questions” now produce a complete non-interview plan
+  instead of leaving interview phases, gates, or questions behind.
+- Positive requests such as “do not leave questions unanswered” keep the
+  interview, while negated review and implementation work stays excluded.
+- DIRF stops before creating an attempt when a requested interview workflow is
+  missing or cannot be run by the agent.
+
 ## [0.28.1] — 2026-08-27
 
 ### Fixed

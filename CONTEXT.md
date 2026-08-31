@@ -21,6 +21,10 @@ _Avoid_: Classification, recommendation
 An explicit invocation-scoped allowlist of skill names that narrows Task Routing candidates without changing the discovered inventory. Unavailable names remain visible capability gaps.
 _Avoid_: Skill registry, project default, profile layer
 
+**Preflight Model Advice**:
+An optional model suggestion recorded before work begins from information supplied by the host. The full contract lives in [`skills/model-advice/README.md`](skills/model-advice/README.md).
+_Avoid_: Live price routing, model execution, process monitoring
+
 **DIRF Flow Board**:
 A project and Attempt view of canonical DIRF coordination state. It does not monitor or manage live agent processes.
 _Avoid_: Agent monitor, issue tracker
