@@ -89,6 +89,9 @@ test("common interview exclusions are normalized before routing", () => {
     "Improve the plan; skip any further questions",
     "Improve the plan; I don't want any more questions",
     "Improve the plan; I don't want to be interviewed",
+    "Improve the plan without interviewing me",
+    "Improve the plan; avoid interviewing me",
+    "Improve the plan; skip interviewing me",
   ]) {
     const result = recommend(task);
     assert.equal(result.playbook, "improve-plan", task);
@@ -97,6 +100,20 @@ test("common interview exclusions are normalized before routing", () => {
     assert.ok(result.workflow.phases.includes("draft the smallest evidence-based plan"), task);
   }
   assert.equal(recommend("Review PR 47, but do not use Grill Me").playbook, "pr-review");
+});
+
+test("negative complements preserve the requested complete interview", () => {
+  for (const task of [
+    "Improve the plan; I don't want any questions unanswered",
+    "Improve the plan; I don't want any questions left unanswered",
+    "Improve the plan; I don't want an interview cut short",
+  ]) {
+    const result = recommend(task);
+    assert.equal(result.playbook, "improve-plan", task);
+    assert.ok(result.questions.length > 0, task);
+    assert.ok(result.skill_flow.steps.some((step) => step.capability === "plan interview"), task);
+    assert.ok(result.workflow.phases.includes("ask and record one decision at a time"), task);
+  }
 });
 
 test("explicit interview replacements remove only the excluded mode", () => {

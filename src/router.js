@@ -49,10 +49,11 @@ const DOCUMENTATION_TARGET = /\b(docs?|documentation|readme|changelog|manual)\b/
 const CONTINUATION_ACTION_WORDS = "add|adding|audit|auditing|build|building|change|changing|coding|create|creating|deploy|deploying|fix|fixing|implement|implementing|migrate|migrating|modify|modifying|redesign|redesigning|refactor|refactoring|review|reviewing|ship|shipping|test|testing|update|updating|verify|verifying|write|writing";
 const CONTINUATION_ACTION_INTENT = new RegExp(`\\b(?:${CONTINUATION_ACTION_WORDS})\\b`);
 const GENERIC_INTERVIEW_TARGETS =
-  "(?:be(?:ing)?\\s+)?interview(?:s|ed)?(?:\\s+me)?|question(?:\\s+me)?|" +
+  "(?:be(?:ing)?\\s+)?interview(?:s|ed|ing)?(?:\\s+me)?|question(?:\\s+me)?|" +
   "ask(?:ing)?\\s+(?:me\\s+)?(?:(?:any\\s+)?(?:more|further)\\s+|any\\s+)?questions?|" +
   "(?:any\\s+)?(?:(?:more|further)\\s+)?questions?";
 const INTERVIEW_ROUTING_TARGETS = `grill(?:[- ]with[- ]docs|(?:\\s+me)?)|${GENERIC_INTERVIEW_TARGETS}`;
+const POSITIVE_INTERVIEW_COMPLEMENT = "\\s+(?:(?:left\\s+)?unanswered|skipped|ignored|cut\\s+short)\\b";
 const NEGATED_ROUTING_PREFIX =
   `(?:(?:(?:i\\s+)?(?:do\\s+not|don't|dont)\\s+(?:want\\s+(?:(?:you\\s+)?to\\s+)?)?|never\\s+|not\\s+)` +
   `(?:you\\s+)?(?:use\\s+|run\\s+|invoke\\s+|start\\s+)?(?:(?:an?|the)\\s+)?|` +
@@ -60,12 +61,12 @@ const NEGATED_ROUTING_PREFIX =
 const NEGATED_ROUTING_CLAUSE = new RegExp(
   `(?:\\b(?:but|and(?:\\s+then)?|then)\\s+)?` +
   `\\b${NEGATED_ROUTING_PREFIX}` +
-  `(?:${INTERVIEW_ROUTING_TARGETS}|${CONTINUATION_ACTION_WORDS})\\b` +
+  `(?:${INTERVIEW_ROUTING_TARGETS}|${CONTINUATION_ACTION_WORDS})\\b(?!${POSITIVE_INTERVIEW_COMPLEMENT})` +
   `[^,.;!?—–]*?(?=\\s+\\b(?:but|and\\s+(?:then|instead)|then|instead|just)\\b|[,.;!?—–]|$)`,
   "g",
 );
 const GENERIC_INTERVIEW_NEGATION = new RegExp(
-  `\\b${NEGATED_ROUTING_PREFIX}(?:${GENERIC_INTERVIEW_TARGETS})\\b`,
+  `\\b${NEGATED_ROUTING_PREFIX}(?:${GENERIC_INTERVIEW_TARGETS})\\b(?!${POSITIVE_INTERVIEW_COMPLEMENT})`,
 );
 const INTERVIEW_FIRST_TARGET = new RegExp(
   `(?:${CONTINUATION_ACTION_INTENT.source}|implementation|execution|delivery|coding|changes?)`,

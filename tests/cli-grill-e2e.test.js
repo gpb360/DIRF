@@ -302,6 +302,8 @@ test("negated and action-first interview requests stay coherent end to end", () 
     ["negated-without-any", "Improve the plan without any questions"],
     ["negated-avoid-any-more", "Improve the plan; avoid any more questions"],
     ["negated-dont-want-passive", "Improve the plan; I don't want to be interviewed"],
+    ["negated-without-interviewing", "Improve the plan without interviewing me"],
+    ["negated-avoid-interviewing", "Improve the plan; avoid interviewing me"],
   ]) {
     const built = JSON.parse(run(["build", name, task, "--path", target, "--json"], env, target));
     const workflow = JSON.parse(readFileSync(built.workflow, "utf8"));
@@ -313,6 +315,17 @@ test("negated and action-first interview requests stay coherent end to end", () 
     assert.doesNotMatch(JSON.stringify(workflow.workflow), /ask and record|confirm shared understanding/i, task);
     const readme = readFileSync(join(dirname(built.workflow), "README.md"), "utf8");
     assert.doesNotMatch(readme, /ask and record one decision|confirm shared understanding/i, task);
+  }
+
+  for (const [name, task] of [
+    ["complete-interview-questions", "Improve the plan; I don't want any questions unanswered"],
+    ["complete-interview-short", "Improve the plan; I don't want an interview cut short"],
+  ]) {
+    const built = JSON.parse(run(["build", name, task, "--path", target, "--json"], env, target));
+    const workflow = JSON.parse(readFileSync(built.workflow, "utf8"));
+    assert.ok(workflow.skill_flow.steps.some((step) => step.capability === "plan interview"), task);
+    assert.ok(workflow.questions.length > 0, task);
+    assert.ok(workflow.workflow.phases.includes("ask and record one decision at a time"), task);
   }
 
   const withDocs = JSON.parse(run([
