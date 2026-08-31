@@ -48,10 +48,13 @@ const IMPLEMENTATION_INTENT = /\b(add|adding|build|building|change|changing|crea
 const DOCUMENTATION_TARGET = /\b(docs?|documentation|readme|changelog|manual)\b/;
 const CONTINUATION_ACTION_WORDS = "add|adding|audit|auditing|build|building|change|changing|coding|create|creating|deploy|deploying|fix|fixing|implement|implementing|migrate|migrating|modify|modifying|redesign|redesigning|refactor|refactoring|review|reviewing|ship|shipping|test|testing|update|updating|verify|verifying|write|writing";
 const CONTINUATION_ACTION_INTENT = new RegExp(`\\b(?:${CONTINUATION_ACTION_WORDS})\\b`);
-const GENERIC_INTERVIEW_TARGETS = "interviews?(?:\\s+me)?|question(?:\\s+me)?|ask\\s+(?:me\\s+)?(?:any\\s+)?questions?|questions?";
+const GENERIC_INTERVIEW_TARGETS =
+  "interviews?(?:\\s+me)?|question(?:\\s+me)?|" +
+  "ask(?:ing)?\\s+(?:me\\s+)?(?:(?:any\\s+)?(?:more|further)\\s+|any\\s+)?questions?|" +
+  "(?:(?:more|further)\\s+)?questions?";
 const INTERVIEW_ROUTING_TARGETS = `grill(?:[- ]with[- ]docs|(?:\\s+me)?)|${GENERIC_INTERVIEW_TARGETS}`;
 const NEGATED_ROUTING_PREFIX =
-  `(?:(?:(?:i\\s+)?(?:do\\s+not|don't|dont)\\s+(?:want\\s+(?:you\\s+)?to\\s+)?|never\\s+|not\\s+)` +
+  `(?:(?:(?:i\\s+)?(?:do\\s+not|don't|dont)\\s+(?:want\\s+(?:(?:you\\s+)?to\\s+)?)?|never\\s+|not\\s+)` +
   `(?:you\\s+)?(?:use\\s+|run\\s+|invoke\\s+|start\\s+)?(?:(?:an?|the)\\s+)?|` +
   `without\\s+(?:(?:an?|the)\\s+)?|(?:skip|avoid)\\s+(?:(?:an?|the)\\s+)?|no\\s+)`;
 const NEGATED_ROUTING_CLAUSE = new RegExp(
