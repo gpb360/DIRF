@@ -320,6 +320,11 @@ test("negated and action-first interview requests stay coherent end to end", () 
   for (const [name, task] of [
     ["complete-interview-questions", "Improve the plan; I don't want any questions unanswered"],
     ["complete-interview-short", "Improve the plan; I don't want an interview cut short"],
+    ["complete-interview-left", "Improve the plan; I don't want any questions to be left unanswered"],
+    ["complete-interview-to-short", "Improve the plan; I don't want the interview to be cut short"],
+    ["complete-interview-go", "Improve the plan; I don't want any questions to go unanswered"],
+    ["complete-interview-should", "Improve the plan; no questions should be left unanswered"],
+    ["complete-interview-remain", "Improve the plan; no questions must remain unanswered"],
   ]) {
     const built = JSON.parse(run(["build", name, task, "--path", target, "--json"], env, target));
     const workflow = JSON.parse(readFileSync(built.workflow, "utf8"));

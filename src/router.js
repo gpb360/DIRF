@@ -53,7 +53,9 @@ const GENERIC_INTERVIEW_TARGETS =
   "ask(?:ing)?\\s+(?:me\\s+)?(?:(?:any\\s+)?(?:more|further)\\s+|any\\s+)?questions?|" +
   "(?:any\\s+)?(?:(?:more|further)\\s+)?questions?";
 const INTERVIEW_ROUTING_TARGETS = `grill(?:[- ]with[- ]docs|(?:\\s+me)?)|${GENERIC_INTERVIEW_TARGETS}`;
-const POSITIVE_INTERVIEW_COMPLEMENT = "\\s+(?:(?:left\\s+)?unanswered|skipped|ignored|cut\\s+short)\\b";
+const POSITIVE_INTERVIEW_COMPLEMENT =
+  "\\s+(?:(?:(?:to|should|must)\\s+)?(?:be|go|remain)\\s+)?" +
+  "(?:(?:left\\s+)?unanswered|skipped|ignored|cut\\s+short)\\b";
 const NEGATED_ROUTING_PREFIX =
   `(?:(?:(?:i\\s+)?(?:do\\s+not|don't|dont)\\s+(?:want\\s+(?:(?:you\\s+)?to\\s+)?)?|never\\s+|not\\s+)` +
   `(?:you\\s+)?(?:use\\s+|run\\s+|invoke\\s+|start\\s+)?(?:(?:an?|the)\\s+)?|` +

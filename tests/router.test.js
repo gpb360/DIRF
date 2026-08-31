@@ -111,6 +111,11 @@ test("negative complements preserve the requested complete interview", () => {
     "Improve the plan; I don't want any questions unanswered",
     "Improve the plan; I don't want any questions left unanswered",
     "Improve the plan; I don't want an interview cut short",
+    "Improve the plan; I don't want any questions to be left unanswered",
+    "Improve the plan; I don't want the interview to be cut short",
+    "Improve the plan; I don't want any questions to go unanswered",
+    "Improve the plan; no questions should be left unanswered",
+    "Improve the plan; no questions must remain unanswered",
   ]) {
     const result = recommend(task);
     assert.equal(result.playbook, "improve-plan", task);
