@@ -42,7 +42,7 @@ Use this policy in every generated workflow prompt.
 - Do not infer readiness from GitHub's mechanical mergeable or ready status, a green build, or a prior review.
 - After every final push, refresh the exact PR head; collect all review comments, unresolved threads, and checks; reconcile every P0, P1, P2, and P3 finding; fix and verify each finding; then rerun the relevant checks and review the new head.
 - Re-fetch that exact head's reviews, unresolved threads, checks, mergeability, and diff. Report "ready to merge" only when no unresolved review findings remain and all required gates pass.
-- Identify every waived or dismissed finding and obtain explicit user approval. Otherwise report "not ready" and state the exact remaining action.
+- Dismiss a finding only when evidence shows it is invalid or a duplicate. A retained P0, P1, P2, or P3 finding cannot be waived for completion; fix and verify it, then review the new head. Otherwise report "not ready" and state the exact remaining action.
 
 ## Communication
 - Write user-facing updates in simple, ordinary English. Keep internal workflow

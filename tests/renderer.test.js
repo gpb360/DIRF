@@ -151,7 +151,9 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.match(policy, /latest-[\s\S]*head PASS with all four counts at zero/);
   assert.match(policy, /visibly include its P0-P3 priority and confidence score/);
   assert.match(policy, /Re-fetch that exact head's reviews, unresolved threads, checks, mergeability, and diff/);
-  assert.match(policy, /Identify every waived or dismissed finding and obtain explicit user approval/);  assert.match(readme, /## Issue governance/);
+  assert.match(policy, /Dismiss a finding only when evidence shows it is invalid or a duplicate/);
+  assert.match(policy, /A retained P0, P1, P2, or P3 finding cannot be waived for completion/);
+  assert.match(readme, /## Issue governance/);
   assert.match(policy, /Separate code pushed, PR text posted, checks completed, and review completed/);
   assert.match(policy, /Link the published PR\s+update when the user expects to see it on GitHub/);
   assert.match(policy, /When the workflow includes a prose-editing capability/);
