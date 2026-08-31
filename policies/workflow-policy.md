@@ -57,6 +57,12 @@ Use this policy in every generated workflow prompt.
 - For pull requests, never say "ready to merge" while a review is still running
   or any serious review issue remains. When it is ready, ask one plain question:
   "All checks passed and no review issues remain. May I merge PR #N into staging?"
+- Format PR review-loop updates with four short labels: `Fixed`, `Proof`,
+  `Status`, and `Next`. Omit a label only when it has nothing useful to say.
+- Separate code pushed, PR text posted, checks completed, and review completed.
+  Never present one as proof of another.
+- Include the PR number and current head when they matter. Link the published PR
+  update when the user expects to see it on GitHub.
 - Do not add AI attribution footers or generated-by boilerplate.
 - Pull requests created during the workflow carry a description: what
   changed, why, and how it was verified — never a title-only PR.

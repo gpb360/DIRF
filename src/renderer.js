@@ -7,8 +7,8 @@ const GOVERNANCE_MARKER = "<!-- governance:v1 -->";
 const FM_RE = /^([A-Za-z0-9_-]+):\s*(.*)$/;
 export const FOCUSED_OUTPUT_RULES = [
   "Lead with the result or current state.",
-  "Include concrete validation evidence.",
-  "Keep lists to five relevant items or fewer.",
+  "Include concrete validation evidence. Keep lists to five relevant items or fewer.",
+  "For PR review updates, use `Fixed`, `Proof`, `Status`, and `Next`; omit a label only when it has nothing useful to say.",
   "State failures plainly and name the affected step.",
   "End with exactly one next action, or `Complete`.",
 ];

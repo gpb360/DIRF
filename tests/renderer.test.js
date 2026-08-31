@@ -77,6 +77,7 @@ test("kickoff prompt is embedded in both renders and stays host-agnostic", () =>
   assert.ok(prompt.includes("did not invoke a model"));
   assert.ok(prompt.includes("derive every screen x state x viewport row"));
   assert.ok(prompt.includes("For status updates, validation summaries, and handoffs"));
+  assert.ok(prompt.includes("For PR review updates, use `Fixed`, `Proof`, `Status`, and `Next`"));
   assert.ok(prompt.includes("End with exactly one next action, or `Complete`"));
   assert.ok(!/codex|claude/i.test(prompt));
   assert.ok(!prompt.includes("```"), "prompt must be safe inside a fenced block");
@@ -132,6 +133,7 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.match(readme, /Keep 5% of the model context available for handoff/);
   assert.match(readme, /## Focused output/);
   assert.match(readme, /Keep lists to five relevant items or fewer/);
+  assert.match(readme, /For PR review updates, use `Fixed`, `Proof`, `Status`, and `Next`/);
   assert.match(readme, /uses: \["playbook"\]/);
   assert.match(policy, /The user's task defines what the workflow delivers/);
   assert.match(policy, /they do not add deliverables/);
@@ -147,6 +149,8 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.match(policy, /reconcile every P0, P1, and P2 finding/);
   assert.match(policy, /Re-fetch that exact head's reviews, unresolved threads, checks, mergeability, and diff/);
   assert.match(policy, /Identify every waived or dismissed finding and obtain explicit user approval/);  assert.match(readme, /## Issue governance/);
+  assert.match(policy, /Separate code pushed, PR text posted, checks completed, and review completed/);
+  assert.match(policy, /Link the published PR\s+update when the user expects to see it on GitHub/);
   assert.match(policy, /When the workflow includes a prose-editing capability/);
   assert.match(policy, /Do not rewrite code, machine-readable data, commands, logs, citations/);
   assert.match(readme, /Findings stay local by default/);
@@ -154,6 +158,7 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.match(agentDetail, /## Done when/);
   assert.match(agentDetail, /assigned contribution is complete and handed back/);
   assert.match(buildHtml(workflow), /Done when[\s\S]*assigned contribution is complete and handed back/);
+  assert.match(buildHtml(workflow), /For PR review updates, use <code>Fixed<\/code>, <code>Proof<\/code>, <code>Status<\/code>, and <code>Next<\/code>/);
   const detail = readFileSync(join(outDir, "agents", "frontend-developer.md"), "utf-8");
   assert.ok(detail.includes("# frontend-developer"));
   assert.ok(detail.includes("## Skills"));
