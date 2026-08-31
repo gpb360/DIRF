@@ -48,19 +48,21 @@ const IMPLEMENTATION_INTENT = /\b(add|adding|build|building|change|changing|crea
 const DOCUMENTATION_TARGET = /\b(docs?|documentation|readme|changelog|manual)\b/;
 const CONTINUATION_ACTION_WORDS = "add|adding|audit|auditing|build|building|change|changing|coding|create|creating|deploy|deploying|fix|fixing|implement|implementing|migrate|migrating|modify|modifying|redesign|redesigning|refactor|refactoring|review|reviewing|ship|shipping|test|testing|update|updating|verify|verifying|write|writing";
 const CONTINUATION_ACTION_INTENT = new RegExp(`\\b(?:${CONTINUATION_ACTION_WORDS})\\b`);
-const INTERVIEW_ROUTING_TARGETS = "grill(?:[- ]with[- ]docs|(?:\\s+me)?)|interview(?:\\s+me)?|question(?:\\s+me)?|ask\\s+(?:me\\s+)?(?:any\\s+)?questions?|questions?";
+const GENERIC_INTERVIEW_TARGETS = "interviews?(?:\\s+me)?|question(?:\\s+me)?|ask\\s+(?:me\\s+)?(?:any\\s+)?questions?|questions?";
+const INTERVIEW_ROUTING_TARGETS = `grill(?:[- ]with[- ]docs|(?:\\s+me)?)|${GENERIC_INTERVIEW_TARGETS}`;
+const NEGATED_ROUTING_PREFIX =
+  `(?:(?:(?:i\\s+)?(?:do\\s+not|don't|dont)\\s+(?:want\\s+(?:you\\s+)?to\\s+)?|never\\s+|not\\s+)` +
+  `(?:you\\s+)?(?:use\\s+|run\\s+|invoke\\s+|start\\s+)?(?:(?:an?|the)\\s+)?|` +
+  `without\\s+(?:(?:an?|the)\\s+)?|(?:skip|avoid)\\s+(?:(?:an?|the)\\s+)?|no\\s+)`;
 const NEGATED_ROUTING_CLAUSE = new RegExp(
   `(?:\\b(?:but|and(?:\\s+then)?|then)\\s+)?` +
-  `\\b(?:(?:(?:i\\s+)?(?:do\\s+not|don't|dont)\\s+(?:want\\s+(?:you\\s+)?to\\s+)?|never\\s+|not\\s+)(?:you\\s+)?(?:use\\s+|run\\s+|invoke\\s+|start\\s+)?|without\\s+(?:(?:an?|the)\\s+)?|(?:skip|avoid)\\s+(?:(?:an?|the)\\s+)?|no\\s+)` +
+  `\\b${NEGATED_ROUTING_PREFIX}` +
   `(?:${INTERVIEW_ROUTING_TARGETS}|${CONTINUATION_ACTION_WORDS})\\b` +
   `[^,.;!?—–]*?(?=\\s+\\b(?:but|and\\s+(?:then|instead)|then|instead|just)\\b|[,.;!?—–]|$)`,
   "g",
 );
 const GENERIC_INTERVIEW_NEGATION = new RegExp(
-  `\\b(?:(?:(?:i\\s+)?(?:do\\s+not|don't|dont)\\s+(?:want\\s+(?:you\\s+)?to\\s+)?|never\\s+|not\\s+)(?:you\\s+)?` +
-  `(?:interview(?:\\s+me)?|question(?:\\s+me)?|ask\\s+(?:me\\s+)?(?:any\\s+)?questions?)|` +
-  `without\\s+(?:(?:an?|the)\\s+)?(?:interview|questions?)|` +
-  `(?:skip|avoid)\\s+(?:(?:an?|the)\\s+)?(?:interview|questions?)|no\\s+questions?)\\b`,
+  `\\b${NEGATED_ROUTING_PREFIX}(?:${GENERIC_INTERVIEW_TARGETS})\\b`,
 );
 const INTERVIEW_FIRST_TARGET = new RegExp(
   `(?:${CONTINUATION_ACTION_INTENT.source}|implementation|execution|delivery|coding|changes?)`,
