@@ -4,7 +4,10 @@
 // installed skill folders (there can be several), builds an index of what's
 // actually present, and resolves the curated registry references against it.
 //
-// A referenced skill that isn't installed is flagged "recommended" — never fatal.
+// A referenced skill that isn't installed is normally flagged "recommended".
+// Explicit human routers fail closed later in flow assembly when one of their
+// declared model dependencies is unavailable; partially running a named router
+// would misrepresent the workflow the user selected.
 //
 // Discovery is broadened to fix blind spots from the parent repo:
 //   - read SKILL.md first, fall back to skill.json then README.md frontmatter
@@ -149,6 +152,21 @@ function parseBool(value) {
   if (["yes", "on", "1", "true"].includes(v)) return true;
   if (["no", "off", "0", "false"].includes(v)) return false;
   return undefined;
+}
+
+function metadataList(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
+  const text = String(value || "").trim();
+  if (!text) return [];
+  if (text.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) return parsed.map((item) => String(item).trim()).filter(Boolean);
+    } catch {
+      // Fall through to the tolerant comma-separated form.
+    }
+  }
+  return text.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
 function codexAllowsImplicitInvocation(folder) {
@@ -316,6 +334,7 @@ function indexOne(path, index) {
   // Claude and Codex declare human-only skills differently. Either declaration
   // keeps the skill out of automatic routing; absent flags keep the default.
   const invocation = skillInvocation(folder, fm);
+  const capabilities = metadataList(typeof fm === "object" ? fm.capabilities : undefined);
   // Self-references (a skill's help text mentioning its own /name) are not
   // dependencies — drop them so the reference graph stays meaningful.
   const references = backtickSkillRefs(body).filter((ref) => ref !== name);
@@ -330,6 +349,7 @@ function indexOne(path, index) {
     body_lines: lineCount,
     body_chars: body.length,
     // Only emitted when present — plain skills keep their historical shape.
+    ...(capabilities.length ? { capabilities } : {}),
     ...(references.length ? { references } : {}),
   };
 }

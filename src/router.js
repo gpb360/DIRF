@@ -1,7 +1,8 @@
 // Task -> playbook matching. Node built-ins only.
 //
 // Two signals, both data-driven from the registry — nothing routes by name:
-//   1. keyword phrases (curated per playbook): matched * 3 — the strong signal
+//   1. keyword phrases (curated per playbook): each matched word * 3 — the
+//      strong signal, so an exact phrase outranks one broad noun
 //   2. content overlap with what the playbook DOES (description, workflow
 //      phases/output, agent roster): capped at +2 so it can discriminate ties
 //      and catch keyword-less tasks, but never outvote a keyword match
@@ -43,7 +44,35 @@ function contentTokens(pb) {
   const parts = [pb.description, ...(wf.phases || []), wf.output, ...(pb.agents || [])];
   return new Set(wordTokens(parts.filter(Boolean).join(" ")));
 }
-const IMPLEMENTATION_INTENT = /\b(add|build|create|fix|implement)\b/;
+const IMPLEMENTATION_INTENT = /\b(add|adding|build|building|change|changing|create|creating|fix|fixing|implement|implementing|modify|modifying|update|updating|write|writing)\b/;
+const DOCUMENTATION_TARGET = /\b(docs?|documentation|readme|changelog|manual)\b/;
+const CONTINUATION_ACTION_WORDS = "add|adding|audit|auditing|build|building|change|changing|coding|create|creating|deploy|deploying|fix|fixing|implement|implementing|migrate|migrating|modify|modifying|redesign|redesigning|refactor|refactoring|review|reviewing|ship|shipping|test|testing|update|updating|verify|verifying|write|writing";
+const CONTINUATION_ACTION_INTENT = new RegExp(`\\b(?:${CONTINUATION_ACTION_WORDS})\\b`);
+const GENERIC_INTERVIEW_TARGETS =
+  "(?:be(?:ing)?\\s+)?interview(?:s|ed|ing)?(?:\\s+me)?|question(?:\\s+me)?|" +
+  "ask(?:ing)?\\s+(?:me\\s+)?(?:(?:any\\s+)?(?:more|further)\\s+|any\\s+)?questions?|" +
+  "(?:any\\s+)?(?:(?:more|further)\\s+)?questions?";
+const INTERVIEW_ROUTING_TARGETS = `grill(?:[- ]with[- ]docs|(?:\\s+me)?)|${GENERIC_INTERVIEW_TARGETS}`;
+const POSITIVE_INTERVIEW_COMPLEMENT =
+  "\\s+(?:(?:(?:to|should|must)\\s+)?(?:be|go|remain)\\s+)?" +
+  "(?:(?:left\\s+)?unanswered|skipped|ignored|cut\\s+short)\\b";
+const NEGATED_ROUTING_PREFIX =
+  `(?:(?:(?:i\\s+)?(?:do\\s+not|don't|dont)\\s+(?:want\\s+(?:(?:you\\s+)?to\\s+)?)?|never\\s+|not\\s+)` +
+  `(?:you\\s+)?(?:use\\s+|run\\s+|invoke\\s+|start\\s+)?(?:(?:an?|the)\\s+)?|` +
+  `without\\s+(?:(?:an?|the)\\s+)?|(?:skip|avoid)\\s+(?:(?:an?|the)\\s+)?|no\\s+)`;
+const NEGATED_ROUTING_CLAUSE = new RegExp(
+  `(?:\\b(?:but|and(?:\\s+then)?|then)\\s+)?` +
+  `\\b${NEGATED_ROUTING_PREFIX}` +
+  `(?:(?:${INTERVIEW_ROUTING_TARGETS})\\b(?!${POSITIVE_INTERVIEW_COMPLEMENT})|(?:${CONTINUATION_ACTION_WORDS})\\b)` +
+  `[^,.;!?—–]*?(?=\\s+\\b(?:but|and\\s+(?:then|instead)|then|instead|just)\\b|[,.;!?—–]|$)`,
+  "g",
+);
+const GENERIC_INTERVIEW_NEGATION = new RegExp(
+  `\\b${NEGATED_ROUTING_PREFIX}(?:${GENERIC_INTERVIEW_TARGETS})\\b(?!${POSITIVE_INTERVIEW_COMPLEMENT})`,
+);
+const INTERVIEW_FIRST_TARGET = new RegExp(
+  `(?:${CONTINUATION_ACTION_INTENT.source}|implementation|execution|delivery|coding|changes?)`,
+);
 const EXPLICIT_SECURITY_AUDIT = /\bsecurity audit\b/;
 const EXPLICIT_UI_REVIEW = /\b(ui\s*(?:\/|\s)\s*ux|visual acceptance|visual regression|frontend design|design(?: |-)?system review)\b/;
 
@@ -99,8 +128,84 @@ function matchedKeywords(haystack, playbook) {
 function scorePlaybook(haystack, taskTokens, playbook) {
   const matched = matchedKeywords(haystack, playbook);
   const context = [...taskTokens].filter((t) => contentTokens(playbook).has(t)).sort();
-  const score = matched.length * KEYWORD_WEIGHT + Math.min(context.length, CONTEXT_CAP);
+  const keywordScore = matched.reduce((total, keyword) =>
+    total + Math.max(1, wordTokens(keyword).length) * KEYWORD_WEIGHT, 0);
+  const score = keywordScore + Math.min(context.length, CONTEXT_CAP);
   return { score, count: matched.length, context };
+}
+
+function explicitlyRequestsInterview(taskText, playbook) {
+  const hasInterviewStep = (playbook.skill_flow?.steps || [])
+    .some((step) => step.capability === "plan interview");
+  if (!hasInterviewStep) return false;
+  return matchedKeywords(taskText, playbook)
+    .some((keyword) => /\b(?:grill|interview|question)\b/.test(keyword.replaceAll("-", " ")));
+}
+
+export function affirmativeRoutingText(taskText) {
+  return String(taskText || "").toLowerCase()
+    .replace(NEGATED_ROUTING_CLAUSE, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function negatesInterviewCapability(taskText) {
+  const text = String(taskText || "").toLowerCase();
+  const negatesGenericInterview = GENERIC_INTERVIEW_NEGATION.test(text);
+  if (!negatesGenericInterview) return false;
+  return !/\b(?:grill(?:[- ]with[- ]docs|(?:\s+me)?)|interview(?:\s+me)?|question(?:\s+me)?)\b/.test(affirmativeRoutingText(text));
+}
+
+function interviewCueIndex(taskText, interviewPlaybook) {
+  const interviewKeywords = matchedKeywords(taskText, interviewPlaybook)
+    .filter((keyword) => /\b(?:grill|interview|question)\b/.test(keyword.replaceAll("-", " ")));
+  return interviewKeywords
+    .map((keyword) => taskText.indexOf(keyword.toLowerCase()))
+    .filter((index) => index >= 0)
+    .sort((a, b) => a - b)[0];
+}
+
+function explicitlyInterviewFirst(taskText, interviewIndex) {
+  const afterInterview = taskText.slice(interviewIndex);
+  const firstIndex = afterInterview.search(/\bfirst\b/);
+  if (firstIndex >= 0) {
+    const beforeFirst = afterInterview.slice(0, firstIndex);
+    // Bind `first` to the phrase it modifies. "Grill me first" is
+    // interview-first; "grill me after you review first" is action-first.
+    if (!CONTINUATION_ACTION_INTENT.test(beforeFirst) &&
+        !/\b(?:after|before|but|until)\b/.test(beforeFirst)) return true;
+  }
+  return new RegExp(`\\bbefore\\b[^,.;!?]{0,100}${INTERVIEW_FIRST_TARGET.source}`).test(afterInterview);
+}
+
+function requestsContinuation(taskText, interviewPlaybook) {
+  const interviewIndex = interviewCueIndex(taskText, interviewPlaybook);
+  if (interviewIndex === undefined) return false;
+  if (CONTINUATION_ACTION_INTENT.test(taskText.slice(0, interviewIndex))) {
+    return explicitlyInterviewFirst(taskText, interviewIndex);
+  }
+  const afterInterview = taskText.slice(interviewIndex);
+  return new RegExp(
+    `\\b(?:before|then|next|after(?:ward|wards| that)?|and(?: then)?)\\b[^,.;!?]{0,100}${CONTINUATION_ACTION_INTENT.source}`,
+  ).test(afterInterview);
+}
+
+function requestsPostActionInterview(taskText, interviewPlaybook) {
+  const interviewIndex = interviewCueIndex(taskText, interviewPlaybook);
+  if (interviewIndex === undefined || explicitlyInterviewFirst(taskText, interviewIndex)) return false;
+  const beforeInterview = taskText.slice(0, interviewIndex);
+  const afterInterview = taskText.slice(interviewIndex);
+  const actionBefore = CONTINUATION_ACTION_INTENT.test(beforeInterview);
+  const actionAfter = CONTINUATION_ACTION_INTENT.test(afterInterview);
+  const completionBefore = actionBefore && /\b(?:once|when|only\s+after)\b/.test(beforeInterview);
+  return (actionBefore && (
+    completionBefore ||
+    /^\s*after\b/.test(taskText) ||
+    /\b(?:and(?:\s+then)?|then|before(?:\s+you)?|after(?:ward|wards)?)\b[^,.;!?]*$/.test(beforeInterview) ||
+    /\bafter(?:ward|wards)?\b/.test(afterInterview)
+  )) || (actionAfter && new RegExp(
+    `\\bafter\\b[^,.;!?]{0,100}${CONTINUATION_ACTION_INTENT.source}`,
+  ).test(afterInterview));
 }
 
 // ─── Stack-aware affinity (derived, agnostic) ────────────────────────────────
@@ -167,22 +272,155 @@ function matchesCue(text, cue) {
   return new RegExp(`(?:^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`).test(text);
 }
 
-function resolveWorkflow(taskText, workflow = {}) {
-  const { conditional_contract: contract, ...base } = workflow;
-  if (!contract) return base;
-
+function matchingConditionalContract(taskText, workflow = {}) {
+  const contract = workflow.conditional_contract;
+  if (!contract) return null;
   const matches = (cue) => matchesCue(taskText, cue);
-  const allMatch = (contract.when_all || []).every(matches);
-  const anyMatch = !(contract.when_any || []).length || contract.when_any.some(matches);
-  if (!allMatch || !anyMatch) return base;
+  const allCues = Array.isArray(contract.when_all) ? contract.when_all : [];
+  const anyCues = Array.isArray(contract.when_any) ? contract.when_any : [];
+  if (!allCues.length && !anyCues.length) return null;
+  const allMatch = allCues.every(matches);
+  const anyMatch = !anyCues.length || anyCues.some(matches);
+  return allMatch && anyMatch ? contract : null;
+}
+
+function resolveWorkflow(taskText, workflow = {}) {
+  const {
+    conditional_contract: _conditionalContract,
+    non_interview_contract: _nonInterviewContract,
+    ...base
+  } = workflow;
+  const contract = negatesInterviewCapability(taskText)
+    ? workflow.non_interview_contract
+    : matchingConditionalContract(affirmativeRoutingText(taskText), workflow);
+  if (!contract) return base;
 
   return {
     ...base,
     phases: contract.phases || base.phases,
+    gates: contract.gates || base.gates,
+    agent_contracts: contract.agent_contracts || base.agent_contracts,
     output: contract.output || base.output,
     validation: contract.validation || base.validation,
     recovery: contract.recovery || base.recovery,
-    requirements: contract.requirements || [],
+    requirements: contract.requirements || base.requirements || [],
+  };
+}
+
+function resolveAgents(taskText, playbook = {}) {
+  const contract = negatesInterviewCapability(taskText)
+    ? playbook.workflow?.non_interview_contract
+    : matchingConditionalContract(affirmativeRoutingText(taskText), playbook.workflow);
+  return contract?.agents || playbook.agents || [];
+}
+
+function resolveSkillFlow(taskText, playbook = {}) {
+  const contract = negatesInterviewCapability(taskText)
+    ? playbook.workflow?.non_interview_contract
+    : null;
+  return contract?.skill_flow || playbook.skill_flow;
+}
+
+function unique(items) {
+  return [...new Set(items.filter(Boolean))];
+}
+
+function workflowContracts(workflow, agents, label) {
+  if (workflow.agent_contracts && Object.keys(workflow.agent_contracts).length) {
+    return workflow.agent_contracts;
+  }
+  const declaredAgents = agents || [];
+  const phases = workflow.phases || [];
+  if (!declaredAgents.length || !phases.length) return {};
+  if (declaredAgents.length > 1) {
+    throw new Error(`${label}: cannot compose a multi-agent workflow without workflow.agent_contracts`);
+  }
+  const owner = declaredAgents[0];
+  return {
+    [owner]: {
+      phases,
+      output: workflow.output,
+      verification: workflow.validation,
+    },
+  };
+}
+
+function composeSequentialWorkflows(taskText, result, continuation, transition) {
+  const continuationWorkflow = resolveWorkflow(taskText, continuation.pb.workflow);
+  const primaryPhases = result.workflow.phases || [];
+  const usedPhases = new Set(primaryPhases);
+  const phaseMap = new Map();
+  const continuationPhases = (continuationWorkflow.phases || []).map((phase) => {
+    let mapped = phase;
+    if (usedPhases.has(mapped)) mapped = `${continuation.name}: ${phase}`;
+    let suffix = 2;
+    while (usedPhases.has(mapped)) mapped = `${continuation.name}: ${phase} (${suffix++})`;
+    usedPhases.add(mapped);
+    phaseMap.set(phase, mapped);
+    return mapped;
+  });
+  const continuationGates = Object.fromEntries(Object.entries(continuationWorkflow.gates || {})
+    .map(([phase, gate]) => [phaseMap.get(phase) || phase, gate]));
+  const primaryGates = { ...(result.workflow.gates || {}) };
+  const primaryLastPhase = primaryPhases.at(-1);
+  if (primaryLastPhase && continuationPhases.length && !primaryGates[primaryLastPhase]) {
+    primaryGates[primaryLastPhase] = { kind: "soft" };
+  }
+  const continuationAgents = resolveAgents(taskText, continuation.pb);
+  const continuationContracts = Object.fromEntries(Object.entries(
+    workflowContracts(continuationWorkflow, continuationAgents, `playbook ${continuation.name}`),
+  )
+    .map(([agent, contract]) => [agent, {
+      ...contract,
+      phases: (contract.phases || []).map((phase) => phaseMap.get(phase) || phase),
+    }]));
+  const fulfilledCapabilities = transition === "after-primary"
+    ? new Set()
+    : new Set((result.skill_flow.steps || [])
+      .map((step) => step.capability)
+      .filter(Boolean));
+  const continuationSteps = (continuation.pb.skill_flow.steps || [])
+    .filter((step) => !step.capability || !fulfilledCapabilities.has(step.capability));
+  const mergedContracts = { ...workflowContracts(result.workflow, result.agents, `playbook ${result.playbook}`) };
+  for (const [agent, contract] of Object.entries(continuationContracts)) {
+    const primary = mergedContracts[agent];
+    mergedContracts[agent] = primary ? {
+      ...primary,
+      ...contract,
+      phases: unique([...(primary.phases || []), ...(contract.phases || [])]),
+      output: unique([primary.output, contract.output]).join("; then "),
+      verification: unique([primary.verification, contract.verification]).join("; and "),
+    } : contract;
+  }
+
+  return {
+    ...result,
+    continuation: {
+      playbook: continuation.name,
+      description: continuation.pb.description || "",
+      transition,
+      questions: unique(continuation.pb.questions || []),
+    },
+    alternates: result.alternates.filter(({ playbook }) => playbook !== continuation.name),
+    workflow: {
+      ...result.workflow,
+      phases: [...primaryPhases, ...continuationPhases],
+      gates: { ...primaryGates, ...continuationGates },
+      agent_contracts: mergedContracts,
+      requirements: unique([
+        ...(result.workflow.requirements || []),
+        ...(continuationWorkflow.requirements || []),
+      ]),
+      output: `${result.workflow.output} Then continue with ${continuationWorkflow.output}.`,
+      validation: `${result.workflow.validation} Then ${continuationWorkflow.validation}.`,
+      recovery: `${result.workflow.recovery} After the first workflow is complete, ${continuationWorkflow.recovery}.`,
+    },
+    skill_flow: {
+      label: `${result.skill_flow.label} -> ${continuation.pb.skill_flow.label}`,
+      steps: [...(result.skill_flow.steps || []), ...continuationSteps],
+    },
+    agents: unique([...result.agents, ...continuationAgents]),
+    questions: unique(result.questions),
   };
 }
 
@@ -214,16 +452,20 @@ export function loadPlaybooks({ projectPlaybookDir } = {}) {
 export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null) {
   // Pick the best playbook for a task. Returns a recommendation object.
   const taskText = (task || "").toLowerCase();
-  let haystack = taskText;
+  const routingTaskText = affirmativeRoutingText(taskText);
+  let haystack = routingTaskText;
   const taskHasRoutingCue = Object.entries(playbooks).some(([name, playbook]) =>
     name !== FALLBACK_PLAYBOOK && matchedKeywords(taskText, playbook).length > 0,
   );
   if (!taskHasRoutingCue && facts && facts.length) haystack += " " + facts.join(" ").toLowerCase();
-  const affirmativeTaskText = taskText.replace(/\b(?:do not|don't|dont|without)\s+(?:add|build|create|fix|implement)\b/g, "");
-  const isImplementation = IMPLEMENTATION_INTENT.test(affirmativeTaskText);
-  const isExplicitSecurityAudit = EXPLICIT_SECURITY_AUDIT.test(taskText);
-  const isExplicitUiReview = EXPLICIT_UI_REVIEW.test(taskText);
-  const hasCodeStructureIntent = CODE_STRUCTURE_INTENT.test(taskText);
+  // Documentation verbs such as "update docs" must not receive the generic
+  // feature boost. The documentation playbook is the more specific contract;
+  // mixed work can still be stated as a separate implementation clause.
+  const isImplementation = IMPLEMENTATION_INTENT.test(routingTaskText) &&
+    !DOCUMENTATION_TARGET.test(routingTaskText);
+  const isExplicitSecurityAudit = EXPLICIT_SECURITY_AUDIT.test(routingTaskText);
+  const isExplicitUiReview = EXPLICIT_UI_REVIEW.test(routingTaskText);
+  const hasCodeStructureIntent = CODE_STRUCTURE_INTENT.test(routingTaskText);
   if (isImplementation) haystack += " feature";
 
   // Stack-aware affinity is active only when we actually profiled the target
@@ -267,7 +509,7 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
     //     false keyword match — drop its score to 0 so a real software playbook
     //     (boosted or not) wins. Stack-agnostic: corrects a misread of the task.
     const matchedKws = count > 0 ? matchedKeywords(haystack, pb) : [];
-    if (score > 0 && shouldDemoteLoneMediumNoun(taskText, matchedKws, pb)) {
+    if (score > 0 && shouldDemoteLoneMediumNoun(routingTaskText, matchedKws, pb)) {
       score = 0;
       count = 0;
     }
@@ -287,6 +529,31 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
       if (uiIndex > 0) ranked.unshift(ranked.splice(uiIndex, 1)[0]);
     }
   }
+  // An explicitly requested interview is a sequencing instruction: settle the
+  // decision first, then continue the review/build task. Preserve that human
+  // checkpoint even when the rest of the sentence strongly matches another
+  // playbook. Derived from the playbook's declared capability and keywords,
+  // not from a hardcoded playbook name.
+  const interviewIndex = ranked.findIndex(({ pb: playbook }) => explicitlyRequestsInterview(routingTaskText, playbook));
+  let continuation = null;
+  let postActionInterview = null;
+  if (interviewIndex >= 0) {
+    const interviewEntry = ranked[interviewIndex];
+    if (requestsPostActionInterview(routingTaskText, interviewEntry.pb)) {
+      const actionEntry = ranked.find((entry, index) => index !== interviewIndex && entry.score > 0) || null;
+      if (actionEntry) {
+        postActionInterview = interviewEntry;
+        const actionIndex = ranked.indexOf(actionEntry);
+        if (actionIndex > 0) ranked.unshift(ranked.splice(actionIndex, 1)[0]);
+      }
+    } else {
+      continuation = requestsContinuation(routingTaskText, interviewEntry.pb)
+        ? ranked.find((entry, index) => index !== interviewIndex && entry.score > 0) || null
+        : null;
+      interviewEntry.score = Math.max(interviewEntry.score, 1);
+      if (interviewIndex > 0) ranked.unshift(ranked.splice(interviewIndex, 1)[0]);
+    }
+  }
 
   let name, pb, score, context;
   if (!ranked.length || ranked[0].score === 0) {
@@ -303,7 +570,7 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
     .filter((r) => r.score > 0)
     .map((r) => ({ playbook: r.name, score: r.score, description: (r.pb.description || "") }));
 
-  const result = {
+  let result = {
     playbook: name,
     playbook_description: pb.description || "",
     score,
@@ -311,9 +578,9 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
     matched_context: context,
     alternates,
     workflow: resolveWorkflow(taskText, pb.workflow),
-    skill_flow: pb.skill_flow,
-    agents: pb.agents || [],
-    questions: pb.questions || [],
+    skill_flow: resolveSkillFlow(taskText, pb),
+    agents: resolveAgents(taskText, pb),
+    questions: negatesInterviewCapability(taskText) ? [] : pb.questions || [],
     baseline_skills: [],
   };
   // Provenance appears only when loadPlaybooks was given a project directory;
@@ -321,6 +588,11 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
   if (pb.playbook_source) {
     result.playbook_source = pb.playbook_source;
     result.playbook_source_path = pb.playbook_source_path;
+  }
+  if (continuation && explicitlyRequestsInterview(routingTaskText, pb)) {
+    result = composeSequentialWorkflows(taskText, result, continuation, "after-decision");
+  } else if (postActionInterview && !explicitlyRequestsInterview(routingTaskText, pb)) {
+    result = composeSequentialWorkflows(taskText, result, postActionInterview, "after-primary");
   }
   return result;
 }

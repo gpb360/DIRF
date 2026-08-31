@@ -84,9 +84,10 @@ test("clean non-main worktree can be archived without deleting its branch", () =
   const { slug, root } = attemptFixture();
   const worktree = join(tmpdir(), `dirf-board-wt-${Date.now()}`);
   execFileSync("git", ["worktree", "add", "-q", "-b", "board-test", worktree], { cwd: root });
-  const record = archiveWorktree(slug, worktree, new Date("2026-08-01T00:00:00.000Z"));
+  const archivedAt = new Date("2026-08-01T00:00:00.000Z");
+  const record = archiveWorktree(slug, worktree, archivedAt);
   assert.equal(record.branch, "board-test");
-  assert.equal(inspectProjectWorktrees(slug).find((entry) => entry.branch === "board-test").cleanup_state, "archived");
+  assert.equal(inspectProjectWorktrees(slug, archivedAt).find((entry) => entry.branch === "board-test").cleanup_state, "archived");
   execFileSync("git", ["worktree", "remove", "-f", worktree], { cwd: root });
   execFileSync("git", ["branch", "-D", "board-test"], { cwd: root, stdio: "ignore" });
 });

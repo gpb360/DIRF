@@ -65,6 +65,13 @@ skills:
 DIRF prepares and records the route. Your agent host still performs the work,
 and you keep control of consequential actions.
 
+DIRF can add diagnostic preflight model advice when the host supplies
+`--models FILE`. It selects the lowest host-reported cost tier that declares
+each capability known when the workflow is built and stores the catalog hash.
+Without a catalog it says advice is unavailable. It does not claim to cover
+work discovered later, query live prices, invoke a model, monitor a session, or
+authorize spend.
+
 ## Install
 
 DIRF currently runs from a local clone:
@@ -97,8 +104,9 @@ inside the canonical attempt, then prepares an analysis brief for the connected
 agent. It treats embedded code and instructions as untrusted text. Intake,
 comparison, and recommendation do not edit DIRF or the host repository. A
 connected agent continues the new attempt immediately through those read-only
-steps and stops at the decision gate. The printed resume command is only for
-recovery in a later session. DIRF requires the recommendation artifact and
+steps and stops at the decision gate. Plain output stays to one short status
+line; `--json` includes the attempt ID and resume command for machine recovery.
+DIRF requires the recommendation artifact and
 decision gate to be explicitly accepted before the same attempt may implement
 at most one named, reversible experiment.
 
@@ -144,6 +152,7 @@ apply and take precedence.
 
 ```bash
 node src/cli.js flow "review this pull request" --path "../my-project"
+node src/cli.js flow "grill me about this design before implementation" --path "../my-project"
 node src/cli.js skills scan --path "../my-project"
 node src/cli.js list --path "../my-project"
 node src/cli.js state which --path "../my-project"
@@ -152,6 +161,22 @@ node src/cli.js validate
 
 The rest of this README is the technical reference for how DIRF routes,
 renders, stores, and resumes workflows.
+
+DIRF keeps the three interview modes distinct:
+
+- **Grill Me** is the human-invoked checkpoint. It inspects available facts,
+  asks one load-bearing question at a time, and records confirmation before
+  implementation.
+- **Grilling** is the model-invoked interview engine. A generic request to
+  clarify a plan can select it directly without pretending the human command
+  is an autonomous skill.
+- **Grill With Docs** uses the same interview, then assigns a documentation
+  owner to update the glossary, project context, or an ADR from accepted
+  decisions only. Unresolved options are not written as settled facts.
+
+When an interview is requested before a review or build, DIRF keeps the
+original task in the same workflow and continues it after the confirmation
+decision. A standalone interview ends with the confirmed plan.
 
 ## Governed agent execution
 
@@ -246,17 +271,19 @@ its own promotion policy using its existing review and tracker audit trail.
 
 Each per-agent detail file is self-contained: role, **USE THESE SKILLS**
 (resolved live from the host index, with installed/recommended status),
-**YOUR JOB** (from the agent markdown), **NOT YOUR JOB** (boundary), and a
-done-when checklist.
+**YOUR JOB** (from the agent markdown), and **NOT YOUR JOB** (boundary). When a
+playbook declares role contracts, the listed agents also receive their owned
+phases, required result, verification, and the same done-when checklist in
+Markdown and HTML.
 
 ## CLI reference
 
 ```
 # building workflows
 dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
-dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--open]   full pipeline: route -> JSON -> md + html
-dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--research] discovery through handoff, without implementation
-dirf create <name> "<task>" [--path DIR] [--profile FILE]             route -> workflow JSON only
+dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--open]   full pipeline: route -> JSON -> md + html
+dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--research] discovery through handoff, without implementation
+dirf create <name> "<task>" [--path DIR] [--profile FILE] [--models FILE]             route -> workflow JSON only
 dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
 dirf list [--path DIR]                               list a project's attempts
 dirf resume <name-or-id> [--path DIR]                load one attempt's workflow + HANDOFF.md
@@ -289,7 +316,7 @@ dirf export graphify [--out DIR] [--skip-render]     export the portfolio as a g
 # inspection + registries
 dirf skills scan [--path DIR]                        scan host, show installed skills + resolved refs
 dirf inspect [<path>]                                detect a project's optimization stack + suggest gaps
-dirf flow "<task>" [--path DIR] [--profile FILE]     show the ordered skill flow for a task
+dirf flow "<task>" [--path DIR] [--profile FILE] [--models FILE]     show the ordered skill flow and optional model advice
 dirf validate                                        validate registries + workflows
 dirf validate <folder>                               validate one folder DAG
 dirf graph <folder>                                  show deterministic execution order
@@ -367,6 +394,21 @@ Use an explicit JSON profile to limit one routing invocation to named skills:
 Pass it with `--profile FILE` to `build`, `plan`, `create`, `flow`, or `learn`.
 Unavailable names remain visible gaps. `dirf skills scan` still shows the full
 installed inventory. Profiles have no automatic project default or layering.
+
+Use a separate host-provided model catalog when diagnostic routing advice is
+useful:
+
+```json
+{"models":[
+  {"name":"fast-model","cost_tier":"low","capabilities":["code review","testing"]},
+  {"name":"frontier-model","cost_tier":"high","capabilities":["*"]}
+]}
+```
+
+Pass it with `--models FILE` to `build`, `plan`, `create`, or `flow`. DIRF
+matches declared preflight workflow capabilities, chooses the lowest reported tier, and
+stores only portable advice plus the catalog SHA-256. The flag does not run a
+model, check current prices, monitor work, or grant spending authority.
 
 **Scan roots** (all optional): `~/.agents/skills/`, `~/.codex/skills/`,
 `~/.claude/skills/`, `~/.zcode/.../skills/`, plus project-local equivalents.
@@ -470,7 +512,8 @@ dirf settings set --stale-project-days 30
 
 **Status is also evidence-aware.** Attempts whose HANDOFF.md carries a
 completion marker (`## Status: Complete.` or a filled-in `## Completed` section)
-are reported as `done` even if the lifecycle was never updated — the store's
+are reported as `done` even if the lifecycle was never updated, provided no
+workflow gates remain pending — the store's
 `attempt.json` is never modified by the view. When the lifecycle has genuinely
 drifted (work happened, status stayed `planned`), promote the evidence:
 
@@ -485,6 +528,9 @@ advances that attempt to the reported phase (start → in_progress, in_progress 
 advance). You may omit `--attempt` only when the project has zero or one attempt;
 when a name is reused, pass the full attempt ID. Completion still requires the
 explicit `dirf attempt complete` gate.
+Final-phase gates are enforced too: use `--confirm`, include
+`--evidence "<exact command>" [--output "<result>"]` when the final phase
+declares verification, and satisfy any final decision or artifact requirement.
 
 ### Obsidian export
 

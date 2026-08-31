@@ -47,6 +47,94 @@ test("negated implementation language does not override explicit PR review", () 
   assert.equal(recommend("Review PR #900 and do not add split behavior").playbook, "pr-review");
 });
 
+test("standalone negated actions do not route the forbidden work", () => {
+  for (const [task, forbidden] of [
+    ["Do not deploy the release", "deployment"],
+    ["Do not review PR 47", "pr-review"],
+    ["Do not implement the feature", "fullstack-feature"],
+    ["Do not review skipped tests", "pr-review"],
+    ["Do not review ignored findings", "pr-review"],
+    ["Do not review unanswered questions", "pr-review"],
+    ["Do not implement skipped tickets", "fullstack-feature"],
+  ]) {
+    assert.notEqual(recommend(task).playbook, forbidden);
+    assert.equal(recommend(task).playbook, "triage");
+  }
+});
+
+test("negated clauses preserve explicit replacement work", () => {
+  for (const task of [
+    "Do not grill me and instead review PR 47",
+    "Don't interview me—just review PR 47",
+  ]) assert.equal(recommend(task).playbook, "pr-review");
+});
+
+test("common interview exclusions are normalized before routing", () => {
+  for (const task of [
+    "Do not ask me questions; improve the plan another way",
+    "Improve the plan without an interview",
+    "Improve the plan; no questions",
+    "Improve the plan; no interview",
+    "Improve the plan; no interviews",
+    "Improve the plan; skip the interview",
+    "Improve the plan; avoid interview",
+    "Improve the plan; do not use an interview",
+    "Improve the plan; don't run an interview",
+    "Improve the plan; do not start an interview",
+    "Improve the plan; avoid asking me questions",
+    "Improve the plan; skip asking me questions",
+    "Improve the plan without asking me questions",
+    "Improve the plan; I don't want an interview",
+    "Improve the plan; no more questions",
+    "Improve the plan; do not ask any more questions",
+    "Improve the plan; I don't want any questions",
+    "Improve the plan without any questions",
+    "Improve the plan; avoid any more questions",
+    "Improve the plan; skip any further questions",
+    "Improve the plan; I don't want any more questions",
+    "Improve the plan; I don't want to be interviewed",
+    "Improve the plan without interviewing me",
+    "Improve the plan; avoid interviewing me",
+    "Improve the plan; skip interviewing me",
+  ]) {
+    const result = recommend(task);
+    assert.equal(result.playbook, "improve-plan", task);
+    assert.equal(result.questions.length, 0, task);
+    assert.ok(result.skill_flow.steps.every((step) => step.capability !== "plan interview"), task);
+    assert.ok(result.workflow.phases.includes("draft the smallest evidence-based plan"), task);
+  }
+  assert.equal(recommend("Review PR 47, but do not use Grill Me").playbook, "pr-review");
+});
+
+test("negative complements preserve the requested complete interview", () => {
+  for (const task of [
+    "Improve the plan; I don't want any questions unanswered",
+    "Improve the plan; I don't want any questions left unanswered",
+    "Improve the plan; I don't want an interview cut short",
+    "Improve the plan; I don't want any questions to be left unanswered",
+    "Improve the plan; I don't want the interview to be cut short",
+    "Improve the plan; I don't want any questions to go unanswered",
+    "Improve the plan; no questions should be left unanswered",
+    "Improve the plan; no questions must remain unanswered",
+  ]) {
+    const result = recommend(task);
+    assert.equal(result.playbook, "improve-plan", task);
+    assert.ok(result.questions.length > 0, task);
+    assert.ok(result.skill_flow.steps.some((step) => step.capability === "plan interview"), task);
+    assert.ok(result.workflow.phases.includes("ask and record one decision at a time"), task);
+  }
+});
+
+test("explicit interview replacements remove only the excluded mode", () => {
+  const plain = recommend("Do not use Grill With Docs; use Grill Me instead");
+  assert.equal(plain.playbook, "improve-plan");
+  assert.ok(!plain.agents.includes("documentation-engineer"));
+
+  const documented = recommend("Do not use Grill Me; use Grill With Docs instead");
+  assert.equal(documented.playbook, "improve-plan");
+  assert.ok(documented.agents.includes("documentation-engineer"));
+});
+
 test("implementation intent outranks domain review terminology", () => {
   assert.equal(
     recommend("Add paid-save entitlement checks and creator execution review access with Supabase persistence and tests").playbook,
@@ -102,7 +190,218 @@ test("explicit large-work decision mapping routes to the optional planning playb
     kind: "decision",
     artifact_type: "research",
   });
+  assert.equal(result.skill_flow.steps[0].capability, "plan interview");
   assert.ok(result.workflow.phases.every((phase) => !/implement|build|execute/.test(phase)));
+});
+
+test("explicit Grill Me and one-question interview requests route to improve-plan", () => {
+  for (const task of [
+    "grill me about a design before implementation",
+    "grill with docs before implementation",
+    "grill-with-docs before implementation",
+    "interview me one question at a time to sharpen a software plan before implementation",
+  ]) {
+    const result = recommend(task);
+    assert.equal(result.playbook, "improve-plan");
+    assert.ok(result.workflow.phases.includes("confirm shared understanding"));
+    assert.deepEqual(result.workflow.gates["confirm shared understanding"], { kind: "decision" });
+  }
+});
+
+test("Grill With Docs adds a documentation owner after the accepted decision", () => {
+  const result = recommend("grill with docs before implementation");
+  assert.ok(result.agents.includes("documentation-engineer"));
+  assert.ok(result.workflow.phases.indexOf("record accepted domain language and durable decisions") >
+    result.workflow.phases.indexOf("confirm shared understanding"));
+  assert.deepEqual(result.workflow.agent_contracts["documentation-engineer"].phases, [
+    "record accepted domain language and durable decisions",
+  ]);
+  assert.match(result.workflow.agent_contracts["documentation-engineer"].verification, /accepted interview decision/);
+});
+
+test("an explicit interview checkpoint precedes a mixed review or build request", () => {
+  for (const [task, continuation, continuationPhase] of [
+    ["Review PR 47 and grill me about the risks first", "pr-review", "freeze exact base and head"],
+    ["Grill with docs before you review this pull request", "pr-review", "freeze exact base and head"],
+    ["Build the feature, but interview me one question at a time before implementation", "fullstack-feature", "define user outcome"],
+  ]) {
+    const result = recommend(task);
+    assert.equal(result.playbook, "improve-plan");
+    assert.deepEqual(result.workflow.gates["confirm shared understanding"], { kind: "decision" });
+    assert.equal(result.continuation.playbook, continuation);
+    assert.ok(result.workflow.phases.indexOf(continuationPhase) > result.workflow.phases.indexOf("confirm shared understanding"));
+    assert.ok(result.workflow.gates["define verification gates"], "the interview's final phase becomes a tracked transition");
+    assert.ok(result.skill_flow.steps.some((step) => step.capability === "code review" || step.capability === "testing"));
+  }
+});
+
+test("standalone interview topics do not invent continuation work", () => {
+  for (const task of [
+    "Grill me about the code architecture decisions",
+    "Grill me about security review expectations",
+  ]) {
+    const result = recommend(task);
+    assert.equal(result.playbook, "improve-plan");
+    assert.equal(result.continuation, undefined);
+  }
+});
+
+test("sequenced change, update, and writing verbs preserve requested continuation work", () => {
+  for (const task of [
+    "Grill me before changing the checkout flow",
+    "Grill me before modifying the checkout flow",
+    "Grill me before updating the checkout flow",
+    "Grill me, then write the approved feature",
+  ]) {
+    const result = recommend(task);
+    assert.equal(result.playbook, "improve-plan");
+    assert.equal(result.continuation.playbook, "fullstack-feature");
+  }
+});
+
+test("workflow composition does not repeat capabilities already fulfilled by the interview", () => {
+  const result = recommend("Grill me before changing the checkout flow");
+  const capabilities = result.skill_flow.steps.map((step) => step.capability);
+  assert.equal(capabilities.filter((capability) => capability === "plan interview").length, 1);
+  assert.equal(capabilities.filter((capability) => capability === "minimalism").length, 1);
+});
+
+test("action-first requests preserve both workflows in their stated order", () => {
+  for (const task of [
+    "Review the PR and grill me",
+    "Review the PR, then grill me",
+    "Review the PR before you grill me",
+    "Review the PR and grill me afterward",
+    "After you review the PR, grill me",
+    "Grill me after you review the PR",
+    "Grill me after you review the PR first",
+    "Grill me after you first review the PR",
+    "Once you review PR 47, grill me",
+    "When you finish reviewing PR 47, grill me",
+    "Only after reviewing PR 47, grill me",
+  ]) {
+    const result = recommend(task);
+    assert.equal(result.playbook, "pr-review", task);
+    assert.equal(result.continuation.playbook, "improve-plan", task);
+    assert.equal(result.continuation.transition, "after-primary", task);
+    assert.ok(result.workflow.phases.indexOf("freeze exact base and head") <
+      result.workflow.phases.indexOf("confirm shared understanding"), task);
+    assert.ok(result.continuation.questions.includes("What outcome should this plan optimize for?"), task);
+    assert.ok(!result.questions.includes("What outcome should this plan optimize for?"), task);
+  }
+});
+
+test("plain action-first conjunctions preserve build work before the interview", () => {
+  const result = recommend("Build the feature and grill me");
+  assert.equal(result.playbook, "fullstack-feature");
+  assert.equal(result.continuation.playbook, "improve-plan");
+  assert.equal(result.continuation.transition, "after-primary");
+  assert.ok(result.workflow.phases.indexOf("define user outcome") <
+    result.workflow.phases.indexOf("confirm shared understanding"));
+  const interviewSteps = result.skill_flow.steps
+    .map((step, index) => ({ ...step, index }))
+    .filter((step) => step.capability === "plan interview");
+  assert.equal(interviewSteps.length, 2);
+  assert.equal(interviewSteps.at(-1).stage, "decide");
+  assert.ok(interviewSteps.at(-1).index >= loadPlaybooks()["fullstack-feature"].skill_flow.steps.length);
+});
+
+test("composed workflows give every phase exactly one typed owner", () => {
+  for (const task of ["Grill me before reviewing PR 47", "Review PR 47, then grill me"]) {
+    const result = recommend(task);
+    const ownership = new Map(result.workflow.phases.map((phase) => [phase, []]));
+    for (const [agent, contract] of Object.entries(result.workflow.agent_contracts)) {
+      for (const phase of contract.phases) ownership.get(phase).push(agent);
+    }
+    for (const [phase, owners] of ownership) assert.equal(owners.length, 1, `${task}: ${phase}`);
+  }
+});
+
+test("common multi-agent actions compose with declared ownership", () => {
+  for (const task of [
+    "Grill me, then fix the checkout bug",
+    "Grill me, then run a security audit",
+    "Grill me, then deploy the release",
+    "Grill me, then build a landing page",
+  ]) {
+    const result = recommend(task);
+    assert.equal(result.playbook, "improve-plan", task);
+    assert.ok(result.continuation, task);
+    const ownership = new Map(result.workflow.phases.map((phase) => [phase, []]));
+    for (const [agent, contract] of Object.entries(result.workflow.agent_contracts)) {
+      for (const phase of contract.phases) ownership.get(phase).push(agent);
+    }
+    for (const [phase, owners] of ownership) assert.equal(owners.length, 1, `${task}: ${phase}`);
+  }
+});
+
+test("every bundled multi-agent workflow declares exactly one owner per phase", () => {
+  for (const [name, playbook] of Object.entries(loadPlaybooks())) {
+    if ((playbook.agents || []).length < 2) continue;
+    const owners = new Map(playbook.workflow.phases.map((phase) => [phase, []]));
+    for (const [agent, contract] of Object.entries(playbook.workflow.agent_contracts || {})) {
+      for (const phase of contract.phases || []) owners.get(phase)?.push(agent);
+    }
+    for (const [phase, phaseOwners] of owners) {
+      assert.equal(phaseOwners.length, 1, `${name}: ${phase}`);
+    }
+  }
+});
+
+test("generic interview negation resolves a complete non-interview plan", () => {
+  const result = recommend("Do not interview me; improve the plan another way");
+  assert.equal(result.playbook, "improve-plan");
+  assert.equal(result.questions.length, 0);
+  assert.equal(result.skill_flow.steps.some((step) => step.capability === "plan interview"), false);
+  const persisted = JSON.stringify({
+    phases: result.workflow.phases,
+    gates: result.workflow.gates,
+    contracts: result.workflow.agent_contracts,
+    output: result.workflow.output,
+    validation: result.workflow.validation,
+  });
+  assert.doesNotMatch(persisted, /ask and record|confirm shared understanding|one unresolved decision/i);
+  assert.ok(result.workflow.phases.includes("draft the smallest evidence-based plan"));
+});
+
+test("negated interview and action cues never become executable work", () => {
+  assert.equal(recommend("do not grill me, just review PR 47").playbook, "pr-review");
+  for (const task of [
+    "grill me about release risks but do not deploy anything",
+    "grill me, then I do not want you to deploy anything",
+    "grill me about the design but do not implement it",
+  ]) {
+    const result = recommend(task);
+    assert.equal(result.playbook, "improve-plan");
+    assert.equal(result.continuation, undefined);
+  }
+});
+
+test("documentation changes keep their specific playbook with or without an interview", () => {
+  assert.equal(recommend("update docs").playbook, "documentation");
+  const result = recommend("grill me then update docs");
+  assert.equal(result.playbook, "improve-plan");
+  assert.equal(result.continuation.playbook, "documentation");
+});
+
+test("continuation composition merges contracts owned by the same agent", () => {
+  const playbooks = structuredClone(loadPlaybooks());
+  const continuation = playbooks["fullstack-feature"];
+  continuation.agents = [...new Set([...continuation.agents, "workflow-orchestrator"])];
+  continuation.workflow.agent_contracts = {
+    "workflow-orchestrator": {
+      phases: ["define user outcome"],
+      output: "an implementation outcome",
+      verification: "the implementation outcome is verified",
+    },
+  };
+
+  const result = recommend("Build the feature, but grill me first", [], playbooks);
+  const contract = result.workflow.agent_contracts["workflow-orchestrator"];
+  assert.ok(contract.phases.includes("inspect repository facts and existing decisions"));
+  assert.ok(contract.phases.includes("define user outcome"));
+  assert.match(contract.output, /confirmed decision record.*implementation outcome/);
+  assert.match(contract.verification, /decision gate is accepted.*implementation outcome is verified/);
 });
 
 test("ordinary understood feature work bypasses decision mapping", () => {
@@ -160,6 +459,20 @@ test("workflow contract is carried through", () => {
   assert.ok(Array.isArray(r.agents) && r.agents.length > 0);
   assert.ok(Array.isArray(r.baseline_skills));
   assert.ok(Array.isArray(r.questions));
+});
+
+test("a cue-less conditional contract never replaces the base workflow", () => {
+  const base = {
+    description: "Route a demo task", keywords: ["demo"], agents: [], questions: [],
+    workflow: {
+      phases: ["base"], output: "base output", validation: "check base", recovery: "recover base",
+      conditional_contract: { phases: ["conditional"], output: "conditional output" },
+    },
+    skill_flow: { label: "demo", steps: [{ stage: "route", reason: "Route", capability: "minimalism" }] },
+  };
+  const result = recommend("demo", [], { triage: base, demo: base });
+  assert.deepEqual(result.workflow.phases, ["base"]);
+  assert.equal(result.workflow.output, "base output");
 });
 
 test("facts augment matching", () => {

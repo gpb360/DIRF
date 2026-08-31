@@ -77,6 +77,51 @@ DIRF respects this choice. A user-invoked skill may call a model-invoked skill,
 but it should not call another user-invoked skill. Add a router when several
 user-invoked skills need to work together.
 
+When a user names a human-only router explicitly, DIRF preserves every requested
+action. Explicit ordering controls the transition: action-first wording runs the
+action before the checkpoint; otherwise the checkpoint comes first and the
+original action continues after the decision is confirmed. Every skill
+referenced by that router must be installed and model-invoked. DIRF selects the
+reference that covers the requested capability
+as the executable engine and binds the remaining references as required
+dependencies. A missing or human-only dependency stops with a plain validation
+error instead of running a partial workflow. A generic task may select the
+engine directly. Keep the router small and put the repeatable process in the
+engine. If one router branch changes durable documentation, give that branch a
+named documentation owner and a phase after the acceptance decision. Do not
+add that owner to stateless interview runs.
+
+If the user explicitly excludes interviews or questions, route to a declared
+non-interview contract or fail closed. Removing only the interview skill is not
+enough: the persisted phases, gates, ownership, output, validation, questions,
+and rendered instructions must also honor the exclusion.
+
+## One capability, five connected views
+
+Treat an adopted capability as one behavior with five connected views:
+
+| View | Question it answers |
+|---|---|
+| Workflow | What happens, in what order, and where does work stop? |
+| Playbook | When should DIRF route here, and which gates apply? |
+| Agent | Who owns the action, decision, verification, and handoff? |
+| Code | What is validated, selected, persisted, or rendered deterministically? |
+| Documentation | How can a person understand and use it in ordinary language? |
+
+Do not copy the same instructions into five files. Keep one authoritative rule
+and make the other views point to or enforce it. For example, a plan interview
+has a one-question workflow, routes through the existing planning playbook,
+assigns question order to the workflow orchestrator while decisions remain
+user-owned, enforces the confirmation gate in code, and documents the normal
+and stateful variants once.
+
+Model-selection guidance follows the same rule. The workflow declares a
+diagnostic preflight advice phase, the agent organizer owns it, code derives it only from
+a host-provided catalog, and the rendered workflow carries the result. If the
+catalog is absent, record that advice is unavailable. Do not claim preflight
+advice covers work discovered later, and do not guess models or pricing. Advice
+never grants permission to invoke, monitor, or spend.
+
 ## Failure modes to prune
 
 - **Premature completion:** the completion rule is too vague to verify.
@@ -101,4 +146,5 @@ user-invoked skills need to work together.
 - [ ] Short leading words replace repeated explanations where they improve
       clarity.
 - [ ] The invocation class is deliberate and declared for user-invoked skills.
-- [ ] `dirf validate` passes and non-final phases declare their gates.
+- [ ] `dirf validate` passes; every phase that must stop for evidence or a
+      decision declares the applicable verify, decision, or soft gate.

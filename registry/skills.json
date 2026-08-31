@@ -198,6 +198,18 @@
       ]
     },
     {
+      "name": "model-advice",
+      "category": "planning",
+      "applies_to": [
+        "agent-organizer",
+        "workflow-orchestrator"
+      ],
+      "summary": "Portable preflight model suggestions from host-declared capabilities and cost tiers without invocation, monitoring, or live pricing",
+      "capabilities": [
+        "model selection advice"
+      ]
+    },
+    {
       "name": "agent-organizer",
       "category": "orchestration",
       "applies_to": [

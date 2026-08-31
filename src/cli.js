@@ -2,9 +2,9 @@
 // DIRF — Do It Right First. Unified CLI. Node built-ins only.
 //
 //   dirf setup [path] [--reserve-percent N]              configure a target repository
-//   dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--open] [--no-focused-output] [--playbooks DIR]
-//   dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--research] [--playbooks DIR]  lifecycle planning attempt
-//   dirf create <name> "<task>" [--path DIR] [--profile FILE] [--playbooks DIR]  route -> attempt workflow JSON only
+//   dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--open] [--no-focused-output] [--playbooks DIR]
+//   dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--research] [--playbooks DIR]  lifecycle planning attempt
+//   dirf create <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--playbooks DIR]  route -> attempt workflow JSON only
 //   dirf learn [URL|FILE|TEXT] [--path DIR] [--profile FILE] [--file FILE] create a read-only learning review
 //   dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
 //   dirf list [--path DIR]                               list saved attempts
@@ -25,12 +25,12 @@ import { ROOT, REGISTRY, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, fileHash, fold
 import { collectRoutingFacts, loadPlaybooks, recommend } from "./router.js";
 import { bundledSkills, discover, discoverAgents, enrichDiscovered, lintSkillMetadata, loadRegistry, loadTrustedSources, providerForPath, resolveAgentSkills, tokenBudget } from "./skills.js";
 import { FOCUSED_OUTPUT_RULES, buildInstructions, buildHtml } from "./renderer.js";
-import { main as validateMain } from "./validate.js";
+import { main as validateMain, validateSnapshot } from "./validate.js";
 import { inspect, detectStackProfile } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGateState, attemptResponsibility, pendingGates, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings } from "./state.js";
+import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings } from "./state.js";
 import { ARTIFACT_TYPES, explainGoverningArtifact } from "./artifacts.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 import {
@@ -42,6 +42,7 @@ import {
   verifyEvidenceLedger,
 } from "./governance.js";
 import { DEFAULT_ISSUE_POLICY } from "./issue-governance.js";
+import { buildModelAdvice, normalizeModelCatalog } from "./model-advice.js";
 import { bindingsFromPlan, refreshSkillBindings } from "./skill-bindings.js";
 
 const LIFECYCLE = {
@@ -51,6 +52,48 @@ const LIFECYCLE = {
   implement: "Execute one ticket per fresh context.",
   review: "Review independently against both the specification and repository standards.",
 };
+
+function planningContract(includeResearch = false) {
+  const phases = [
+    "resolve load-bearing decisions",
+    "model domain language and durable decisions",
+    ...(includeResearch ? ["research unresolved decisions against primary sources"] : []),
+    "write the approved specification",
+    "split the specification into dependency-ordered tickets",
+    "write the execution handoff",
+  ];
+  const agents = [
+    "workflow-orchestrator",
+    "knowledge-synthesizer",
+    ...(includeResearch ? ["research-analyst"] : []),
+    "agent-organizer",
+  ];
+  const agentContracts = {
+    "workflow-orchestrator": {
+      phases: ["resolve load-bearing decisions", "write the execution handoff"],
+      output: "accepted planning decisions and an exact execution handoff",
+      verification: "every unresolved decision is explicit and the handoff names one next action",
+    },
+    "knowledge-synthesizer": {
+      phases: ["model domain language and durable decisions", "write the approved specification"],
+      output: "consistent domain language, justified durable decisions, and a build-ready specification",
+      verification: "the specification traces every requirement to accepted context or recorded evidence",
+    },
+    "agent-organizer": {
+      phases: ["split the specification into dependency-ordered tickets"],
+      output: "dependency-ordered tickets with bounded ownership and verification",
+      verification: "every ticket traces to the approved specification and has a checkable result",
+    },
+  };
+  if (includeResearch) {
+    agentContracts["research-analyst"] = {
+      phases: ["research unresolved decisions against primary sources"],
+      output: "provenance-bound evidence for the unresolved planning decisions",
+      verification: "every factual recommendation cites a primary source and separates fact from inference",
+    };
+  }
+  return { phases, agents, agentContracts };
+}
 
 function enrichAgents(agentNames) {
   // Resolve playbook agent names into full entries (file, tags, skills) from the registry.
@@ -115,7 +158,7 @@ function castAgents(agents, hostAgents) {
 }
 
 function buildPlan(name, task, path, reservePercent = 5, compaction = null, focusedOutput = true, routing = {}) {
-  const { selection, skillFlow, discovered, hostAgents, facts, capabilityProfile } = assembleTaskRouting(task, path, routing);
+  const { selection, skillFlow, discovered, hostAgents, facts, capabilityProfile, modelAdvice } = assembleTaskRouting(task, path, routing);
   const agents = castAgents(enrichAgents(selection.agents), hostAgents).map((agent) => ({
     ...agent,
     skills: resolveAgentSkills(agent.name, agent.skills, [], discovered),
@@ -139,6 +182,7 @@ function buildPlan(name, task, path, reservePercent = 5, compaction = null, focu
     score: selection.score,
     matched_keywords: selection.matched_keywords,
     alternates: selection.alternates,
+    continuation: selection.continuation,
     repository: repositoryIdentity(path),
     repository_context: repositoryContext(path),
     workflow: selection.workflow,
@@ -146,6 +190,7 @@ function buildPlan(name, task, path, reservePercent = 5, compaction = null, focu
     skill_flow: skillFlow,
     capability_gaps: skillFlow.gaps,
     ...(capabilityProfile ? { capability_profile: capabilityProfile } : {}),
+    ...(modelAdvice ? { model_advice: modelAdvice } : {}),
     agents,
     baseline_skills: [],
     questions,
@@ -184,6 +229,20 @@ function readCapabilityProfile(file) {
     throw new Error("Capability profile skills must be names, not paths");
   }
   return { skills: [...new Set(profile.skills.map((name) => name.trim()))] };
+}
+
+function readModelCatalog(file) {
+  if (!file) return null;
+  let raw;
+  let catalog;
+  try {
+    raw = readFileSync(resolve(file), "utf8");
+    catalog = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`Model catalog must be readable JSON: ${error.message}`);
+  }
+  const sha256 = createHash("sha256").update(raw).digest("hex");
+  return normalizeModelCatalog(catalog, sha256);
 }
 
 function repositoryContext(root) {
@@ -244,6 +303,7 @@ function assembleTaskRouting(task, path, options = {}) {
       playbook_description: playbook.description,
       playbook_source: playbook.playbook_source,
       playbook_source_path: playbook.playbook_source_path,
+      continuation: undefined,
       workflow: playbook.workflow,
       skill_flow: playbook.skill_flow,
       agents: playbook.agents,
@@ -251,15 +311,11 @@ function assembleTaskRouting(task, path, options = {}) {
     };
   }
   if (options.planningOnly) {
+    const planning = planningContract(options.branches?.includes("research"));
+    selection.agents = planning.agents;
     selection.workflow = {
-      phases: [
-        "resolve load-bearing decisions",
-        "model domain language and durable decisions",
-        ...(options.branches?.includes("research") ? ["research unresolved decisions against primary sources"] : []),
-        "write the approved specification",
-        "split the specification into dependency-ordered tickets",
-        "write the execution handoff",
-      ],
+      phases: planning.phases,
+      agent_contracts: planning.agentContracts,
       output: "approved context, justified ADRs, a build-ready specification, dependency-ordered tickets, and an execution handoff",
       validation: "every ticket traces to the approved specification and every durable decision traces to context, an ADR, or cited research",
       recovery: "if a load-bearing decision remains unresolved, stop in discovery and record the blocker instead of producing speculative tickets",
@@ -289,15 +345,28 @@ function assembleTaskRouting(task, path, options = {}) {
     skillFlow.steps = skillFlow.steps.filter((step) => planningStages.has(step.stage));
     skillFlow.gaps = skillFlow.gaps.filter((gap) => planningStages.has(gap.stage));
   }
-  return { selection, discovered, hostAgents, facts, skillFlow, capabilityProfile: profileSnapshot };
+  const blockingGaps = skillFlow.gaps.filter((gap) => gap.blocking === true);
+  if (blockingGaps.length) {
+    throw new Error(`Task Routing validation failed:\n${blockingGaps.map((gap) => `  - ${gap.question}`).join("\n")}`);
+  }
+  const modelCatalog = readModelCatalog(options.models);
+  const modelAdvice = (options.models || skillFlow.steps.some((step) => step.capability === "model selection advice"))
+    ? buildModelAdvice(skillFlow, modelCatalog)
+    : null;
+  return { selection, discovered, hostAgents, facts, skillFlow, capabilityProfile: profileSnapshot, modelAdvice };
 }
 
 function savePlan(plan, attempt, target) {
   const path = join(attempt.folder, "workflow.json");
   plan.attempt = { id: attempt.id, path: attempt.relativePath };
+  const snapshot = portablePlan(plan);
+  const validationErrors = validateSnapshot(snapshot, `generated workflow ${attempt.id}`);
+  if (validationErrors.length) {
+    throw new Error(`Generated workflow validation failed:\n${validationErrors.map((error) => `  - ${error}`).join("\n")}`);
+  }
   const slug = resolveProject(target).slug;
   writeAttemptSkillBindings(slug, attempt.id, bindingsFromPlan(plan, target));
-  writeFileSync(path, JSON.stringify(portablePlan(plan), null, 2), "utf-8");
+  writeFileSync(path, JSON.stringify(snapshot, null, 2), "utf-8");
   const handoff = join(attempt.folder, "HANDOFF.md");
   if (!existsSync(handoff)) writeFileSync(handoff, [
     "# DIRF Handoff", "",
@@ -338,6 +407,7 @@ function cmdBuild(args) {
   const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction, args.focusedOutput !== false, {
     projectPlaybooks: args.playbooks,
     profile: args.profile,
+    models: args.models,
   });
   const attempt = createAttempt(target, args.name);
   const planPath = savePlan(plan, attempt, target);
@@ -357,6 +427,7 @@ function cmdPlan(args) {
     planningOnly: true,
     projectPlaybooks: args.playbooks,
     profile: args.profile,
+    models: args.models,
   });
   const attempt = createAttempt(target, args.name);
   const planPath = savePlan(plan, attempt, target);
@@ -371,6 +442,7 @@ function cmdCreate(args) {
   const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction, args.focusedOutput !== false, {
     projectPlaybooks: args.playbooks,
     profile: args.profile,
+    models: args.models,
   });
   const attempt = createAttempt(target, args.name);
   savePlan(plan, attempt, target);
@@ -470,13 +542,7 @@ async function cmdLearn(args) {
       next: `dirf resume ${attempt.id} --path ${JSON.stringify(target)}`,
     };
     if (args.json) console.log(JSON.stringify(result, null, 2));
-    else {
-      console.log(`Learning source saved: ${source.title}`);
-      console.log(`Attempt: ${attempt.id}`);
-      console.log("Repository changes: none");
-      console.log("Agent action: continue this attempt now and stop at its decision gate");
-      console.log(`Resume later: ${result.next}`);
-    }
+    else console.log("DIRF source saved; repo unchanged. Continuing review unless a decision is needed.");
   } catch (error) {
     updateAttemptLifecycle(slug, attempt.id, "block", { reason: `Learning intake failed: ${error.message}` });
     throw error;
@@ -516,7 +582,7 @@ function publicAttemptForSlug(slug, attempt) {
     wait: attempt.wait || null,
     worktree_path: attempt.worktree_path || null,
     gates,
-    pending_gates: gates.filter((gate) => gate.status !== "accepted" && gate.status !== "satisfied").map((gate) => gate.phase),
+    pending_gates: gates.filter(gateIsPending).map((gate) => gate.phase),
     evidence: attempt.evidence || {},
     next_action: attemptNextAction(slug, attempt.id),
   };
@@ -1298,6 +1364,12 @@ function parse(argv) {
       out.profile = file;
       continue;
     }
+    if (a === "--models") {
+      const file = rest[++i];
+      if (!file || file.startsWith("--")) throw new Error("--models requires FILE");
+      out.models = file;
+      continue;
+    }
     if (a === "--force") { out.force = true; continue; }
     if (a === "--project") { out.project = true; continue; }
     if (a === "--slug") { out.slug = rest[++i]; continue; }
@@ -1340,9 +1412,9 @@ const HELP = `DIRF — Do It Right First
 
 Usage:
   dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
-  dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--open] [--no-focused-output] [--playbooks DIR]
-  dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--research] [--open] [--no-focused-output] [--playbooks DIR]
-  dirf create <name> "<task>" [--path DIR] [--profile FILE] [--playbooks DIR]   JSON only
+  dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--open] [--no-focused-output] [--playbooks DIR]
+  dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--research] [--open] [--no-focused-output] [--playbooks DIR]
+  dirf create <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--playbooks DIR]   JSON only
   dirf learn [URL|FILE|TEXT] [--path DIR] [--profile FILE] [--file FILE] [--language CODE] [--name NAME] [--json]
                                                       ingest a source; implementation requires an accepted recommendation and decision
   dirf render <name-or-id> [--path DIR] [--open]       re-render an attempt
@@ -1356,6 +1428,7 @@ Usage:
                                                       record progress, update HANDOFF.md and sync the attempt lifecycle
   dirf attempt <action> <id> [--path DIR]              update lifecycle state
                                                       (advance: [--evidence "CMD" [--output F]] [--strict] [--auto])
+                                                      (complete: --confirm [--evidence "CMD" [--output F]] [--strict])
                                                       (gate <phase> accept|deny [--comment "..."]; block [--wait input|blocker])
                                                       (sync-from-handoff: backfill done from handoff evidence; no id = all)
   dirf artifact list <attempt> [--json]                list typed artifacts and governing versions
@@ -1372,7 +1445,8 @@ Usage:
   dirf export obsidian [--out DIR]                     export portfolio into an Obsidian vault (notes + canvas)
   dirf export graphify [--out DIR] [--skip-render]    export portfolio as a graphify graph (+ HTML render)
   dirf inspect [<path>]                                detect a project's optimization stack + suggest gaps
-  dirf flow "<task>" [--path DIR] [--profile FILE]     show the ordered skill flow for a task (ask-matt style)
+  dirf flow "<task>" [--path DIR] [--profile FILE] [--models FILE]
+                                                      show the ordered skill flow and optional diagnostic model advice
   dirf govern <digest|evaluate|append|verify> [...]    decide actions and maintain a hash-linked evidence ledger
   dirf state which [--path DIR]                       what project am I in? (slug + store path)
   dirf state list                                      list all registered projects
@@ -1406,8 +1480,8 @@ Plain language (natural-English aliases for the same commands):
 
 function cmdFlow(args) {
   const task = args._.join(" ");
-  if (!task) { console.error("usage: dirf flow \"<task>\" [--path DIR] [--profile FILE]"); process.exit(2); }
-  const { skillFlow: flow, capabilityProfile } = assembleTaskRouting(task, projectRoot(args.path), { profile: args.profile });
+  if (!task) { console.error("usage: dirf flow \"<task>\" [--path DIR] [--profile FILE] [--models FILE]"); process.exit(2); }
+  const { skillFlow: flow, capabilityProfile, modelAdvice } = assembleTaskRouting(task, projectRoot(args.path), { profile: args.profile, models: args.models });
   console.log(`Flow: ${flow.label}`);
   console.log(`Playbook: ${flow.playbook}${flow.branches.length ? ` (branches: ${flow.branches.join(", ")})` : ""}\n`);
   if (capabilityProfile) {
@@ -1419,8 +1493,24 @@ function cmdFlow(args) {
     if (s.stage !== lastStage) { console.log(`\n[${s.stage}]`); lastStage = s.stage; }
     const mark = s.status === "installed" ? "✅" : "⚠️";
     const note = s.status === "installed" ? "" : " (recommended — not installed)";
-    console.log(`  ${mark} ${s.skill}${note}`);
+    const prefix = s.invocation === "user" ? "[user checkpoint]" : mark;
+    console.log(`  ${prefix} ${s.skill}${note}`);
     console.log(`      ${s.reason}`);
+  }
+  if (flow.gaps.length) {
+    console.log("\n[gaps]");
+    for (const gap of flow.gaps) console.log(`  ${gap.question}`);
+  }
+  if (modelAdvice) {
+    console.log("\n[model advice — diagnostic preflight]");
+    console.log(`  ${modelAdvice.rationale}`);
+    for (const recommendation of modelAdvice.recommendations) {
+      console.log(`  ${recommendation.model} (${recommendation.cost_tier}): ${recommendation.capabilities.join(", ")}`);
+    }
+    if (modelAdvice.uncovered_capabilities.length) {
+      console.log(`  Uncovered: ${modelAdvice.uncovered_capabilities.join(", ")}`);
+    }
+    console.log("  Preflight advice only; DIRF did not invoke a model, monitor a session, query live pricing, or authorize spend.");
   }
 }
 

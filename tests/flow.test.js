@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildFlow, findCapabilityGaps, reconcile } from "../src/flow.js";
+import { buildFlow, findCapabilityGaps, reconcile, validateAgentContracts } from "../src/flow.js";
 import { bundledSkills } from "../src/skills.js";
-import { validateSnapshot } from "../src/validate.js";
+import { validatePlaybookAgentReferences, validateSnapshot } from "../src/validate.js";
+import { recommend } from "../src/router.js";
 
 const WORKFLOW = {
   phases: ["classify"],
@@ -10,6 +11,13 @@ const WORKFLOW = {
   validation: "Check the route",
   recovery: "Ask for context",
 };
+
+test("multi-agent workflows require explicit exact-one-owner contracts", () => {
+  assert.deepEqual(
+    validateAgentContracts({ phases: ["inspect", "build"] }, ["planner", "builder"], "demo"),
+    ["demo: multi-agent workflows require workflow.agent_contracts with exactly one owner per phase"],
+  );
+});
 
 test("Reconciliation rejects a Playbook without an ordered skill flow", () => {
   const errors = reconcile({ triage: { description: "Fallback", keywords: [], agents: [], workflow: WORKFLOW } });
@@ -81,6 +89,55 @@ test("Reconciliation requires a complete workflow contract", () => {
   ]);
 });
 
+test("Reconciliation rejects a conditional contract without a cue", () => {
+  const errors = reconcile({
+    triage: {
+      description: "Classify", keywords: [], agents: [],
+      workflow: {
+        ...WORKFLOW,
+        conditional_contract: { phases: ["replace"], output: "replacement" },
+      },
+      skill_flow: { label: "triage", steps: [{ stage: "route", skill: "grill-me", reason: "Classify" }] },
+    },
+  });
+  assert.ok(errors.includes("playbook triage: workflow.conditional_contract requires at least one when_all or when_any cue"));
+});
+
+test("Reconciliation fully validates the non-interview skill flow", () => {
+  const errors = reconcile({
+    triage: {
+      description: "Classify", keywords: [], agents: [],
+      workflow: {
+        ...WORKFLOW,
+        non_interview_contract: {
+          phases: ["classify"], output: "A route", validation: "Check the route", recovery: "Record the gap",
+          skill_flow: {
+            label: "",
+            steps: [{ capability: "minimalism", reason: "", branch: "unknown", output: "" }],
+          },
+        },
+      },
+      skill_flow: { label: "triage", steps: [{ stage: "route", skill: "grill-me", reason: "Classify" }] },
+    },
+  });
+  assert.ok(errors.includes("playbook triage non-interview contract: skill_flow.label must be a non-empty string"));
+  assert.ok(errors.includes("playbook triage non-interview contract: step 1 missing stage"));
+  assert.ok(errors.includes("playbook triage non-interview contract: step 1 missing reason"));
+  assert.ok(errors.includes("playbook triage non-interview contract: step 1 output must be a non-empty string"));
+  assert.ok(errors.includes("playbook triage non-interview contract: step 1 references unknown branch unknown"));
+});
+
+test("registry validation includes agents declared only by a non-interview contract", () => {
+  assert.deepEqual(validatePlaybookAgentReferences({
+    triage: {
+      agents: ["known"],
+      workflow: { non_interview_contract: { agents: ["known", "fabricated-fallback"] } },
+    },
+  }, new Set(["known"])), [
+    "playbook triage: references unknown agent fabricated-fallback",
+  ]);
+});
+
 test("Reconciliation tolerates an optional per-step output contract", () => {
   // Present and non-empty -> no error. Absent -> no error. Empty -> error.
   const ok = reconcile({
@@ -115,7 +172,7 @@ test("buildFlow assembles an existing Selection without classifying again", () =
     label: "build a feature",
     steps: [{
       stage: "build", capability: "testing", skill: "tdd", type: "skill", reason: "Drive one behavior",
-      output: "", status: "installed", provider: "project", path: "skills/tdd", selection_reason: "best installed match (105) for testing", rejected_candidates: [],
+      status: "installed", provider: "project", path: "skills/tdd", selection_reason: "best installed match (105) for testing", rejected_candidates: [],
     }],
     gaps: [],
     branches: [],
@@ -163,6 +220,204 @@ test("user-invoked-only hosts leave an automatic routing gap", () => {
   });
   assert.deepEqual(flow.steps, []);
   assert.equal(flow.gaps[0].capability, "copywriting");
+});
+
+test("a human router lends its capability to one installed model engine", () => {
+  const selection = {
+    playbook: "improve-plan", agents: [],
+    skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
+  };
+  const skills = {
+    "grill-me": {
+      path: "/user/grill-me", provider: "codex", invocation: "user",
+      capabilities: ["plan interview"], references: ["grilling"],
+    },
+    grilling: {
+      path: "/model/grilling", provider: "codex", invocation: "model",
+      description: "Relentless interview that sharpens a plan or design",
+    },
+  };
+
+  const flow = buildFlow(selection, { task: "interview me one question at a time" }, skills);
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["grilling"]);
+  assert.equal(flow.steps[0].selection_reason, "best installed match (110) for plan interview");
+  assert.deepEqual(flow.gaps, []);
+});
+
+test("an explicitly named human router is preserved before its model engine", () => {
+  const selection = {
+    playbook: "improve-plan", agents: [],
+    skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
+  };
+  const skills = {
+    "grill-me": {
+      path: "/user/grill-me", provider: "codex", invocation: "user",
+      capabilities: ["plan interview"], references: ["grilling"],
+    },
+    grilling: {
+      path: "/model/grilling", provider: "codex", invocation: "model",
+      description: "Relentless interview that sharpens a plan or design",
+    },
+  };
+
+  const flow = buildFlow(selection, { task: "grill me about the design before implementation" }, skills);
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["grill-me", "grilling"]);
+  assert.equal(flow.steps[0].invocation, "user");
+  assert.equal(flow.steps[0].human_checkpoint, true);
+  assert.match(flow.steps[1].selection_reason, /referenced by explicit human router grill-me/);
+  assert.deepEqual(flow.gaps, []);
+});
+
+test("a negated human router and its engine are excluded from capability assembly", () => {
+  const selection = {
+    playbook: "improve-plan", agents: [],
+    skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
+  };
+  const flow = buildFlow(selection, { task: "Do not grill me; improve the plan another way" }, {
+    "grill-me": {
+      path: "/user/grill-me", provider: "codex", invocation: "user",
+      capabilities: ["plan interview"], references: ["grilling"],
+    },
+    grilling: {
+      path: "/model/grilling", provider: "codex", invocation: "model",
+      description: "Relentless interview that sharpens a plan or design",
+    },
+    "plan-interview": {
+      path: "/model/plan-interview", provider: "codex", invocation: "model",
+      capabilities: ["plan interview"], description: "Resolve planning decisions another way",
+    },
+  });
+
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["plan-interview"]);
+  assert.deepEqual(flow.gaps, []);
+});
+
+test("generic interview negation blocks every interview implementation", () => {
+  const selection = {
+    playbook: "improve-plan", agents: [],
+    skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
+  };
+  const skills = {
+    "grill-me": {
+      path: "/user/grill-me", provider: "codex", invocation: "user",
+      capabilities: ["plan interview"], references: ["grilling"],
+    },
+    grilling: {
+      path: "/model/grilling", provider: "codex", invocation: "model",
+      description: "Relentless interview that sharpens a plan or design",
+    },
+    "plan-interview": {
+      path: "/model/plan-interview", provider: "codex", invocation: "model",
+      capabilities: ["plan interview"], description: "Resolve planning decisions another way",
+    },
+  };
+
+  for (const task of [
+    "Do not interview me; improve the plan another way",
+    "Do not question me; improve the plan another way",
+  ]) {
+    const flow = buildFlow(selection, { task }, skills);
+    assert.deepEqual(flow.steps, [], task);
+    assert.equal(flow.gaps[0].capability, "plan interview", task);
+  }
+});
+
+test("a positive replacement router retains its shared engine", () => {
+  const selection = {
+    playbook: "improve-plan", agents: [],
+    skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
+  };
+  const skills = {
+    "grill-me": {
+      path: "/user/grill-me", provider: "codex", invocation: "user",
+      capabilities: ["plan interview"], references: ["grilling"],
+    },
+    "grill-with-docs": {
+      path: "/user/grill-with-docs", provider: "codex", invocation: "user",
+      capabilities: ["plan interview"], references: ["grilling", "domain-modeling"],
+    },
+    grilling: {
+      path: "/model/grilling", provider: "codex", invocation: "model",
+      capabilities: ["plan interview"], description: "Relentless interview that sharpens a plan or design",
+    },
+    "domain-modeling": {
+      path: "/model/domain-modeling", provider: "codex", invocation: "model",
+      capabilities: ["domain modeling"], description: "Record accepted domain language",
+    },
+  };
+
+  const withDocs = buildFlow(selection, { task: "Do not grill me; grill with docs instead" }, skills);
+  assert.deepEqual(withDocs.steps.map(({ skill }) => skill), ["grill-with-docs", "grilling", "domain-modeling"]);
+  assert.deepEqual(withDocs.gaps, []);
+
+  const withoutDocs = buildFlow(selection, { task: "Do not grill with docs; grill me without documentation" }, skills);
+  assert.deepEqual(withoutDocs.steps.map(({ skill }) => skill), ["grill-me", "grilling"]);
+  assert.deepEqual(withoutDocs.gaps, []);
+});
+
+test("an explicit human router with no installed engine stops with a clear gap", () => {
+  const selection = {
+    playbook: "improve-plan", agents: [],
+    skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
+  };
+  const flow = buildFlow(selection, { task: "grill me before implementation" }, {
+    "grill-me": {
+      path: "/user/grill-me", provider: "codex", invocation: "user",
+      capabilities: ["plan interview"], references: ["missing-engine"],
+    },
+  });
+
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["grill-me"]);
+  assert.equal(flow.gaps[0].code, "invalid_router_reference");
+  assert.equal(flow.gaps[0].blocking, true);
+  assert.match(flow.gaps[0].question, /none of its installed model-invoked references covers/);
+});
+
+test("an explicit human router binds its engine and every model dependency", () => {
+  const selection = {
+    playbook: "improve-plan", agents: [],
+    skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
+  };
+  const flow = buildFlow(selection, { task: "grill with docs before implementation" }, {
+    "grill-with-docs": {
+      path: "/user/grill-with-docs", provider: "codex", invocation: "user",
+      capabilities: ["plan interview"], references: ["domain-modeling", "grilling"],
+    },
+    "domain-modeling": {
+      path: "/model/domain-modeling", provider: "codex", invocation: "model",
+      capabilities: ["domain modeling"], description: "Maintain the domain glossary",
+    },
+    grilling: {
+      path: "/model/grilling", provider: "codex", invocation: "model",
+      description: "Relentless interview that sharpens a plan or design",
+    },
+  });
+
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["grill-with-docs", "grilling", "domain-modeling"]);
+  assert.match(flow.steps[2].selection_reason, /dependency referenced by explicit human router grill-with-docs/);
+  assert.deepEqual(flow.gaps, []);
+});
+
+test("an explicit human router fails when any referenced model dependency is missing", () => {
+  const selection = {
+    playbook: "improve-plan", agents: [],
+    skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
+  };
+  const flow = buildFlow(selection, { task: "grill with docs before implementation" }, {
+    "grill-with-docs": {
+      path: "/user/grill-with-docs", provider: "codex", invocation: "user",
+      capabilities: ["plan interview"], references: ["domain-modeling", "grilling"],
+    },
+    grilling: {
+      path: "/model/grilling", provider: "codex", invocation: "model",
+      description: "Relentless interview that sharpens a plan or design",
+    },
+  });
+
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["grill-with-docs"]);
+  assert.equal(flow.gaps[0].code, "invalid_router_reference");
+  assert.equal(flow.gaps[0].blocking, true);
+  assert.match(flow.gaps[0].question, /unavailable or human-only dependencies: domain-modeling/);
 });
 
 test("multi-session feature activates spec, ticket, and handoff branches", () => {
@@ -266,6 +521,25 @@ test("bundled human-only skills stay out of automatic routing", () => {
   const flow = buildFlow(selection, { bundledIndex: bundled, allowedSkills: ["wait-what"] }, {});
   assert.deepEqual(flow.steps, []);
   assert.equal(flow.gaps[0].capability, "plain-language repair");
+});
+
+test("generic planning uses plan-interview instead of the explicit Grill With Docs branch", () => {
+  const selection = {
+    playbook: "improve-plan", agents: [],
+    skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
+  };
+  const bundled = bundledSkills();
+  assert.equal(bundled["grill-with-docs"].invocation, "user");
+  const flow = buildFlow(selection, { task: "clarify the plan", bundledIndex: bundled }, {});
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["plan-interview"]);
+  assert.equal(flow.steps[0].status, "fallback");
+});
+
+test("a generic feature uses plan-interview and never auto-selects Grill With Docs", () => {
+  const selection = recommend("build a simple API");
+  const flow = buildFlow(selection, { task: "build a simple API", bundledIndex: bundledSkills() }, {});
+  assert.equal(flow.steps[0].skill, "plan-interview");
+  assert.ok(!flow.steps.some(({ skill }) => skill === "grill-with-docs"));
 });
 
 test("buildFlow rejects incidental one-word overlap", () => {
@@ -461,6 +735,26 @@ test("validateSnapshot accepts a valid compaction directive and rejects a malfor
   assert.ok(bad.includes("demo: compaction.protected must be an array of non-empty strings"));
 });
 
+test("validateSnapshot accepts a portable continuation and rejects an incomplete one", () => {
+  const base = {
+    schema_version: 5, name: "demo", task: "review and grill me first", playbook: "improve-plan", playbook_description: "Plan",
+    agents: [], baseline_skills: [], questions: [], capability_gaps: [], policy: "policies/workflow-policy.md",
+    skill_flow: { label: "decide then review", steps: [] },
+    attempt: { id: "demo", path: "attempts/demo" },
+    lifecycle: { clarify: "c", prototype: "p", split: "s", implement: "i", review: "r" },
+  };
+  assert.deepEqual(validateSnapshot({
+    ...base,
+    continuation: { playbook: "pr-review", description: "Review the requested pull request.", questions: ["Which head?"] },
+  }, "demo"), []);
+  assert.ok(validateSnapshot({ ...base, continuation: { playbook: "", description: "" } }, "demo")
+    .includes("demo: continuation.playbook must be a non-empty string"));
+  assert.ok(validateSnapshot({
+    ...base,
+    continuation: { playbook: "pr-review", description: "Review it", questions: [""] },
+  }, "demo").includes("demo: continuation.questions must be an array of non-empty strings"));
+});
+
 test("validateSnapshot tolerates optional per-step output and rejects empty output", () => {
   const base = {
     schema_version: 5, name: "demo", task: "build", playbook: "fullstack-feature", playbook_description: "Build",
@@ -483,6 +777,25 @@ test("validateSnapshot tolerates optional per-step output and rejects empty outp
   assert.ok(validateSnapshot(empty, "demo").includes("demo: skill_flow step 1 output must be a non-empty string"));
 });
 
+test("validateSnapshot rejects a blocking capability-reference gap", () => {
+  const gap = {
+    code: "invalid_router_reference",
+    blocking: true,
+    question: "grill-me has no installed model-invoked engine",
+  };
+  const snapshot = {
+    schema_version: 5, name: "demo", task: "grill me", playbook: "improve-plan", playbook_description: "Plan",
+    agents: [], baseline_skills: [], questions: [], capability_gaps: [gap], policy: "policies/workflow-policy.md",
+    skill_flow: { label: "decide", steps: [], gaps: [gap] },
+    attempt: { id: "demo", path: "attempts/demo" },
+    lifecycle: { clarify: "c", prototype: "p", split: "s", implement: "i", review: "r" },
+  };
+
+  assert.ok(validateSnapshot(snapshot, "demo").includes(
+    "demo: blocking capability gap: grill-me has no installed model-invoked engine",
+  ));
+});
+
 test("validateSnapshot accepts the local-first issue policy and rejects unsafe shapes", () => {
   const base = {
     schema_version: 5, name: "demo", task: "t", playbook: "triage", playbook_description: "d",
@@ -498,4 +811,80 @@ test("validateSnapshot accepts the local-first issue policy and rejects unsafe s
   assert.deepEqual(validateSnapshot({ ...base, issue_policy: issuePolicy }, "demo"), []);
   assert.ok(validateSnapshot({ ...base, issue_policy: { ...issuePolicy, mode: "github_first" } }, "demo").includes("demo: issue_policy.mode must be local_only"));
   assert.ok(validateSnapshot({ ...base, issue_policy: { ...issuePolicy, externalCreation: "automatic" } }, "demo").includes("demo: issue_policy.externalCreation must be project_policy_required"));
+});
+
+test("validateSnapshot accepts safe model advice and rejects operational or incoherent claims", () => {
+  const base = {
+    schema_version: 5, name: "demo", task: "plan", playbook: "improve-plan", playbook_description: "Plan",
+    agents: [], baseline_skills: [], questions: [], capability_gaps: [], policy: "policies/workflow-policy.md",
+    skill_flow: {
+      label: "plan",
+      steps: [{ stage: "verify", capability: "testing", skill: "testing", reason: "Verify the workflow", status: "recommended" }],
+    },
+    attempt: { id: "a", path: "attempts/a" },
+    lifecycle: { clarify: "c", prototype: "p", split: "s", implement: "i", review: "r" },
+  };
+  const advice = {
+    advisory_only: true, invoked_models: false, live_monitoring: false, pricing_lookup: false,
+    status: "recommended", catalog_source: "host-provided file", catalog_sha256: "a".repeat(64),
+    recommendations: [{ model: "small", cost_tier: "low", capabilities: ["testing"], stages: ["verify"], rationale: "Declared match." }],
+    uncovered_capabilities: [], rationale: "Every capability is covered.",
+  };
+
+  assert.deepEqual(validateSnapshot({ ...base, model_advice: advice }, "demo"), []);
+  const unsafe = validateSnapshot({ ...base, model_advice: { ...advice, invoked_models: true, pricing_lookup: true } }, "demo");
+  assert.ok(unsafe.includes("demo: model_advice.invoked_models must be false"));
+  assert.ok(unsafe.includes("demo: model_advice.pricing_lookup must be false"));
+  assert.ok(validateSnapshot({ ...base, model_advice: { ...advice, catalog_sha256: "path/to/models.json" } }, "demo")
+    .includes("demo: model_advice.catalog_sha256 must be a lowercase SHA-256 digest"));
+  assert.ok(validateSnapshot({
+    ...base,
+    model_advice: {
+      ...advice,
+      recommendations: [],
+      catalog_source: "not provided",
+      catalog_sha256: undefined,
+    },
+  }, "demo").includes("demo: model_advice.status recommended requires at least one recommendation"));
+  assert.ok(validateSnapshot({
+    ...base,
+    model_advice: { ...advice, uncovered_capabilities: ["testing"] },
+  }, "demo").includes("demo: model_advice.status recommended requires no uncovered capabilities"));
+  assert.ok(validateSnapshot({
+    ...base,
+    model_advice: { ...advice, status: "partial", uncovered_capabilities: [] },
+  }, "demo").includes("demo: model_advice.status partial requires at least one uncovered capability"));
+  assert.ok(validateSnapshot({
+    ...base,
+    model_advice: { ...advice, status: "unavailable" },
+  }, "demo").includes("demo: model_advice.status unavailable requires no recommendations"));
+  assert.ok(validateSnapshot({
+    ...base,
+    model_advice: { ...advice, catalog_source: "some catalog" },
+  }, "demo").includes("demo: model_advice.status recommended requires host catalog provenance"));
+  assert.deepEqual(validateSnapshot({
+    ...base,
+    model_advice: {
+      ...advice,
+      status: "unavailable",
+      catalog_source: "not provided",
+      catalog_sha256: undefined,
+      recommendations: [],
+      uncovered_capabilities: ["testing"],
+    },
+  }, "demo"), []);
+  assert.ok(validateSnapshot({
+    ...base,
+    model_advice: {
+      ...advice,
+      recommendations: [{ ...advice.recommendations[0], capabilities: ["code review"], stages: ["review"] }],
+    },
+  }, "demo").includes("demo: model_advice recommendation 1 references unknown workflow capability code review"));
+  assert.ok(validateSnapshot({
+    ...base,
+    model_advice: {
+      ...advice,
+      recommendations: [{ ...advice.recommendations[0], stages: ["build"] }],
+    },
+  }, "demo").includes("demo: model_advice recommendation 1 stages must match its workflow capabilities"));
 });

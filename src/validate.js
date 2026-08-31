@@ -2,12 +2,12 @@
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { AGENTS_DIR, REGISTRY, ROOT, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, loadJson } from "./paths.js";
-import { reconcile } from "./flow.js";
+import { reconcile, validateAgentContracts, validateWorkflowGates } from "./flow.js";
 import { loadPlaybookFolders, resolveGraph } from "./folders.js";
 import { bundledSkills, lintSkillMetadata } from "./skills.js";
 import { ISSUE_POLICY_SCHEMA_VERSION } from "./issue-governance.js";
-import { ARTIFACT_TYPES } from "./artifacts.js";
 import { validatePublicationBoundary } from "./publication-boundary.js";
+import { requiredModelCapabilities } from "./model-advice.js";
 
 const FM_RE = /^([A-Za-z0-9_-]+):\s*(.*)$/;
 
@@ -23,6 +23,24 @@ function hasType(value, type) {
   return typeof value === type;
 }
 
+export function validatePlaybookAgentReferences(playbooks = {}, registryNames = new Set()) {
+  const known = registryNames instanceof Set ? registryNames : new Set(registryNames || []);
+  const errors = [];
+  for (const [name, playbook] of Object.entries(playbooks || {})) {
+    const baseAgents = Array.isArray(playbook?.agents) ? playbook.agents : [];
+    const conditionalAgents = Array.isArray(playbook?.workflow?.conditional_contract?.agents)
+      ? playbook.workflow.conditional_contract.agents
+      : [];
+    const nonInterviewAgents = Array.isArray(playbook?.workflow?.non_interview_contract?.agents)
+      ? playbook.workflow.non_interview_contract.agents
+      : [];
+    for (const agent of new Set([...baseAgents, ...conditionalAgents, ...nonInterviewAgents])) {
+      if (!known.has(agent)) errors.push(`playbook ${name}: references unknown agent ${agent}`);
+    }
+  }
+  return errors;
+}
+
 export function validateSnapshot(data, label = "workflow") {
   const errors = [];
   for (const [key, type] of Object.entries(REQUIRED_PLAN_KEYS)) {
@@ -30,6 +48,26 @@ export function validateSnapshot(data, label = "workflow") {
     else if (!hasType(data[key], type)) errors.push(`${label}: key ${key} must be ${type}`);
   }
   if (![2, 3, 4, 5].includes(data.schema_version)) errors.push(`${label}: unsupported schema_version`);
+  if (data.continuation !== undefined) {
+    if (!data.continuation || typeof data.continuation !== "object" || Array.isArray(data.continuation)) {
+      errors.push(`${label}: continuation must be an object`);
+    } else {
+      for (const field of ["playbook", "description"]) {
+        if (typeof data.continuation[field] !== "string" || !data.continuation[field].trim()) {
+          errors.push(`${label}: continuation.${field} must be a non-empty string`);
+        }
+      }
+      if (data.continuation.transition !== undefined &&
+          !["after-decision", "after-primary"].includes(data.continuation.transition)) {
+        errors.push(`${label}: continuation.transition must be after-decision or after-primary`);
+      }
+      if (data.continuation.questions !== undefined &&
+          (!Array.isArray(data.continuation.questions) ||
+           data.continuation.questions.some((question) => typeof question !== "string" || !question.trim()))) {
+        errors.push(`${label}: continuation.questions must be an array of non-empty strings`);
+      }
+    }
+  }
   if (data.issue_policy !== undefined) {
     const policy = data.issue_policy;
     if (!policy || typeof policy !== "object" || Array.isArray(policy)) {
@@ -40,37 +78,122 @@ export function validateSnapshot(data, label = "workflow") {
       if (policy.externalCreation !== "project_policy_required") errors.push(`${label}: issue_policy.externalCreation must be project_policy_required`);
     }
   }
+  if (data.model_advice !== undefined) {
+    const advice = data.model_advice;
+    if (!advice || typeof advice !== "object" || Array.isArray(advice)) {
+      errors.push(`${label}: model_advice must be an object`);
+    } else {
+      if (advice.advisory_only !== true) errors.push(`${label}: model_advice.advisory_only must be true`);
+      for (const field of ["invoked_models", "live_monitoring", "pricing_lookup"]) {
+        if (advice[field] !== false) errors.push(`${label}: model_advice.${field} must be false`);
+      }
+      if (!["recommended", "partial", "unavailable"].includes(advice.status)) {
+        errors.push(`${label}: model_advice.status must be recommended, partial, or unavailable`);
+      }
+      if (!Array.isArray(advice.recommendations)) {
+        errors.push(`${label}: model_advice.recommendations must be an array`);
+      } else {
+        for (const [index, recommendation] of advice.recommendations.entries()) {
+          for (const field of ["model", "cost_tier", "rationale"]) {
+            if (typeof recommendation?.[field] !== "string" || !recommendation[field].trim()) {
+              errors.push(`${label}: model_advice recommendation ${index + 1} ${field} must be a non-empty string`);
+            }
+          }
+          if (!["low", "medium", "high"].includes(recommendation?.cost_tier)) {
+            errors.push(`${label}: model_advice recommendation ${index + 1} cost_tier must be low, medium, or high`);
+          }
+          for (const field of ["capabilities", "stages"]) {
+            if (!Array.isArray(recommendation?.[field]) || !recommendation[field].length || recommendation[field].some((value) => typeof value !== "string" || !value.trim())) {
+              errors.push(`${label}: model_advice recommendation ${index + 1} ${field} must be an array of non-empty strings`);
+            }
+          }
+        }
+      }
+      if (!Array.isArray(advice.uncovered_capabilities) || advice.uncovered_capabilities.some((value) => typeof value !== "string" || !value.trim())) {
+        errors.push(`${label}: model_advice.uncovered_capabilities must be an array of non-empty strings`);
+      }
+      if (typeof advice.catalog_source !== "string" || !advice.catalog_source.trim()) {
+        errors.push(`${label}: model_advice.catalog_source must be a non-empty string`);
+      }
+      if (advice.catalog_sha256 !== undefined && !/^[a-f0-9]{64}$/.test(advice.catalog_sha256)) {
+        errors.push(`${label}: model_advice.catalog_sha256 must be a lowercase SHA-256 digest`);
+      }
+      const recommendationCount = Array.isArray(advice.recommendations) ? advice.recommendations.length : null;
+      const uncoveredCount = Array.isArray(advice.uncovered_capabilities) ? advice.uncovered_capabilities.length : null;
+      if (advice.status === "recommended" && recommendationCount !== null && recommendationCount === 0) {
+        errors.push(`${label}: model_advice.status recommended requires at least one recommendation`);
+      }
+      if (advice.status === "recommended" && uncoveredCount !== null && uncoveredCount > 0) {
+        errors.push(`${label}: model_advice.status recommended requires no uncovered capabilities`);
+      }
+      if (advice.status === "partial" && recommendationCount !== null && recommendationCount === 0) {
+        errors.push(`${label}: model_advice.status partial requires at least one recommendation`);
+      }
+      if (advice.status === "partial" && uncoveredCount !== null && uncoveredCount === 0) {
+        errors.push(`${label}: model_advice.status partial requires at least one uncovered capability`);
+      }
+      if (advice.status === "unavailable" && recommendationCount !== null && recommendationCount > 0) {
+        errors.push(`${label}: model_advice.status unavailable requires no recommendations`);
+      }
+      const hasHostCatalogProvenance = advice.catalog_source === "host-provided file" &&
+        /^[a-f0-9]{64}$/.test(advice.catalog_sha256 || "");
+      if (["recommended", "partial"].includes(advice.status) &&
+          !hasHostCatalogProvenance) {
+        errors.push(`${label}: model_advice.status ${advice.status} requires host catalog provenance`);
+      }
+      if (advice.status === "unavailable" && advice.catalog_source !== "not provided" &&
+          !hasHostCatalogProvenance) {
+        errors.push(`${label}: model_advice unavailable advice from a host catalog requires catalog provenance`);
+      }
+      if (Array.isArray(advice.recommendations) && Array.isArray(advice.uncovered_capabilities)) {
+        const requirements = requiredModelCapabilities(data.skill_flow);
+        const assigned = new Set();
+        for (const [index, recommendation] of advice.recommendations.entries()) {
+          const expectedStages = new Set();
+          for (const capability of Array.isArray(recommendation?.capabilities) ? recommendation.capabilities : []) {
+            if (!requirements.has(capability)) {
+              errors.push(`${label}: model_advice recommendation ${index + 1} references unknown workflow capability ${capability}`);
+              continue;
+            }
+            if (assigned.has(capability)) {
+              errors.push(`${label}: model_advice capability ${capability} is assigned more than once`);
+            }
+            assigned.add(capability);
+            for (const stage of requirements.get(capability)) expectedStages.add(stage);
+          }
+          if (Array.isArray(recommendation?.stages)) {
+            const actualStages = new Set(recommendation.stages);
+            if (actualStages.size !== expectedStages.size || [...expectedStages].some((stage) => !actualStages.has(stage))) {
+              errors.push(`${label}: model_advice recommendation ${index + 1} stages must match its workflow capabilities`);
+            }
+          }
+        }
+        for (const capability of advice.uncovered_capabilities) {
+          if (!requirements.has(capability)) {
+            errors.push(`${label}: model_advice uncovered capability ${capability} is not required by the workflow`);
+          } else if (assigned.has(capability)) {
+            errors.push(`${label}: model_advice capability ${capability} cannot be both recommended and uncovered`);
+          }
+          assigned.add(capability);
+        }
+        for (const capability of requirements.keys()) {
+          if (!assigned.has(capability)) errors.push(`${label}: model_advice does not account for workflow capability ${capability}`);
+        }
+      }
+      if (typeof advice.rationale !== "string" || !advice.rationale.trim()) {
+        errors.push(`${label}: model_advice.rationale must be a non-empty string`);
+      }
+    }
+  }
 
   // Optional per-phase gates on the persisted workflow (playbook
   // config.workflow.gates flattened at selection time). Absent is fine — old
   // snapshots stay gate-free. Present but malformed is an error so a stale
   // snapshot never silently misleads a host about its gates.
-  if (data.workflow && data.workflow.gates !== undefined) {
-    const gates = data.workflow.gates;
-    if (!gates || typeof gates !== "object" || Array.isArray(gates)) {
-      errors.push(`${label}: workflow.gates must be an object`);
-    } else {
-      const phases = Array.isArray(data.workflow.phases) ? data.workflow.phases : [];
-      for (const [phase, spec] of Object.entries(gates)) {
-        if (!phases.includes(phase)) errors.push(`${label}: workflow.gates references unknown phase ${phase}`);
-        if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
-          errors.push(`${label}: workflow.gates.${phase} must be an object`);
-          continue;
-        }
-        if (!["verify", "decision", "soft"].includes(spec.kind)) {
-          errors.push(`${label}: workflow.gates.${phase}.kind must be verify, decision, or soft`);
-        }
-        if (spec.verify !== undefined && (typeof spec.verify !== "string" || !spec.verify.trim())) {
-          errors.push(`${label}: workflow.gates.${phase}.verify must be a non-empty string`);
-        }
-        if (spec.artifact_type !== undefined) {
-          if (spec.kind !== "decision") errors.push(`${label}: workflow.gates.${phase}.artifact_type is only valid for decision gates`);
-          if (!ARTIFACT_TYPES.includes(spec.artifact_type)) {
-            errors.push(`${label}: workflow.gates.${phase}.artifact_type must be one of ${ARTIFACT_TYPES.join(", ")}`);
-          }
-        }
-      }
-    }
+  if (data.workflow) {
+    errors.push(...validateWorkflowGates(data.workflow, label));
+    const agentNames = Array.isArray(data.agents) ? data.agents.map((agent) => agent?.name) : [];
+    errors.push(...validateAgentContracts(data.workflow, agentNames, label));
   }
 
   const resolvedSkillError = (skill, where, nameKey = "name") => {
@@ -130,6 +253,12 @@ export function validateSnapshot(data, label = "workflow") {
   }
   if (data.schema_version >= 3 && !Array.isArray(data.capability_gaps)) {
     errors.push(`${label}: capability_gaps must be an array`);
+  } else if (Array.isArray(data.capability_gaps)) {
+    for (const gap of data.capability_gaps) {
+      if (gap?.blocking === true) {
+        errors.push(`${label}: blocking capability gap: ${gap.question || gap.code || "unresolved reference"}`);
+      }
+    }
   }
   // Optional compaction directive (verbatim-line selection under context
   // pressure). Absent is fine — the renderer applies defaults. Present but
@@ -223,10 +352,8 @@ export function main() {
     for (const key of ["description", "keywords", "agents", "workflow"]) {
       if (!pb[key]) errors.push(`playbook ${name}: missing ${key}`);
     }
-    for (const an of (pb.agents || [])) {
-      if (!registryNames.has(an)) errors.push(`playbook ${name}: references unknown agent ${an}`);
-    }
   }
+  errors.push(...validatePlaybookAgentReferences(playbooks, registryNames));
   errors.push(...reconcile(playbooks));
 
   // --- folder-native units ---

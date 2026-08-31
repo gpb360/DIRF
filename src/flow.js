@@ -2,8 +2,112 @@
 // Selection happens in router.js; this module never classifies a task.
 import { bundledSkills } from "./skills.js";
 import { ARTIFACT_TYPES } from "./artifacts.js";
+import { affirmativeRoutingText, negatesInterviewCapability } from "./router.js";
 
 export const KNOWN_BRANCHES = new Set(["ui", "react", "security", "multi-session", "research"]);
+
+export function validateWorkflowGates(workflow = {}, label = "workflow") {
+  const errors = [];
+  if (workflow.gates === undefined) return errors;
+  const gates = workflow.gates;
+  if (!gates || typeof gates !== "object" || Array.isArray(gates)) {
+    return [`${label}: workflow.gates must be an object`];
+  }
+  const phases = Array.isArray(workflow.phases) ? workflow.phases : [];
+  for (const [phase, spec] of Object.entries(gates)) {
+    if (!phases.includes(phase)) errors.push(`${label}: workflow.gates references unknown phase ${phase}`);
+    if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
+      errors.push(`${label}: workflow.gates.${phase} must be an object`);
+      continue;
+    }
+    if (!["verify", "decision", "soft"].includes(spec.kind)) {
+      errors.push(`${label}: workflow.gates.${phase}.kind must be verify, decision, or soft`);
+    }
+    if (spec.kind === "verify" && (typeof spec.verify !== "string" || !spec.verify.trim())) {
+      errors.push(`${label}: workflow.gates.${phase}.verify must be a non-empty string for verify gates`);
+    } else if (spec.verify !== undefined && (typeof spec.verify !== "string" || !spec.verify.trim())) {
+      errors.push(`${label}: workflow.gates.${phase}.verify must be a non-empty string`);
+    }
+    if (spec.artifact_type !== undefined) {
+      if (spec.kind !== "decision") errors.push(`${label}: workflow.gates.${phase}.artifact_type is only valid for decision gates`);
+      if (!ARTIFACT_TYPES.includes(spec.artifact_type)) {
+        errors.push(`${label}: workflow.gates.${phase}.artifact_type must be one of ${ARTIFACT_TYPES.join(", ")}`);
+      }
+    }
+  }
+  return errors;
+}
+
+export function validateAgentContracts(workflow = {}, agentNames = [], label = "workflow") {
+  const errors = [];
+  if (workflow.agent_contracts === undefined) {
+    return Array.isArray(agentNames) && agentNames.length > 1
+      ? [`${label}: multi-agent workflows require workflow.agent_contracts with exactly one owner per phase`]
+      : errors;
+  }
+  const contracts = workflow.agent_contracts;
+  if (!contracts || typeof contracts !== "object" || Array.isArray(contracts)) {
+    return [`${label}: workflow.agent_contracts must be an object`];
+  }
+  const declaredAgents = new Set((Array.isArray(agentNames) ? agentNames : [])
+    .filter((name) => typeof name === "string" && name));
+  const phases = Array.isArray(workflow.phases) ? workflow.phases : [];
+  const owners = new Map(phases.map((phase) => [phase, []]));
+  for (const [agent, contract] of Object.entries(contracts)) {
+    if (!declaredAgents.has(agent)) errors.push(`${label}: workflow.agent_contracts references undeclared agent ${agent}`);
+    if (!contract || typeof contract !== "object" || Array.isArray(contract)) {
+      errors.push(`${label}: workflow.agent_contracts.${agent} must be an object`);
+      continue;
+    }
+    if (!Array.isArray(contract.phases) || contract.phases.length === 0 || contract.phases.some((phase) => typeof phase !== "string" || !phase.trim())) {
+      errors.push(`${label}: workflow.agent_contracts.${agent}.phases must be a non-empty array of strings`);
+    } else {
+      for (const phase of contract.phases) {
+        if (!phases.includes(phase)) errors.push(`${label}: workflow.agent_contracts.${agent}.phases references unknown phase ${phase}`);
+        else owners.get(phase).push(agent);
+      }
+    }
+    for (const field of ["output", "verification"]) {
+      if (typeof contract[field] !== "string" || !contract[field].trim()) {
+        errors.push(`${label}: workflow.agent_contracts.${agent}.${field} must be a non-empty string`);
+      }
+    }
+  }
+  for (const [phase, phaseOwners] of owners) {
+    if (phaseOwners.length === 0) errors.push(`${label}: workflow phase ${phase} must have exactly one agent owner; found none`);
+    if (phaseOwners.length > 1) errors.push(`${label}: workflow phase ${phase} must have exactly one agent owner; found ${phaseOwners.join(", ")}`);
+  }
+  return errors;
+}
+
+export function validateSkillFlow(flow, label = "workflow", knownBranches = KNOWN_BRANCHES) {
+  const errors = [];
+  if (!flow) return [`${label}: missing skill_flow`];
+  if (typeof flow.label !== "string" || !flow.label) {
+    errors.push(`${label}: skill_flow.label must be a non-empty string`);
+  }
+  if (!Array.isArray(flow.steps) || flow.steps.length === 0) {
+    errors.push(`${label}: skill_flow.steps must be a non-empty array`);
+    return errors;
+  }
+  flow.steps.forEach((step, index) => {
+    if (!step || typeof step !== "object" || Array.isArray(step)) {
+      errors.push(`${label}: step ${index + 1} must be an object`);
+      return;
+    }
+    for (const field of ["stage", "reason"]) {
+      if (!step[field]) errors.push(`${label}: step ${index + 1} missing ${field}`);
+    }
+    if (step.output !== undefined && (typeof step.output !== "string" || !step.output.trim())) {
+      errors.push(`${label}: step ${index + 1} output must be a non-empty string`);
+    }
+    if (!step.capability && !step.skill) errors.push(`${label}: step ${index + 1} missing capability`);
+    if (step.branch && !knownBranches.has(step.branch)) {
+      errors.push(`${label}: step ${index + 1} references unknown branch ${step.branch}`);
+    }
+  });
+  return errors;
+}
 
 export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
   const errors = [];
@@ -27,66 +131,81 @@ export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
           errors.push(`playbook ${name}: workflow.${field} must be a non-empty string`);
         }
       }
-      // Optional per-phase gates (config.workflow.gates): each key must name a
-      // declared phase, with kind verify|decision|soft and an optional verify
-      // command. Flattened into the persisted workflow at selection time.
-      if (playbook.workflow.gates !== undefined) {
-        const gates = playbook.workflow.gates;
-        if (!gates || typeof gates !== "object" || Array.isArray(gates)) {
-          errors.push(`playbook ${name}: workflow.gates must be an object`);
+      errors.push(...validateWorkflowGates(playbook.workflow, `playbook ${name}`));
+      errors.push(...validateAgentContracts(playbook.workflow, playbook.agents || [], `playbook ${name}`));
+      const conditional = playbook.workflow.conditional_contract;
+      if (conditional !== undefined) {
+        if (!conditional || typeof conditional !== "object" || Array.isArray(conditional)) {
+          errors.push(`playbook ${name}: workflow.conditional_contract must be an object`);
         } else {
-          const phases = Array.isArray(playbook.workflow.phases) ? playbook.workflow.phases : [];
-          for (const [phase, spec] of Object.entries(gates)) {
-            if (!phases.includes(phase)) errors.push(`playbook ${name}: workflow.gates references unknown phase ${phase}`);
-            if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
-              errors.push(`playbook ${name}: workflow.gates.${phase} must be an object`);
-              continue;
-            }
-            if (!["verify", "decision", "soft"].includes(spec.kind)) {
-              errors.push(`playbook ${name}: workflow.gates.${phase}.kind must be verify, decision, or soft`);
-            }
-            if (spec.verify !== undefined && (typeof spec.verify !== "string" || !spec.verify.trim())) {
-              errors.push(`playbook ${name}: workflow.gates.${phase}.verify must be a non-empty string`);
-            }
-            if (spec.artifact_type !== undefined) {
-              if (spec.kind !== "decision") errors.push(`playbook ${name}: workflow.gates.${phase}.artifact_type is only valid for decision gates`);
-              if (!ARTIFACT_TYPES.includes(spec.artifact_type)) {
-                errors.push(`playbook ${name}: workflow.gates.${phase}.artifact_type must be one of ${ARTIFACT_TYPES.join(", ")}`);
-              }
+          for (const field of ["when_all", "when_any"]) {
+            if (conditional[field] !== undefined && (!Array.isArray(conditional[field]) || conditional[field].some((cue) => typeof cue !== "string" || !cue.trim()))) {
+              errors.push(`playbook ${name}: workflow.conditional_contract.${field} must be an array of non-empty strings`);
             }
           }
+          const whenAll = Array.isArray(conditional.when_all) ? conditional.when_all : [];
+          const whenAny = Array.isArray(conditional.when_any) ? conditional.when_any : [];
+          if (!whenAll.length && !whenAny.length) {
+            errors.push(`playbook ${name}: workflow.conditional_contract requires at least one when_all or when_any cue`);
+          }
+          const conditionalAgents = conditional.agents === undefined ? playbook.agents : conditional.agents;
+          if (!Array.isArray(conditionalAgents)) errors.push(`playbook ${name}: workflow.conditional_contract.agents must be an array`);
+          const { conditional_contract: _nested, ...baseWorkflow } = playbook.workflow;
+          const resolved = {
+            ...baseWorkflow,
+            ...Object.fromEntries(["phases", "gates", "agent_contracts", "output", "validation", "recovery", "requirements"]
+              .filter((field) => conditional[field] !== undefined)
+              .map((field) => [field, conditional[field]])),
+          };
+          if (!Array.isArray(resolved.phases) || resolved.phases.length === 0) {
+            errors.push(`playbook ${name}: workflow.conditional_contract.phases must resolve to a non-empty array`);
+          }
+          for (const field of ["output", "validation", "recovery"]) {
+            if (typeof resolved[field] !== "string" || !resolved[field]) {
+              errors.push(`playbook ${name}: workflow.conditional_contract.${field} must resolve to a non-empty string`);
+            }
+          }
+          errors.push(...validateWorkflowGates(resolved, `playbook ${name} conditional contract`));
+          errors.push(...validateAgentContracts(resolved, conditionalAgents, `playbook ${name} conditional contract`));
+        }
+      }
+      const nonInterview = playbook.workflow.non_interview_contract;
+      if (nonInterview !== undefined) {
+        if (!nonInterview || typeof nonInterview !== "object" || Array.isArray(nonInterview)) {
+          errors.push(`playbook ${name}: workflow.non_interview_contract must be an object`);
+        } else {
+          const nonInterviewAgents = nonInterview.agents === undefined ? playbook.agents : nonInterview.agents;
+          if (!Array.isArray(nonInterviewAgents)) errors.push(`playbook ${name}: workflow.non_interview_contract.agents must be an array`);
+          const {
+            conditional_contract: _conditional,
+            non_interview_contract: _nested,
+            ...baseWorkflow
+          } = playbook.workflow;
+          const resolved = {
+            ...baseWorkflow,
+            ...Object.fromEntries(["phases", "gates", "agent_contracts", "output", "validation", "recovery", "requirements"]
+              .filter((field) => nonInterview[field] !== undefined)
+              .map((field) => [field, nonInterview[field]])),
+          };
+          if (!Array.isArray(resolved.phases) || resolved.phases.length === 0) {
+            errors.push(`playbook ${name}: workflow.non_interview_contract.phases must resolve to a non-empty array`);
+          }
+          for (const field of ["output", "validation", "recovery"]) {
+            if (typeof resolved[field] !== "string" || !resolved[field]) {
+              errors.push(`playbook ${name}: workflow.non_interview_contract.${field} must resolve to a non-empty string`);
+            }
+          }
+          errors.push(...validateSkillFlow(nonInterview.skill_flow, `playbook ${name} non-interview contract`, knownBranches));
+          if (Array.isArray(nonInterview.skill_flow?.steps) &&
+              nonInterview.skill_flow.steps.some((step) => step?.capability === "plan interview")) {
+            errors.push(`playbook ${name}: workflow.non_interview_contract.skill_flow must not contain plan interview`);
+          }
+          errors.push(...validateWorkflowGates(resolved, `playbook ${name} non-interview contract`));
+          errors.push(...validateAgentContracts(resolved, nonInterviewAgents, `playbook ${name} non-interview contract`));
         }
       }
     }
-    const flow = playbook.skill_flow;
-    if (!flow) {
-      errors.push(`playbook ${name}: missing skill_flow`);
-      continue;
-    }
-    if (typeof flow.label !== "string" || !flow.label) errors.push(`playbook ${name}: skill_flow.label must be a non-empty string`);
-    if (!Array.isArray(flow.steps) || flow.steps.length === 0) {
-      errors.push(`playbook ${name}: skill_flow.steps must be a non-empty array`);
-      continue;
-    }
-    flow.steps.forEach((step, index) => {
-      if (!step || typeof step !== "object" || Array.isArray(step)) {
-        errors.push(`playbook ${name}: step ${index + 1} must be an object`);
-        return;
-      }
-      for (const field of ["stage", "reason"]) {
-        if (!step[field]) errors.push(`playbook ${name}: step ${index + 1} missing ${field}`);
-      }
-      // Optional per-step output contract (a step's output is
-      // checkable, not just invoked). When present it must be a non-empty
-      // string so the rendered checkpoint is meaningful.
-      if (step.output !== undefined && (typeof step.output !== "string" || !step.output.trim())) {
-        errors.push(`playbook ${name}: step ${index + 1} output must be a non-empty string`);
-      }
-      if (!step.capability && !step.skill) errors.push(`playbook ${name}: step ${index + 1} missing capability`);
-      if (step.branch && !knownBranches.has(step.branch)) {
-        errors.push(`playbook ${name}: step ${index + 1} references unknown branch ${step.branch}`);
-      }
-    });
+    errors.push(...validateSkillFlow(playbook.skill_flow, `playbook ${name}`, knownBranches));
   }
   return errors;
 }
@@ -123,6 +242,54 @@ function words(value) {
   return new Set(String(value || "").toLowerCase().replaceAll("-", " ").match(/[a-z0-9]{3,}/g)?.filter((word) => !STOP_WORDS.has(word)).map(stem) || []);
 }
 
+function declaredCapabilities(item) {
+  return Array.isArray(item?.capabilities)
+    ? item.capabilities
+    : String(item?.capabilities || "").split(",").map((value) => value.trim()).filter(Boolean);
+}
+
+function normalizedCue(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function explicitlyRequests(task, skillName) {
+  const taskCue = normalizedCue(task);
+  const skillCue = normalizedCue(skillName);
+  return !!skillCue && (` ${taskCue} `).includes(` ${skillCue} `);
+}
+
+// A human-only skill may be a small router whose sole model-invoked reference
+// is the actual engine (for example, a human command that says to run a model
+// interview skill). Carry the router's declared capability to that one engine
+// so generic requests can select the executable skill without making the
+// human-facing description an autonomous routing signal. Multiple references
+// stay explicit because DIRF cannot safely guess which one owns the capability.
+function withRouterCapabilities(skillIndex) {
+  const expanded = Object.fromEntries(Object.entries(skillIndex || {}).map(([name, item]) => [name, { ...item }]));
+  for (const router of Object.values(skillIndex || {})) {
+    if (router.invocation !== "user") continue;
+    const references = (router.references || []).filter((name) => expanded[name] && expanded[name].invocation !== "user");
+    if (references.length !== 1) continue;
+    const targetName = references[0];
+    const target = expanded[targetName];
+    if (!target) continue;
+    const inherited = declaredCapabilities(router);
+    if (!inherited.length) continue;
+    expanded[targetName] = {
+      ...target,
+      capabilities: [...new Set([...declaredCapabilities(target), ...inherited])],
+    };
+  }
+  return expanded;
+}
+
+function explicitHumanRouter(requirement, task, skillIndex) {
+  return Object.entries(skillIndex || {})
+    .filter(([name, item]) => item.invocation === "user" && explicitlyRequests(task, name))
+    .filter(([, item]) => declaredCapabilities(item).includes(requirement.capability))
+    .sort(([a], [b]) => a.localeCompare(b))[0] || null;
+}
+
 function selectCapability(requirement, selection, context, skillIndex) {
   const capabilityWords = words(requirement.capability);
   // User-invoked skills (`disable-model-invocation`) are human-only: their
@@ -133,7 +300,7 @@ function selectCapability(requirement, selection, context, skillIndex) {
   const pool = entries.filter(([, item]) => item.invocation !== "user");
   const ranked = pool.map(([name, item]) => {
     const candidate = words([name, item.description, item.summary, item.category, ...(item.applies_to || []), ...(item.tags || [])].join(" "));
-    const declared = Array.isArray(item.capabilities) ? item.capabilities : String(item.capabilities || "").split(",").map((value) => value.trim()).filter(Boolean);
+    const declared = declaredCapabilities(item);
     const normalizedName = name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     const normalizedCapability = requirement.capability.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     const directMatch = declared.includes(requirement.capability) || normalizedName === normalizedCapability;
@@ -158,7 +325,7 @@ function selectCapability(requirement, selection, context, skillIndex) {
     skill: chosen.name,
     type: chosen.item.type || "skill",
     reason: requirement.reason,
-    output: requirement.output || "",
+    ...(requirement.output ? { output: requirement.output } : {}),
     status: "installed",
     provider: chosen.item.provider || "project",
     path: chosen.item.path,
@@ -174,22 +341,147 @@ function scopedSkillIndex(index, allowedSkills) {
   return Object.fromEntries(Object.entries(index || {}).filter(([name]) => allowed.has(name)));
 }
 
+function withoutNegatedHumanRouters(task, skillIndex) {
+  const affirmativeTask = affirmativeRoutingText(task);
+  const entries = Object.entries(skillIndex || {});
+  const humanRouters = entries.filter(([, item]) => item.invocation === "user");
+  const affirmedRouters = new Set(humanRouters
+    .filter(([name]) => explicitlyRequests(affirmativeTask, name))
+    .map(([name]) => name));
+  const broadInterviewNegation = negatesInterviewCapability(task);
+  const blockedRouters = new Set(humanRouters
+    .filter(([name, item]) =>
+      (explicitlyRequests(task, name) && !affirmedRouters.has(name)) ||
+      (broadInterviewNegation && declaredCapabilities(item).includes("plan interview")))
+    .map(([name]) => name));
+  const preservedReferences = new Set(humanRouters
+    .filter(([name]) => affirmedRouters.has(name))
+    .flatMap(([, item]) => item.references || []));
+  const blocked = new Set(blockedRouters);
+  if (blockedRouters.size) {
+    for (const [name] of humanRouters) {
+      if (!affirmedRouters.has(name)) blocked.add(name);
+    }
+  }
+  for (const [name, item] of humanRouters) {
+    if (!blockedRouters.has(name)) continue;
+    for (const reference of item.references || []) {
+      if (!preservedReferences.has(reference)) blocked.add(reference);
+    }
+  }
+  if (broadInterviewNegation) {
+    for (const [name, item] of entries) {
+      if (declaredCapabilities(item).includes("plan interview") && !affirmedRouters.has(name)) blocked.add(name);
+    }
+  }
+  return Object.fromEntries(entries.filter(([name]) => !blocked.has(name)));
+}
+
 export function buildFlow(selection, context = {}, skillIndex = {}) {
   const flow = selection?.skill_flow;
   if (!flow?.steps) throw new Error(`playbook ${selection?.playbook || "?"}: missing skill_flow`);
 
-  const branches = branchesFor(context.task, selection.agents, context.branches);
+  const affirmativeTask = affirmativeRoutingText(context.task);
+  const branches = branchesFor(affirmativeTask, selection.agents, context.branches);
   const requirements = flow.steps
     .filter((step) => !step.branch || branches.has(step.branch))
     .map(({ branch: _branch, skill: _legacySkill, ...step }) => ({ ...step, capability: step.capability || step.stage }));
   const steps = [];
   const gaps = [];
-  const installed = scopedSkillIndex(skillIndex, context.allowedSkills);
+  const scoped = scopedSkillIndex(skillIndex, context.allowedSkills);
+  const installed = withRouterCapabilities(withoutNegatedHumanRouters(context.task, scoped));
   // The kit ships zero installed skills; its bundled skills/ folder is a
   // fallback consulted ONLY when the local install has nothing for a
   // capability, and the step is labeled so — never passed off as installed.
   let bundled;
   for (const requirement of requirements) {
+    if (negatesInterviewCapability(context.task) && requirement.capability === "plan interview") {
+      gaps.push({
+        stage: requirement.stage,
+        capability: requirement.capability,
+        code: "negated_capability",
+        question: "The task explicitly excludes an interview, so DIRF left the plan-interview capability unassigned.",
+        reason: requirement.reason,
+        requires_approval: false,
+        trusted_candidates: [],
+      });
+      continue;
+    }
+    const explicit = explicitHumanRouter(requirement, affirmativeTask, installed);
+    if (explicit) {
+      const [routerName, router] = explicit;
+      const declaredReferences = router.references || [];
+      const references = declaredReferences.filter((name) => installed[name] && installed[name].invocation !== "user");
+      const invalidReferences = declaredReferences.filter((name) => !installed[name] || installed[name].invocation === "user");
+      steps.push({
+        stage: requirement.stage,
+        capability: requirement.capability || requirement.stage,
+        skill: routerName,
+        type: router.type || "skill",
+        reason: requirement.reason,
+        output: "the user's explicit interview checkpoint is preserved",
+        status: "installed",
+        provider: router.provider || "project",
+        path: router.path,
+        invocation: "user",
+        human_checkpoint: true,
+        references: declaredReferences,
+        selection_reason: `explicitly requested human-invoked skill for ${requirement.capability || requirement.stage}`,
+        rejected_candidates: [],
+      });
+      if (references.length && invalidReferences.length) {
+        gaps.push({
+          stage: requirement.stage,
+          capability: requirement.capability,
+          code: "invalid_router_reference",
+          blocking: true,
+          question: `${routerName} references unavailable or human-only dependencies: ${invalidReferences.join(", ")}. Install or repair every referenced model-invoked dependency before continuing.`,
+          reason: requirement.reason,
+          requires_approval: true,
+          trusted_candidates: [],
+        });
+        continue;
+      }
+      const referencedIndex = Object.fromEntries(references.map((name) => [name, installed[name]]));
+      const engine = selectCapability(requirement, selection, context, referencedIndex);
+      if (engine) {
+        steps.push({
+          ...engine,
+          reason: `Run the model-invoked engine referenced by ${routerName}.`,
+          selection_reason: `model-invoked engine referenced by explicit human router ${routerName}`,
+        });
+        for (const dependencyName of references.filter((name) => name !== engine.skill)) {
+          const dependency = installed[dependencyName];
+          const dependencyCapabilities = declaredCapabilities(dependency);
+          steps.push({
+            stage: requirement.stage,
+            capability: dependencyCapabilities[0] || dependencyName,
+            skill: dependencyName,
+            type: dependency.type || "skill",
+            reason: `Run the model-invoked dependency referenced by ${routerName}.`,
+            output: `the ${dependencyName} dependency required by ${routerName} is completed`,
+            status: "installed",
+            provider: dependency.provider || "project",
+            path: dependency.path,
+            ...(dependency.disclosures?.length ? { disclosures: dependency.disclosures } : {}),
+            selection_reason: `model-invoked dependency referenced by explicit human router ${routerName}`,
+            rejected_candidates: [],
+          });
+        }
+      } else {
+        gaps.push({
+          stage: requirement.stage,
+          capability: requirement.capability,
+          code: "invalid_router_reference",
+          blocking: true,
+          question: `${routerName} is human-invoked but none of its installed model-invoked references covers ${requirement.capability}. Install or repair its engine reference before continuing.`,
+          reason: requirement.reason,
+          requires_approval: true,
+          trusted_candidates: [],
+        });
+      }
+      continue;
+    }
     const selected = selectCapability(requirement, selection, context, installed);
     const fallback = selected ? null : selectCapability(
       requirement, selection, context, (bundled ??= scopedSkillIndex(context.bundledIndex || bundledSkills(), context.allowedSkills)));
