@@ -328,6 +328,17 @@ test("negated and action-first interview requests stay coherent end to end", () 
     assert.ok(workflow.workflow.phases.includes("ask and record one decision at a time"), task);
   }
 
+  for (const [name, task, forbidden] of [
+    ["negated-review-skipped", "Do not review skipped tests", "pr-review"],
+    ["negated-review-ignored", "Do not review ignored findings", "pr-review"],
+    ["negated-review-unanswered", "Do not review unanswered questions", "pr-review"],
+    ["negated-implement-skipped", "Do not implement skipped tickets", "fullstack-feature"],
+  ]) {
+    const built = JSON.parse(run(["build", name, task, "--path", target, "--json"], env, target));
+    const workflow = JSON.parse(readFileSync(built.workflow, "utf8"));
+    assert.notEqual(workflow.playbook, forbidden, task);
+  }
+
   const withDocs = JSON.parse(run([
     "build", "replace-grill", "Do not use Grill Me; use Grill With Docs instead",
     "--path", target, "--json",

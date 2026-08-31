@@ -61,7 +61,7 @@ const NEGATED_ROUTING_PREFIX =
 const NEGATED_ROUTING_CLAUSE = new RegExp(
   `(?:\\b(?:but|and(?:\\s+then)?|then)\\s+)?` +
   `\\b${NEGATED_ROUTING_PREFIX}` +
-  `(?:${INTERVIEW_ROUTING_TARGETS}|${CONTINUATION_ACTION_WORDS})\\b(?!${POSITIVE_INTERVIEW_COMPLEMENT})` +
+  `(?:(?:${INTERVIEW_ROUTING_TARGETS})\\b(?!${POSITIVE_INTERVIEW_COMPLEMENT})|(?:${CONTINUATION_ACTION_WORDS})\\b)` +
   `[^,.;!?—–]*?(?=\\s+\\b(?:but|and\\s+(?:then|instead)|then|instead|just)\\b|[,.;!?—–]|$)`,
   "g",
 );

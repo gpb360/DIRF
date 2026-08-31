@@ -52,6 +52,10 @@ test("standalone negated actions do not route the forbidden work", () => {
     ["Do not deploy the release", "deployment"],
     ["Do not review PR 47", "pr-review"],
     ["Do not implement the feature", "fullstack-feature"],
+    ["Do not review skipped tests", "pr-review"],
+    ["Do not review ignored findings", "pr-review"],
+    ["Do not review unanswered questions", "pr-review"],
+    ["Do not implement skipped tickets", "fullstack-feature"],
   ]) {
     assert.notEqual(recommend(task).playbook, forbidden);
     assert.equal(recommend(task).playbook, "triage");
