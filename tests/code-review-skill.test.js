@@ -5,7 +5,9 @@ import { ROOT } from "../src/paths.js";
 import { loadUnit, resolveGraph } from "../src/folders.js";
 import {
   ReviewValidationError,
+  deriveGrade,
   deriveVerdict,
+  priorityCounts,
   renderReview,
   validateReview,
 } from "../skills/code-review/scripts/review-report.mjs";
@@ -69,6 +71,14 @@ test("bundled code-review skill resolves its progressive disclosure files", () =
   assert.doesNotThrow(() => resolveGraph(folder, { allowedRoots: [join(ROOT, "skills")] }));
 });
 
+test("PR-review playbook binds the graded code-review contract", () => {
+  const folder = join(ROOT, "playbooks", "pr-review");
+  const unit = loadUnit(folder);
+  assert.deepEqual(unit.meta.uses, ["../../skills/code-review"]);
+  const graph = resolveGraph(folder, { allowedRoots: [join(ROOT, "playbooks"), join(ROOT, "skills")] });
+  assert.ok(graph.some((entry) => entry.meta.name === "code-review"));
+});
+
 test("clean, well-evidenced review passes", () => {
   const review = artifact();
   assert.equal(validateReview(review), review);
@@ -78,6 +88,18 @@ test("clean, well-evidenced review passes", () => {
 test("P0 and P1 findings fail while lower priorities are conditional", () => {
   assert.equal(deriveVerdict(withFinding(artifact(), finding())), "FAIL");
   assert.equal(deriveVerdict(withFinding(artifact(), finding({ id: "P2-001", priority: "P2" }))), "CONDITIONAL");
+  assert.equal(deriveVerdict(withFinding(artifact(), finding({ id: "P3-001", priority: "P3" }))), "CONDITIONAL");
+});
+
+test("grades every review and exposes all four priority counts", () => {
+  assert.equal(deriveGrade(artifact()), "A");
+  assert.equal(deriveGrade(artifact({ confidence: { quality: 85, evidence: 80 } })), "B");
+  assert.equal(deriveGrade(withFinding(artifact(), finding({ id: "P3-001", priority: "P3" }))), "C");
+  assert.equal(deriveGrade(withFinding(artifact(), finding({ id: "P2-001", priority: "P2" }))), "D");
+  assert.equal(deriveGrade(withFinding(artifact(), finding())), "F");
+  assert.deepEqual(priorityCounts(withFinding(artifact(), finding({ id: "P2-001", priority: "P2" }))), {
+    P0: 0, P1: 0, P2: 1, P3: 0,
+  });
 });
 
 test("insufficient clean-review evidence cannot pass", () => {
@@ -107,7 +129,17 @@ test("renderer emits ordered, confidence-scored findings and an exact-head marke
   review.axes.correctness = { status: "finding", evidence: findings.map(({ id }) => id).join(", ") };
   const rendered = renderReview(review);
   assert.match(rendered, /\*\*Gate:\*\* FAIL/);
+  assert.match(rendered, /\*\*Grade:\*\* F/);
+  assert.match(rendered, /\*\*Priority count:\*\* P0 0 · P1 1 · P2 1 · P3 0/);
+  assert.match(rendered, /\*\*Definition of done:\*\* NOT MET/);
   assert.ok(rendered.indexOf("[P1]") < rendered.indexOf("[P2]"));
   assert.match(rendered, /94% confidence/);
   assert.match(rendered, new RegExp(`<!-- dirf-review:v1;head=${SHA_B};mode=full -->`));
+});
+
+test("clean render clearly marks the zero-finding definition of done", () => {
+  const rendered = renderReview(artifact());
+  assert.match(rendered, /\*\*Grade:\*\* A/);
+  assert.match(rendered, /P0 0 · P1 0 · P2 0 · P3 0/);
+  assert.match(rendered, /\*\*Definition of done:\*\* MET/);
 });

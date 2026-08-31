@@ -31,8 +31,14 @@ For a candidate finding, attempt to disprove it. Use static tracing, focused tes
 
 Verification is complete when each published comment has a reproducible failure path and each clean axis has enough evidence to justify its status.
 
-## 5. Publish once
+## 5. Remediate and repeat
+
+If the validated artifact contains any P0-P3 finding, fix every finding, run the narrowest checks that prove the corrected behavior, refresh the exact head, and start a new full or justified incremental review. Do not mark the workflow done because comments were resolved or a build is green.
+
+The remediation loop is complete only when the latest exact-head artifact validates as `PASS`, all P0-P3 counts are zero, and the corrected behavior is functioning under the applicable verification.
+
+## 6. Publish once
 
 Create the structured artifact described in `findings-contract.md`. Validate and render it with the bundled script. Re-check the remote head and existing markers immediately before posting. Publish inline comments first, then one concise summary containing the walkthrough, verification, limitations, verdict, and marker.
 
-The publication is complete when there is one review for the exact head and every inline finding also appears in the summary ledger.
+The publication is complete when there is one review for the exact head and every inline finding also appears in the summary ledger. Publication does not complete the workflow while any P0-P3 finding remains.

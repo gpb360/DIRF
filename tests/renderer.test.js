@@ -46,7 +46,7 @@ test("renderMarkdownLite strips html comments", () => {
 
 test("kickoff prompt is embedded in both renders and stays host-agnostic", () => {
   const workflow = {
-    name: "demo", task: "review a pull request", playbook: "landing-page",
+    name: "demo", task: "review a pull request", playbook: "pr-review",
     workflow: { phases: ["a", "b"], output: "a page", validation: "v", recovery: "r", requirements: ["derive every screen x state x viewport row"] },
     agents: [{ name: "frontend-developer", file: "agents/frontend-developer.md", tags: [], skills: [] }],
     baseline_skills: [],
@@ -105,7 +105,7 @@ test("buildInstructions writes router + per-agent detail", () => {
 
   const outDir = mkdtempSync(join(tmpdir(), "dirf-instr-"));
   const workflow = {
-    name: "demo", task: "review a pull request", playbook: "landing-page",
+    name: "demo", task: "review a pull request", playbook: "pr-review",
     workflow: { phases: ["a", "b"], output: "a page", validation: "v", recovery: "r" },
     agents: [{ name: "frontend-developer", file: "agents/frontend-developer.md", tags: ["frontend"], skills: [{ name: "ponytail", status: "recommended" }] }],
     baseline_skills: [{ name: "ponytail", status: "recommended" }],
@@ -146,9 +146,14 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.match(policy, /A different model, direct-provider path, request payload, response expectation, or inferred requirement is out of scope/);
   assert.match(policy, /Do not infer readiness from GitHub's mechanical mergeable or ready status, a green build, or a prior review/);
   assert.match(policy, /After every final push, refresh the exact PR head/);
-  assert.match(policy, /reconcile every P0, P1, and P2 finding/);
+  assert.match(policy, /reconcile every P0, P1, P2, and P3 finding/);
+  assert.match(policy, /A-F grade, quality\/evidence confidence/);
+  assert.match(policy, /latest-[\s\S]*head PASS with all four counts at zero/);
+  assert.match(policy, /visibly include its P0-P3 priority and confidence score/);
   assert.match(policy, /Re-fetch that exact head's reviews, unresolved threads, checks, mergeability, and diff/);
-  assert.match(policy, /Identify every waived or dismissed finding and obtain explicit user approval/);  assert.match(readme, /## Issue governance/);
+  assert.match(policy, /Dismiss a finding only when evidence shows it is invalid or a duplicate/);
+  assert.match(policy, /A retained P0, P1, P2, or P3 finding cannot be waived for completion/);
+  assert.match(readme, /## Issue governance/);
   assert.match(policy, /Separate code pushed, PR text posted, checks completed, and review completed/);
   assert.match(policy, /Link the published PR\s+update when the user expects to see it on GitHub/);
   assert.match(policy, /When the workflow includes a prose-editing capability/);
@@ -159,6 +164,8 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.match(agentDetail, /assigned contribution is complete and handed back/);
   assert.match(buildHtml(workflow), /Done when[\s\S]*assigned contribution is complete and handed back/);
   assert.match(buildHtml(workflow), /For PR review updates, use <code>Fixed<\/code>, <code>Proof<\/code>, <code>Status<\/code>, and <code>Next<\/code>/);
+  assert.match(buildHtml(workflow), /A-F grade/);
+  assert.match(buildHtml(workflow), /P0\/P1\/P2\/P3 counts/);
   const detail = readFileSync(join(outDir, "agents", "frontend-developer.md"), "utf-8");
   assert.ok(detail.includes("# frontend-developer"));
   assert.ok(detail.includes("## Skills"));

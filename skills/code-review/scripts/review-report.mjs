@@ -164,6 +164,29 @@ export function deriveVerdict(review) {
   return "PASS";
 }
 
+export function priorityCounts(review) {
+  validateReview(review);
+  return Object.fromEntries(PRIORITIES.map((priority) => [
+    priority,
+    review.findings.filter((finding) => finding.priority === priority).length,
+  ]));
+}
+
+export function deriveGrade(review) {
+  validateReview(review);
+  const counts = priorityCounts(review);
+  if (counts.P0 > 0 || counts.P1 > 0) return "F";
+  if (counts.P2 > 0) return "D";
+  if (
+    counts.P3 > 0 ||
+    review.limitations.length > 0 ||
+    review.confidence.quality < 85 ||
+    review.confidence.evidence < 80
+  ) return "C";
+  if (review.confidence.quality >= 90 && review.confidence.evidence >= 90) return "A";
+  return "B";
+}
+
 function sortedFindings(findings) {
   return [...findings].sort((left, right) =>
     PRIORITY_ORDER.get(left.priority) - PRIORITY_ORDER.get(right.priority)
@@ -180,11 +203,16 @@ function marker(review) {
 export function renderReview(review) {
   validateReview(review);
   const verdict = deriveVerdict(review);
+  const grade = deriveGrade(review);
+  const counts = priorityCounts(review);
   const lines = [
     "# DIRF PR review",
     "",
     `**Gate:** ${verdict}`,
+    `**Grade:** ${grade}`,
     `**Review confidence:** Quality ${review.confidence.quality}% · Evidence ${review.confidence.evidence}%`,
+    `**Priority count:** P0 ${counts.P0} · P1 ${counts.P1} · P2 ${counts.P2} · P3 ${counts.P3}`,
+    `**Definition of done:** ${verdict === "PASS" ? "MET — no P0-P3 findings remain on this exact head" : "NOT MET — fix every P0-P3 finding, verify the behavior, and re-review the new head"}`,
     `**Target:** \`${review.target.repository}\` at \`${review.target.head_sha}\` against \`${review.target.base_sha}\` (${review.target.mode})`,
     "",
     "## Walkthrough",
