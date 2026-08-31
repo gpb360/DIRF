@@ -85,11 +85,11 @@ dirf flow "<task>"
 {"models":[{"name":"fast-model","cost_tier":"low","capabilities":["testing"]}]}
 ```
 
-DIRF suggests the lowest host-reported tier that declares each preflight workflow
-capability and records the catalog hash. With no catalog or match it says the
-advice is unavailable. It does not claim to cover work discovered later. This
-is planning evidence only: DIRF does not query live prices, invoke models,
-monitor sessions, or authorize spend.
+DIRF matches only capabilities known when it builds the workflow. It chooses
+the lowest tier reported by the host and records the catalog hash. With no
+catalog or match, the workflow says advice is unavailable. This is planning
+evidence only. DIRF does not query live prices, invoke models, monitor work, or
+authorize spend.
 
 **Optional: project playbooks.** `dirf build|plan|create ... --playbooks <dir>`
 lets one explicitly supplied directory of playbooks participate in routing,
@@ -190,7 +190,7 @@ Reference existing specs/tickets/decisions rather than restating them.
 | Command | Purpose |
 |---|---|
 | `dirf state which` | which project am I in? (slug + store path) |
-| `dirf state read-handoff` | print the canonical handoff (read this first) |
+| `dirf state read-handoff` | read the project-wide handoff for diagnosis or recovery |
 | `dirf state write-handoff --file F` | write the canonical handoff (end of session) |
 | `dirf state list-attempts` | prior runs for this project |
 | `dirf state get-attempt <id>` | one attempt's detail |
@@ -348,11 +348,12 @@ dirf state migrate-cleanup     # removes migration backups once the store looks 
 - **Copying a handoff between checkouts by hand.** Unnecessary — both checkouts
   share the store entry. Write once, read from either.
 - **Treating the per-attempt `HANDOFF.md` as the project handoff.** The attempt
-  handoff is run-scoped (for resuming that attempt via `dirf resume`). The
-  canonical project handoff (`dirf state read/write-handoff`) is what the next
-  session should read.
-- **Starting work without reading the canonical handoff.** Always
-  `dirf state read-handoff` first — it's the current truth.
+  handoff is run-scoped. The canonical handoff is project-wide state, but normal
+  startup still begins with `dirf state active` so DIRF can name the right
+  workflow and handoff for the current checkout.
+- **Starting work without resolving checkout responsibility.** Run
+  `dirf state active` first. Reuse the reported active attempt, build new work
+  only when idle, and never select the latest attempt automatically.
 
 ## Zero dependencies
 

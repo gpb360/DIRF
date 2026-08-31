@@ -11,13 +11,14 @@ capabilities: ["model selection advice"]
 
 # Model advice
 
-Use only the model catalog supplied by the host. Match each declared preflight workflow requirement
-to an exact declared capability, or to a catalog wildcard. Choose the lowest
-host-reported cost tier; break ties by model name so the result is stable.
+Use only the model catalog supplied by the host. Match each workflow
+requirement known before execution to an exact declared capability or catalog
+wildcard. Choose the lowest cost tier reported by the host. Break ties by model
+name so the result is stable.
 
 Record the catalog hash, model name, tier, matched capabilities, preflight workflow
 stages, rationale, and any uncovered capabilities. If no catalog or match is
 available, say that advice is unavailable.
 
-This advice does not claim to cover work discovered later in an interview.
-Never fetch prices, invoke a model, monitor a session, or authorize spend.
+This advice covers only work known before execution. Never fetch prices, invoke
+a model, monitor work, or authorize spend.

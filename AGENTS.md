@@ -46,8 +46,9 @@ node --test                    # run the suite
 - `src/project.js` — config validation + target-side scaffolding; `createAttempt`/
   `listAttempts`/`findAttempt` are thin delegates to `state.js`.
 - `src/mcp.js` — optional stdio JSON-RPC MCP server over `state.js` (no SDK).
-- `src/router.js`, `src/skills.js`, `src/renderer.js`, `src/validate.js`,
-  `src/paths.js` — routing, skill discovery, rendering, validation, repo paths.
+- `src/router.js`, `src/model-advice.js`, `src/skills.js`, `src/renderer.js`,
+  `src/validate.js`, `src/paths.js` — routing, model advice, skill discovery,
+  rendering, validation, and repository paths.
 - `registry/` — agent and skill metadata plus the generated playbook compatibility export.
 - `playbooks/*/README.md` — the authoritative playbook source.
 - `agents/` — bundled default agent definitions, used only as fallbacks when the
