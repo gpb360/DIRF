@@ -85,11 +85,9 @@ dirf flow "<task>"
 {"models":[{"name":"fast-model","cost_tier":"low","capabilities":["testing"]}]}
 ```
 
-DIRF matches only capabilities known when it builds the workflow. It chooses
-the lowest tier reported by the host and records the catalog hash. With no
-catalog or match, the workflow says advice is unavailable. This is planning
-evidence only. DIRF does not query live prices, invoke models, monitor work, or
-authorize spend.
+DIRF records a suggestion for capabilities known before work begins, or says
+that advice is unavailable. See the [model-advice contract](../skills/model-advice/README.md)
+for the matching rules, recorded evidence, and boundaries.
 
 **Optional: project playbooks.** `dirf build|plan|create ... --playbooks <dir>`
 lets one explicitly supplied directory of playbooks participate in routing,

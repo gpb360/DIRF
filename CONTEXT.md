@@ -22,7 +22,7 @@ An explicit invocation-scoped allowlist of skill names that narrows Task Routing
 _Avoid_: Skill registry, project default, profile layer
 
 **Preflight Model Advice**:
-Optional model suggestions derived only from a host-provided catalog and the capabilities known when DIRF builds the workflow. The advice records the catalog hash and never invokes a model, queries live prices, monitors work, or authorizes spend.
+An optional model suggestion recorded before work begins from information supplied by the host. The full contract lives in [`skills/model-advice/README.md`](skills/model-advice/README.md).
 _Avoid_: Live price routing, model execution, process monitoring
 
 **DIRF Flow Board**:

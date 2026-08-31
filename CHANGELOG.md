@@ -11,8 +11,8 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ### Added
 - **Human-controlled plan interviews:** explicit Grill Me and Grill With Docs
-  requests now use their model-run interview engine without treating the human
-  command as an autonomous skill.
+  requests now use the installed interview workflow while remaining under the
+  user's control.
 - **Diagnostic model advice:** `--models FILE` lets a host provide model names,
   capabilities, and cost tiers. DIRF records the cheapest declared match for
   work known before execution, or states that no match is available.
@@ -31,8 +31,8 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   instead of leaving interview phases, gates, or questions behind.
 - Positive requests such as “do not leave questions unanswered” keep the
   interview, while negated review and implementation work stays excluded.
-- Human-invoked routers fail before attempt creation when a required model-run
-  dependency is missing or incorrectly marked as human-only.
+- DIRF stops before creating an attempt when a requested interview workflow is
+  missing or cannot be run by the agent.
 
 ## [0.28.1] — 2026-08-27
 

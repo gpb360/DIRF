@@ -55,8 +55,7 @@ the task and builds one complete workflow in the order the user stated.
 - **Every phase has one owner:** generated Markdown and HTML name the result and
   verification expected from that owner.
 - **[Model advice](skills/model-advice/README.md) is diagnostic:** a host can
-  provide `--models FILE`; DIRF uses only that catalog and never invokes a
-  model, queries prices, or monitors work.
+  provide `--models FILE` so DIRF can record a suggestion before work begins.
 
 ## What DIRF is not
 
@@ -69,12 +68,9 @@ the task and builds one complete workflow in the order the user stated.
 DIRF prepares and records the route. Your agent host still performs the work,
 and you keep control of consequential actions.
 
-DIRF can add diagnostic [model advice](skills/model-advice/README.md) from a
-host-provided `--models FILE` catalog. For each capability known when the
-workflow is built, it selects the lowest cost tier reported by the host and
-records the catalog hash. Without a catalog, the workflow says advice is
-unavailable. This is planning evidence, not permission to invoke a model,
-query prices, monitor work, or spend money.
+DIRF can add diagnostic [model advice](skills/model-advice/README.md) before work
+begins. It may suggest a model from information supplied by the host, but it
+does not run or monitor the work.
 
 ## Install
 
@@ -419,10 +415,9 @@ useful:
 ```
 
 Pass it with `--models FILE` to `build`, `plan`, `create`, or `flow`. DIRF
-matches the workflow capabilities known before execution, chooses the lowest
-tier reported by the host, and stores the suggestion with the catalog SHA-256.
-The flag does not run a model, check current prices, monitor work, or grant
-spending authority.
+stores a stable recommendation for the workflow capabilities known before
+execution. See the [model-advice contract](skills/model-advice/README.md) for
+the matching rules, recorded evidence, and boundaries.
 
 **Scan roots** (all optional): `~/.agents/skills/`, `~/.codex/skills/`,
 `~/.claude/skills/`, `~/.zcode/.../skills/`, plus project-local equivalents.

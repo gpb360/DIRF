@@ -118,10 +118,9 @@ user-owned, enforces the confirmation gate in code, and documents the normal
 and stateful variants once.
 
 Model advice follows the same rule. The workflow declares the preflight phase,
-the agent organizer owns it, code reads only a host-provided catalog, and the
-rendered workflow carries the result. If no catalog is available, record that
-advice is unavailable. The advice covers only work known before execution and
-never grants permission to invoke a model, monitor work, or spend money.
+the agent organizer owns it, and the rendered workflow carries the result. The
+[model-advice contract](../skills/model-advice/README.md) owns the matching and
+safety rules.
 
 ## Failure modes to prune
 
