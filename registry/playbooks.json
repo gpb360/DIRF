@@ -101,7 +101,7 @@
     }
   },
   "pr-review": {
-    "description": "Review a pull request at an exact head for provable bugs, regressions, security risks, and missing tests with confidence-scored findings.",
+    "description": "Review a pull request, fix every confirmed issue, and repeat until the current commit is clear and all required checks pass.",
     "keywords": [
       "pr",
       "pull request",
@@ -118,72 +118,92 @@
     ],
     "workflow": {
       "phases": [
-        "freeze exact base and head",
-        "walk through changed behavior",
-        "review security and trust-boundary risks",
-        "review performance and regression risks",
-        "disprove and verify candidate findings",
-        "validate the review artifact",
-        "recheck head and deduplicate before posting"
+        "get the latest PR version",
+        "review the changed behavior",
+        "check security risks",
+        "check performance and regression risks",
+        "prove each suspected issue",
+        "fix every confirmed issue",
+        "test the fixes",
+        "review the updated PR again",
+        "confirm no issues or checks remain"
       ],
+      "gates": {
+        "confirm no issues or checks remain": {
+          "kind": "verify",
+          "verify": "dirf review ready review.json"
+        }
+      },
       "agent_contracts": {
         "agent-organizer": {
           "phases": [
-            "freeze exact base and head",
-            "validate the review artifact",
-            "recheck head and deduplicate before posting"
+            "get the latest PR version",
+            "fix every confirmed issue",
+            "review the updated PR again",
+            "confirm no issues or checks remain"
           ],
-          "output": "a validated, deduplicated review tied to one exact base and head",
-          "verification": "the recorded base and head still match and review.json validates before posting"
+          "output": "a current review with clear ownership for every required correction",
+          "verification": "dirf review ready review.json passes before merge approval is requested"
         },
         "test-engineer": {
           "phases": [
-            "walk through changed behavior",
-            "disprove and verify candidate findings"
+            "review the changed behavior",
+            "prove each suspected issue",
+            "test the fixes"
           ],
-          "output": "behavior traces and focused evidence for every retained finding",
-          "verification": "each retained finding is reproduced or proved by the narrowest applicable check"
+          "output": "behavior traces and focused proof for every confirmed issue and fix",
+          "verification": "each confirmed issue is reproduced, corrected, and proved by the narrowest applicable check"
         },
         "security-auditor": {
           "phases": [
-            "review security and trust-boundary risks"
+            "check security risks"
           ],
-          "output": "applicable security findings or an explicit security all-clear",
+          "output": "applicable security issues or a clear statement that none were found",
           "verification": "changed trust boundaries, authorization, secrets, injection, and fail-open behavior were checked"
         },
         "performance-benchmarker": {
           "phases": [
-            "review performance and regression risks"
+            "check performance and regression risks"
           ],
-          "output": "applicable performance and regression findings or an explicit all-clear",
-          "verification": "changed hot paths and regression-sensitive behavior were checked with proportionate evidence"
+          "output": "applicable performance or regression issues, or a clear statement that none were found",
+          "verification": "changed hot paths and regression-sensitive behavior were checked with proportionate proof"
         }
       },
-      "output": "confidence-scored inline findings plus one PASS, CONDITIONAL, or FAIL gate",
-      "validation": "validate review.json and use focused tests, static checks, database proof, or browser evidence as applicable",
-      "recovery": "if no PR or diff is available, ask for the branch, commit range, diff, or PR URL; if verification is blocked, emit CONDITIONAL with the exact limitation"
+      "output": "a plain-language status and a detailed review report; merge approval is requested only after the current commit has no remaining issues and every required check passes",
+      "validation": "dirf review ready review.json",
+      "recovery": "if the PR is unavailable, ask for its URL or branch; if an issue remains or a check is incomplete, say what remains and continue the fix, test, and review loop"
     },
     "questions": [
       "What branch, commit range, diff, or PR should be reviewed?",
       "What issue, specification, or expected behavior defines correctness?"
     ],
     "skill_flow": {
-      "label": "review a pull request",
+      "label": "review, fix, test, and review again until clear",
       "steps": [
         {
           "stage": "review",
-          "reason": "Freeze the exact target and review standards, specification, behavior, and regressions independently.",
+          "reason": "Get the current PR version and review its behavior and regressions.",
           "capability": "code review"
         },
         {
           "stage": "security",
-          "reason": "Check applicable trust boundaries, secrets, injection, authorization, and fail-open behavior.",
+          "reason": "Check relevant trust boundaries, secrets, injection, authorization, and fail-open behavior.",
           "capability": "security review"
         },
         {
+          "stage": "fix",
+          "reason": "Fix every confirmed issue without expanding the task.",
+          "capability": "implementation"
+        },
+        {
           "stage": "verify",
-          "reason": "Exercise the narrowest checks that prove or disprove each material claim.",
+          "reason": "Run the smallest checks that prove each fix and all required PR checks.",
           "capability": "testing"
+        },
+        {
+          "stage": "review",
+          "reason": "Review the updated PR and repeat until no confirmed issue remains.",
+          "capability": "code review"
         }
       ]
     }

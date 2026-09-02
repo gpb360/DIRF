@@ -41,7 +41,12 @@ Create `review.json` with this shape:
   "verification": [
     { "command": "node --test tests/store.test.js", "result": "passed" }
   ],
-  "limitations": []
+  "limitations": [],
+  "completion": {
+    "review_complete": true,
+    "required_checks": "passed",
+    "unresolved_threads": 0
+  }
 }
 ```
 
@@ -70,4 +75,9 @@ Confidence measures whether the specific finding is true, not how severe it woul
 
 The renderer derives the verdict; do not place a hand-authored verdict in the artifact.
 
-The renderer also derives an A-F readiness grade and explicit P0-P3 counts. A grade is not a substitute for the gate: definition of done requires `PASS`, zero findings in every priority bucket, and a review bound to the latest head.
+The renderer also derives an A-F readiness grade and explicit P0-P3 counts for
+the detailed report. Normal user updates should use ordinary language.
+
+Before asking to merge, run `dirf review ready review.json`. Readiness requires
+the current commit, zero findings, a completed review, every required check
+passed, and zero unresolved review conversations.

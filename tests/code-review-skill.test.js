@@ -5,6 +5,7 @@ import { ROOT } from "../src/paths.js";
 import { loadUnit, resolveGraph } from "../src/folders.js";
 import {
   ReviewValidationError,
+  assertReviewReady,
   deriveGrade,
   deriveVerdict,
   priorityCounts,
@@ -34,6 +35,7 @@ function artifact(overrides = {}) {
     findings: [],
     verification: [{ command: "node --test", result: "passed" }],
     limitations: [],
+    completion: { review_complete: true, required_checks: "passed", unresolved_threads: 0 },
     ...overrides,
   };
 }
@@ -83,6 +85,22 @@ test("clean, well-evidenced review passes", () => {
   const review = artifact();
   assert.equal(validateReview(review), review);
   assert.equal(deriveVerdict(review), "PASS");
+  assert.equal(assertReviewReady(review, SHA_B).ready, true);
+});
+
+test("readiness fails when issues remain or the review targets an older commit", () => {
+  assert.throws(
+    () => assertReviewReady(withFinding(artifact(), finding({ id: "P2-001", priority: "P2" })), SHA_B),
+    /1 review issue remains/i,
+  );
+  assert.throws(
+    () => assertReviewReady(artifact(), "c".repeat(40)),
+    /older commit/i,
+  );
+  assert.throws(
+    () => assertReviewReady(artifact({ completion: { review_complete: true, required_checks: "pending", unresolved_threads: 0 } }), SHA_B),
+    /checks have not all passed/i,
+  );
 });
 
 test("P0 and P1 findings fail while lower priorities are conditional", () => {

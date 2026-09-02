@@ -15,7 +15,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSyn
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { resolveGoverningArtifact, validateArtifactGraph, validatePlanDelta } from "./artifacts.js";
-import { updateProgressSection } from "./handoff-update.js";
+import { parseCurrentHandoff, updateProgressSection } from "./handoff-update.js";
 
 const GIT_TIMEOUT = 30_000;
 
@@ -604,12 +604,71 @@ export function effectiveAttemptStatus(slug, attempt) {
   return { status: attempt.status, status_source: "lifecycle" };
 }
 
-export function attemptNextAction(slug, idOrName) {
-  const handoff = readAttemptHandoff(slug, idOrName);
+function handoffNextAction(handoff) {
   if (!handoff) return null;
   const match = handoff.match(/^## Exact next action\s*\r?\n+([\s\S]*?)(?=^## |\s*$)/m);
   const value = match?.[1]?.trim();
   return value && !/^_\(.*\)_$/.test(value) ? value : null;
+}
+
+export function attemptNextAction(slug, idOrName) {
+  return handoffNextAction(readAttemptHandoff(slug, idOrName));
+}
+
+function handoffUpdatedAt(markdown, path) {
+  const recorded = Date.parse(parseCurrentHandoff(markdown).lastUpdated || "");
+  if (Number.isFinite(recorded)) return recorded;
+  return existsSync(path) ? statSync(path).mtimeMs : 0;
+}
+
+function handoffWorkReferences(markdown) {
+  const references = new Set();
+  for (const match of String(markdown || "").matchAll(/\bPR\s*#?\s*(\d+)\b/gi)) {
+    references.add(`pr:${match[1]}`);
+  }
+  for (const match of String(markdown || "").matchAll(/\/pull\/(\d+)\b/gi)) {
+    references.add(`pr:${match[1]}`);
+  }
+  return references;
+}
+
+// An attempt can become stale when another attempt records newer work for the
+// same pull request. Keep the old handoff for audit history, but do not present
+// its old next step as safe current guidance.
+export function attemptContextState(slug, idOrName) {
+  const attempt = getAttempt(slug, idOrName);
+  const handoffPath = join(storeAttemptDir(slug, attempt.id), "HANDOFF.md");
+  const handoff = readAttemptHandoffFile(slug, attempt.id) || "";
+  const nextAction = handoffNextAction(handoff);
+  const references = handoffWorkReferences(handoff);
+  const updatedAt = handoffUpdatedAt(handoff, handoffPath);
+
+  const newerRelated = listAttempts(slug)
+    .filter((candidate) => candidate.id !== attempt.id)
+    .map((candidate) => {
+      const candidatePath = join(storeAttemptDir(slug, candidate.id), "HANDOFF.md");
+      const candidateHandoff = readAttemptHandoffFile(slug, candidate.id) || "";
+      const candidateReferences = handoffWorkReferences(candidateHandoff);
+      return {
+        id: candidate.id,
+        updatedAt: handoffUpdatedAt(candidateHandoff, candidatePath),
+        nextAction: handoffNextAction(candidateHandoff),
+        related: [...references].some((reference) => candidateReferences.has(reference)),
+      };
+    })
+    .filter((candidate) => candidate.related && candidate.updatedAt > updatedAt)
+    .sort((left, right) => right.updatedAt - left.updatedAt)[0] || null;
+
+  const needsRefresh = Boolean(newerRelated && newerRelated.nextAction !== nextAction);
+  return {
+    needs_refresh: needsRefresh,
+    next_action: needsRefresh ? null : nextAction,
+    stored_next_action: nextAction,
+    newer_attempt_id: newerRelated?.id || null,
+    attention: needsRefresh
+      ? "Newer project work may have changed this task. Check the newer review before continuing."
+      : null,
+  };
 }
 
 export function attemptResponsibility(slug, worktreePath) {

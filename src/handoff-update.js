@@ -52,6 +52,12 @@ function meaningfulLines(section) {
 export function updateProgressSection(handoffMarkdown, { message, timestamp, phase, next, files }) {
   const parsed = splitSections(handoffMarkdown);
 
+  if (timestamp) {
+    ensureSection(parsed.sections, "Last updated").content = sectionContent([
+      new Date(timestamp).toISOString(),
+    ]);
+  }
+
   if (phase) {
     ensureSection(parsed.sections, "Current phase").content = sectionContent([phase]);
   }
@@ -95,6 +101,7 @@ export function parseCurrentHandoff(handoffMarkdown) {
   const completed = findSection(sections, ["Completed", "Completed steps"]);
   const changed = findSection(sections, ["Changed files"]);
   const next = findSection(sections, ["Exact next action"]);
+  const lastUpdated = findSection(sections, ["Last updated"]);
   const firstValue = (section) => section ? meaningfulLines(section)[0] || null : null;
   const bulletValues = (section) => section
     ? meaningfulLines(section).filter((line) => line.startsWith("- ")).map((line) => line.slice(2).trim())
@@ -106,5 +113,6 @@ export function parseCurrentHandoff(handoffMarkdown) {
     completedSteps: bulletValues(completed),
     changedFiles: bulletValues(changed),
     nextAction: firstValue(next),
+    lastUpdated: firstValue(lastUpdated),
   };
 }

@@ -221,8 +221,8 @@ test("Grill With Docs adds a documentation owner after the accepted decision", (
 
 test("an explicit interview checkpoint precedes a mixed review or build request", () => {
   for (const [task, continuation, continuationPhase] of [
-    ["Review PR 47 and grill me about the risks first", "pr-review", "freeze exact base and head"],
-    ["Grill with docs before you review this pull request", "pr-review", "freeze exact base and head"],
+    ["Review PR 47 and grill me about the risks first", "pr-review", "get the latest PR version"],
+    ["Grill with docs before you review this pull request", "pr-review", "get the latest PR version"],
     ["Build the feature, but interview me one question at a time before implementation", "fullstack-feature", "define user outcome"],
   ]) {
     const result = recommend(task);
@@ -284,7 +284,7 @@ test("action-first requests preserve both workflows in their stated order", () =
     assert.equal(result.playbook, "pr-review", task);
     assert.equal(result.continuation.playbook, "improve-plan", task);
     assert.equal(result.continuation.transition, "after-primary", task);
-    assert.ok(result.workflow.phases.indexOf("freeze exact base and head") <
+    assert.ok(result.workflow.phases.indexOf("get the latest PR version") <
       result.workflow.phases.indexOf("confirm shared understanding"), task);
     assert.ok(result.continuation.questions.includes("What outcome should this plan optimize for?"), task);
     assert.ok(!result.questions.includes("What outcome should this plan optimize for?"), task);

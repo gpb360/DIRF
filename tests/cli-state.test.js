@@ -195,13 +195,31 @@ test("dirf state active keeps DIRF available and reuses the attempt claimed by t
 
   const hook = JSON.parse(run(["state", "active", "--path", main, "--hook"], { DIRF_HOME: home }, main));
   assert.equal(hook.hookSpecificOutput.hookEventName, "SessionStart");
-  assert.match(hook.hookSpecificOutput.additionalContext, /DIRF already governs this checkout/);
+  assert.match(hook.hookSpecificOutput.additionalContext, /DIRF already has work in this checkout/);
   assert.match(hook.hookSpecificOutput.additionalContext, new RegExp(first.id));
   assert.doesNotMatch(hook.hookSpecificOutput.additionalContext, /Project attempts|Canonical project handoff/);
 
   const second = JSON.parse(run([
     "build", "second", "fix the second behavior", "--path", main, "--json",
   ], { DIRF_HOME: home }, main)).attempt;
+
+  run([
+    "record-progress", "The first PR review looked clear", "--attempt", first.id,
+    "--path", main, "--next", "Ask to merge PR 21",
+    "--timestamp", "2026-09-02T01:00:00.000Z",
+  ], { DIRF_HOME: home }, main);
+  run([
+    "record-progress", "A newer review found two issues", "--attempt", second.id,
+    "--path", main, "--next", "Fix both issues and review PR 21 again",
+    "--timestamp", "2026-09-02T01:05:00.000Z",
+  ], { DIRF_HOME: home }, main);
+
+  const stale = JSON.parse(run(["state", "active", "--path", main, "--json"], { DIRF_HOME: home }, main));
+  assert.equal(stale.attempt.id, first.id);
+  assert.equal(stale.attempt.needs_refresh, true);
+  assert.equal(stale.attempt.next_action, null, "DIRF must not repeat an old merge instruction");
+  assert.match(stale.attempt.attention, /newer project work may have changed this task/i);
+
   const duplicate = spawnSync(process.execPath, [CLI, "resume", second.id, "--path", main], {
     cwd: main, encoding: "utf8", timeout: TIMEOUT, env: { ...process.env, DIRF_HOME: home },
   });

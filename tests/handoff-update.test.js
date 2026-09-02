@@ -21,10 +21,22 @@ test("updateProgressSection updates the standard DIRF handoff without retaining 
   const parsed = parseCurrentHandoff(updated);
 
   assert.equal(parsed.currentPhase, "verify");
+  assert.equal(parsed.lastUpdated, null);
   assert.deepEqual(parsed.completedSteps, ["Published PR 21"]);
   assert.deepEqual(parsed.changedFiles, ["src/cli.js"]);
   assert.equal(parsed.nextAction, "Review exact head before merge");
   assert.doesNotMatch(updated, /start the first workflow phase/);
+});
+
+test("progress timestamps make newer project work detectable", () => {
+  const updated = updateProgressSection("# DIRF Handoff\n", {
+    message: "Found a new review issue",
+    timestamp: "2026-09-02T01:30:00.000Z",
+    next: "Fix the issue and review the updated PR again",
+    files: [],
+  });
+
+  assert.equal(parseCurrentHandoff(updated).lastUpdated, "2026-09-02T01:30:00.000Z");
 });
 
 test("updateProgressSection adds progress sections when the canonical handoff is skeletal", () => {

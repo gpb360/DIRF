@@ -57,14 +57,14 @@ Use this policy in every generated workflow prompt.
 - For pull requests, never say "ready to merge" while a review is still running
   or any serious review issue remains. When it is ready, ask one plain question:
   "All checks passed and no review issues remain. May I merge PR #N into staging?"
-- Format PR review-loop updates with four short labels: `Fixed`, `Proof`,
-  `Status`, and `Next`. Omit a label only when it has nothing useful to say.
-- Every PR review status must show its A-F grade, quality/evidence confidence,
-  and explicit `P0`, `P1`, `P2`, and `P3` counts. `Complete` requires a latest-
-  head PASS with all four counts at zero and proof that the corrected behavior
-  functions; resolved comments or green checks alone are not completion.
-- Publish or link the validated rendered findings ledger. Every retained finding
-  must visibly include its P0-P3 priority and confidence score.
+- In normal PR updates, say how many confirmed issues remain, what checks
+  passed, whether another review is running, and what happens next.
+- Keep grades, confidence scores, P-codes, and the detailed findings ledger in
+  the review artifact. Show or link that detail when it helps, or when the user
+  asks for it; do not make the user decode it in every status update.
+- `Complete` requires a review of the current commit with no remaining issues,
+  all required checks passed, all review conversations resolved, and proof that
+  the corrected behavior works. Green checks alone are not completion.
 - Separate code pushed, PR text posted, checks completed, and review completed.
   Never present one as proof of another.
 - Include the PR number and current head when they matter. Link the published PR

@@ -2,6 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
+import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 export const REVIEW_AXES = [
@@ -148,6 +149,19 @@ export function validateReview(review) {
   if (!Array.isArray(review.limitations) || review.limitations.some((item) => !nonEmptyString(item))) {
     errors.push("limitations must be an array of non-empty strings");
   }
+  if (review.completion !== undefined) {
+    if (!isObject(review.completion)) {
+      errors.push("completion must be an object");
+    } else {
+      if (typeof review.completion.review_complete !== "boolean") errors.push("completion.review_complete must be true or false");
+      if (!new Set(["passed", "pending", "failed"]).has(review.completion.required_checks)) {
+        errors.push("completion.required_checks must be passed, pending, or failed");
+      }
+      if (!Number.isInteger(review.completion.unresolved_threads) || review.completion.unresolved_threads < 0) {
+        errors.push("completion.unresolved_threads must be a non-negative integer");
+      }
+    }
+  }
   if (Array.isArray(review.verification) && review.verification.length === 0 && Array.isArray(review.limitations) && review.limitations.length === 0) {
     errors.push("record at least one verification result or limitation");
   }
@@ -160,8 +174,37 @@ export function validateReview(review) {
 export function deriveVerdict(review) {
   validateReview(review);
   if (review.findings.some(({ priority }) => priority === "P0" || priority === "P1")) return "FAIL";
-  if (review.findings.length > 0 || review.limitations.length > 0 || review.confidence.quality < 85 || review.confidence.evidence < 80) return "CONDITIONAL";
+  if (
+    review.findings.length > 0 ||
+    review.limitations.length > 0 ||
+    review.confidence.quality < 85 ||
+    review.confidence.evidence < 80 ||
+    (review.completion && (
+      !review.completion.review_complete ||
+      review.completion.required_checks !== "passed" ||
+      review.completion.unresolved_threads !== 0
+    ))
+  ) return "CONDITIONAL";
   return "PASS";
+}
+
+export function assertReviewReady(review, currentHead) {
+  validateReview(review);
+  const counts = priorityCounts(review);
+  const issueCount = Object.values(counts).reduce((sum, count) => sum + count, 0);
+  if (issueCount > 0) {
+    throw new Error(`${issueCount} review issue${issueCount === 1 ? " remains" : "s remain"}. Fix ${issueCount === 1 ? "it" : "them"} and review the updated PR again.`);
+  }
+  if (!SHA_PATTERN.test(currentHead || "") || review.target.head_sha.toLowerCase() !== currentHead.toLowerCase()) {
+    throw new Error("The review covers an older commit. Review the current commit before asking to merge.");
+  }
+  if (!review.completion?.review_complete) throw new Error("The latest review is not complete yet.");
+  if (review.completion.required_checks !== "passed") throw new Error("The required checks have not all passed.");
+  if (review.completion.unresolved_threads !== 0) {
+    throw new Error(`${review.completion.unresolved_threads} review conversation${review.completion.unresolved_threads === 1 ? " is" : "s are"} still unresolved.`);
+  }
+  if (deriveVerdict(review) !== "PASS") throw new Error("The review is not clear enough to ask for merge approval.");
+  return { ready: true, head_sha: review.target.head_sha };
 }
 
 export function priorityCounts(review) {
@@ -260,16 +303,21 @@ function loadReview(file) {
 }
 
 function usage() {
-  return "Usage: node skills/code-review/scripts/review-report.mjs <validate|render> <review.json>";
+  return "Usage: node skills/code-review/scripts/review-report.mjs <validate|render|ready> <review.json>";
 }
 
 export function run(argv) {
   const [command, file] = argv;
-  if (!file || !new Set(["validate", "render"]).has(command)) throw new Error(usage());
+  if (!file || !new Set(["validate", "render", "ready"]).has(command)) throw new Error(usage());
   const review = loadReview(file);
   if (command === "validate") {
     validateReview(review);
     return `Valid DIRF review artifact: ${deriveVerdict(review)}`;
+  }
+  if (command === "ready") {
+    const currentHead = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", windowsHide: true }).trim();
+    assertReviewReady(review, currentHead);
+    return `Ready: no review issues remain, all required checks passed, and the review matches commit ${currentHead.slice(0, 12)}.`;
   }
   return renderReview(review);
 }

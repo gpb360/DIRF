@@ -21,11 +21,11 @@ Produce a review another maintainer can act on without reconstructing your reaso
 4. Prove each finding. State the triggering input or state, execution path, wrong outcome, user or system impact, and the smallest source-level correction. Completion: every published finding meets [findings-contract.md](findings-contract.md) and has confidence of at least 80.
 5. Verify proportionally. Run the narrowest relevant tests and static checks; add database, browser, concurrency, or security proof when the change crosses those boundaries. Completion: each command and outcome is recorded, including blockers and unrun checks.
 6. Write `review.json`, validate it, then render the human review:
-   - `node skills/code-review/scripts/review-report.mjs validate review.json`
-   - `node skills/code-review/scripts/review-report.mjs render review.json`
+   - `dirf review validate review.json`
+   - `dirf review render review.json`
    Completion: validation exits zero and the rendered verdict agrees with the findings and confidence gates.
 7. Before posting, confirm the PR head still equals `head_sha` and search existing review markers for the same head. Completion: stale-head and duplicate reviews are not posted.
-8. When any P0, P1, P2, or P3 finding exists, fix it, verify the affected behavior, and perform a fresh review of the new exact head. Completion: the loop ends only when all four priority counts are zero and the latest artifact is `PASS`.
+8. When any P0, P1, P2, or P3 finding exists, fix it, verify the affected behavior, and perform a fresh review of the updated PR. Record whether the review is complete, required checks passed, and review conversations remain. Completion: `dirf review ready review.json` exits successfully.
 
 ## Decision rules
 

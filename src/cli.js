@@ -30,7 +30,7 @@ import { inspect, detectStackProfile } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings } from "./state.js";
+import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings } from "./state.js";
 import { ARTIFACT_TYPES, explainGoverningArtifact } from "./artifacts.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 import {
@@ -43,6 +43,7 @@ import {
 } from "./governance.js";
 import { DEFAULT_ISSUE_POLICY } from "./issue-governance.js";
 import { buildModelAdvice, normalizeModelCatalog } from "./model-advice.js";
+import { run as runReviewReport } from "../skills/code-review/scripts/review-report.mjs";
 import { bindingsFromPlan, refreshSkillBindings } from "./skill-bindings.js";
 
 const LIFECYCLE = {
@@ -953,9 +954,12 @@ function cmdStateActive(args) {
     current_phase: attempt.current_phase || null,
     responsibility_path: attempt.responsibility_path,
   }));
+  const activeContext = responsibility.attempt
+    ? attemptContextState(project.slug, responsibility.attempt.id)
+    : null;
   const active = responsibility.attempt ? {
     ...attempts[0],
-    next_action: attemptNextAction(project.slug, responsibility.attempt.id),
+    ...activeContext,
     workflow_path: existsSync(join(responsibility.attempt.folder, "README.md"))
       ? join(responsibility.attempt.folder, "README.md")
       : join(responsibility.attempt.folder, "workflow.json"),
@@ -974,7 +978,9 @@ function cmdStateActive(args) {
   if (args.hook) {
     let additionalContext;
     if (result.state === "active") {
-      additionalContext = `DIRF already governs this checkout. Reuse attempt ${active.id} (${active.name}); do not build a duplicate or enumerate the portfolio. Current phase: ${active.current_phase || "not recorded"}. Next action: ${active.next_action || "continue the current phase"}. Load ${active.workflow_path} and ${active.handoff_path} only if their details are not already in context.`;
+      additionalContext = active.needs_refresh
+        ? `DIRF found newer work for the same pull request. Do not follow this task's old next step. Read the newer review, update this task, and continue only from the corrected next step.`
+        : `DIRF already has work in this checkout. Continue task ${active.id} (${active.name}). Current stage: ${active.current_phase || "not recorded"}. Next: ${active.next_action || "continue the current stage"}. Load ${active.workflow_path} and ${active.handoff_path} only if needed.`;
     } else if (result.state === "conflict") {
       additionalContext = `DIRF responsibility conflict in this checkout: ${attempts.map(({ id }) => id).join(", ")}. Stop and select the intended attempt explicitly; do not choose the latest.`;
     } else {
@@ -985,9 +991,14 @@ function cmdStateActive(args) {
   }
   if (args.json) { console.log(JSON.stringify(result, null, 2)); return; }
   if (result.state === "active") {
-    console.log(`DIRF active: ${active.id} (${active.name})`);
-    console.log(`Phase: ${active.current_phase || "not recorded"}`);
-    console.log(`Next: ${active.next_action || "continue the current phase"}`);
+    console.log(`DIRF task: ${active.id} (${active.name})`);
+    console.log(`Stage: ${active.current_phase || "not recorded"}`);
+    if (active.needs_refresh) {
+      console.log(`Attention: ${active.attention}`);
+      console.log("Next: Read the newer review and replace this task's old next step before continuing.");
+    } else {
+      console.log(`Next: ${active.next_action || "continue the current stage"}`);
+    }
   } else if (result.state === "conflict") {
     console.log(`DIRF conflict: ${attempts.map(({ id }) => id).join(", ")}`);
   } else {
@@ -1448,6 +1459,7 @@ Usage:
   dirf flow "<task>" [--path DIR] [--profile FILE] [--models FILE]
                                                       show the ordered skill flow and optional diagnostic model advice
   dirf govern <digest|evaluate|append|verify> [...]    decide actions and maintain a hash-linked evidence ledger
+  dirf review <validate|render|ready> review.json     validate, render, or prove a PR review is ready
   dirf state which [--path DIR]                       what project am I in? (slug + store path)
   dirf state list                                      list all registered projects
   dirf state register [--path DIR]                    register a project explicitly
@@ -1602,6 +1614,17 @@ function cmdGovern(args) {
   process.exitCode = 2;
 }
 
+function cmdReview(args) {
+  const subcommand = args._[0];
+  const file = args._[1];
+  if (!subcommand || !file) {
+    console.error("usage: dirf review <validate|render|ready> review.json");
+    process.exitCode = 2;
+    return;
+  }
+  console.log(runReviewReport([subcommand, file]));
+}
+
 function plainName(task) {
   // Short, filesystem-safe name from a task sentence, for `start work on`.
   return String(task || "")
@@ -1673,6 +1696,7 @@ async function main() {
   else if (cmd === "inspect") { args._ = args._.length ? args._ : [args.path]; cmdInspect(args); }
   else if (cmd === "flow") { cmdFlow(args); }
   else if (cmd === "govern") { cmdGovern(args); }
+  else if (cmd === "review") { cmdReview(args); }
   else if (cmd === "state") {
     const sub = args._[0];
     const subArgs = { ...args, _: args._.slice(1) };
