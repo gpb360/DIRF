@@ -30,7 +30,7 @@ import { inspect, detectStackProfile } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings } from "./state.js";
+import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings } from "./state.js";
 import { ARTIFACT_TYPES, explainGoverningArtifact } from "./artifacts.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 import {
@@ -565,7 +565,7 @@ function cmdRender(args) {
   renderPlan(planPath, target, args.open);
 }
 
-function publicAttemptForSlug(slug, attempt) {
+function publicAttemptForSlug(slug, attempt, context = null) {
   // One composed read: attemptGateState does a single workflow.json read for
   // the already-loaded attempt (avoid re-looking-up per gate — see M2).
   const { phases, gates } = attemptGateState(slug, attempt);
@@ -585,14 +585,18 @@ function publicAttemptForSlug(slug, attempt) {
     gates,
     pending_gates: gates.filter(gateIsPending).map((gate) => gate.phase),
     evidence: attempt.evidence || {},
-    ...attemptContextState(slug, attempt.id),
+    ...(context || attemptContextState(slug, attempt.id)),
   };
 }
 
 function cmdList(args) {
   const attempts = listAttempts(projectRoot(args.path));
   const slug = resolveProject(projectRoot(args.path)).slug;
-  if (args.json) { console.log(JSON.stringify(attempts.map((attempt) => publicAttemptForSlug(slug, attempt)), null, 2)); return; }
+  if (args.json) {
+    const contexts = attemptContextStates(slug);
+    console.log(JSON.stringify(attempts.map((attempt) => publicAttemptForSlug(slug, attempt, contexts.get(attempt.id))), null, 2));
+    return;
+  }
   if (!attempts.length) { console.log("(no attempts saved)"); return; }
   console.log("Saved attempts:");
   for (const attempt of attempts) console.log(`  - ${attempt.id}  ${attempt.name}`);
@@ -918,7 +922,11 @@ function cmdStateWriteHandoff(args) {
 function cmdStateListAttempts(args) {
   const slug = resolveStateSlug(args);
   const attempts = listAttemptsState(slug);
-  if (args.json) { console.log(JSON.stringify(attempts.map((attempt) => publicAttemptForSlug(slug, attempt)), null, 2)); return; }
+  if (args.json) {
+    const contexts = attemptContextStates(slug);
+    console.log(JSON.stringify(attempts.map((attempt) => publicAttemptForSlug(slug, attempt, contexts.get(attempt.id))), null, 2));
+    return;
+  }
   if (!attempts.length) { console.log("(no attempts saved)"); return; }
   console.log("Saved attempts:");
   for (const a of attempts) console.log(`  - ${a.id}  ${a.name}`);
@@ -1335,10 +1343,9 @@ function cmdRecordProgress(args) {
     }
 
     // Build update
-    const timestamp = args.timestamp || new Date().toISOString();
     const updateData = {
       message,
-      timestamp,
+      timestamp: args.timestamp || null,
       phase: args.phase || null,
       next: args.next || "Continue work",
       files: args.files ? args.files.split(",") : [],

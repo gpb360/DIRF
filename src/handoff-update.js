@@ -49,13 +49,17 @@ function meaningfulLines(section) {
     .filter((line) => line && !/^(?:-\s+)?_\([^)]+\)_$/.test(line));
 }
 
-export function updateProgressSection(handoffMarkdown, { message, timestamp, phase, next, files, workItem, reviewRevision }) {
+export function updateProgressSection(handoffMarkdown, { message, timestamp, updateNumber, phase, next, files, workItem, reviewRevision }) {
   const parsed = splitSections(handoffMarkdown);
 
   if (timestamp) {
     ensureSection(parsed.sections, "Last updated").content = sectionContent([
       new Date(timestamp).toISOString(),
     ]);
+  }
+
+  if (Number.isSafeInteger(updateNumber) && updateNumber > 0) {
+    ensureSection(parsed.sections, "Update number").content = sectionContent([String(updateNumber)]);
   }
 
   if (phase) {
@@ -108,6 +112,7 @@ export function parseCurrentHandoff(handoffMarkdown) {
   const lastUpdated = findSection(sections, ["Last updated"]);
   const workItem = findSection(sections, ["Work item"]);
   const reviewRevision = findSection(sections, ["Review revision"]);
+  const updateNumber = findSection(sections, ["Update number"]);
   const firstValue = (section) => section ? meaningfulLines(section)[0] || null : null;
   const bulletValues = (section) => section
     ? meaningfulLines(section).filter((line) => line.startsWith("- ")).map((line) => line.slice(2).trim())
@@ -123,5 +128,6 @@ export function parseCurrentHandoff(handoffMarkdown) {
     lastUpdated: firstValue(lastUpdated),
     workItem: firstValue(workItem),
     reviewRevision: firstValue(reviewRevision),
+    updateNumber: Number.parseInt(firstValue(updateNumber) || "", 10) || null,
   };
 }

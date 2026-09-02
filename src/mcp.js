@@ -54,7 +54,7 @@ function callTool(name, args) {
       const slug = resolveSlugFromParams(args, { touch: false });
       recordProgress(slug, {
         message: args.message,
-        timestamp: new Date().toISOString(),
+        timestamp: null,
         phase: args.currentPhase || null,
         next: args.nextAction,
         files: args.changedFiles || [],

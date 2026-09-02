@@ -615,8 +615,8 @@ export function attemptNextAction(slug, idOrName) {
   return handoffNextAction(readAttemptHandoff(slug, idOrName));
 }
 
-function handoffUpdatedAt(markdown, path) {
-  const recorded = Date.parse(parseCurrentHandoff(markdown).lastUpdated || "");
+function handoffUpdatedAt(markdown, path, parsed = parseCurrentHandoff(markdown)) {
+  const recorded = Date.parse(parsed.lastUpdated || "");
   if (Number.isFinite(recorded)) return recorded;
   return existsSync(path) ? statSync(path).mtimeMs : 0;
 }
@@ -662,51 +662,87 @@ function revisionRelation(target, currentRevision, candidateRevision) {
 // its old next step as safe current guidance.
 export function attemptContextState(slug, idOrName) {
   const attempt = getAttempt(slug, idOrName);
-  const handoffPath = join(storeAttemptDir(slug, attempt.id), "HANDOFF.md");
-  const handoff = readAttemptHandoffFile(slug, attempt.id) || "";
-  const nextAction = handoffNextAction(handoff);
-  const references = handoffWorkReferences(handoff);
-  const updatedAt = handoffUpdatedAt(handoff, handoffPath);
-  const currentRevision = parseCurrentHandoff(handoff).reviewRevision;
-  const repositoryPath = attempt.responsibility_path || getProject(slug)?.main_path || process.cwd();
+  const { entries, repositoryPath } = attemptContextEntries(slug);
+  const entry = entries.find((candidate) => candidate.id === attempt.id);
+  return contextForAttempt(entry, entries, repositoryPath);
+}
 
-  const newerRelated = listAttempts(slug)
-    .filter((candidate) => candidate.id !== attempt.id)
+function checkpointIsNewer(current, candidate) {
+  if (candidate.updateNumber && current.updateNumber) return candidate.updateNumber > current.updateNumber;
+  if (candidate.updateNumber) return true;
+  if (current.updateNumber) return false;
+  return candidate.updatedAt > current.updatedAt;
+}
+
+function contextForAttempt(entry, entries, repositoryPath, relationFor = revisionRelation) {
+  const newerRelated = entries
+    .filter((candidate) => candidate.id !== entry.id
+      && [...entry.references].some((reference) => candidate.references.has(reference)))
     .map((candidate) => {
-      const candidatePath = join(storeAttemptDir(slug, candidate.id), "HANDOFF.md");
-      const candidateHandoff = readAttemptHandoffFile(slug, candidate.id) || "";
-      const candidateReferences = handoffWorkReferences(candidateHandoff);
-      const candidateRevision = parseCurrentHandoff(candidateHandoff).reviewRevision;
-      const relation = revisionRelation(repositoryPath, currentRevision, candidateRevision);
+      const relation = relationFor(repositoryPath, entry.reviewRevision, candidate.reviewRevision);
       return {
-        id: candidate.id,
-        updatedAt: handoffUpdatedAt(candidateHandoff, candidatePath),
-        handoffPath: candidatePath,
+        ...candidate,
         relation,
         supersedes: relation === "candidate_newer"
           || relation === "conflict"
-          || (relation === "unknown" && currentRevision && candidateRevision && currentRevision !== candidateRevision)
-          || (["same", "unknown"].includes(relation) && handoffUpdatedAt(candidateHandoff, candidatePath) > updatedAt),
-        related: [...references].some((reference) => candidateReferences.has(reference)),
+          || (relation === "unknown" && entry.reviewRevision && candidate.reviewRevision && entry.reviewRevision !== candidate.reviewRevision)
+          || (["same", "unknown"].includes(relation) && checkpointIsNewer(entry, candidate)),
       };
     })
-    .filter((candidate) => candidate.related && candidate.supersedes)
+    .filter((candidate) => candidate.supersedes)
     .sort((left, right) => {
       const priority = (value) => value === "candidate_newer" ? 2 : value === "conflict" ? 1 : 0;
-      return priority(right.relation) - priority(left.relation) || right.updatedAt - left.updatedAt;
+      return priority(right.relation) - priority(left.relation)
+        || (right.updateNumber || 0) - (left.updateNumber || 0)
+        || right.updatedAt - left.updatedAt;
     })[0] || null;
 
   const needsRefresh = Boolean(newerRelated);
   return {
     needs_refresh: needsRefresh,
-    next_action: needsRefresh ? null : nextAction,
-    stored_next_action: nextAction,
+    next_action: needsRefresh ? null : entry.nextAction,
     newer_attempt_id: newerRelated?.id || null,
     newer_handoff_path: newerRelated?.handoffPath || null,
     attention: needsRefresh
       ? "Newer or conflicting project work may have changed this task. Check the other review before continuing."
       : null,
   };
+}
+
+// Parse each handoff once so list views do not repeatedly re-read every task.
+// Work identity is checked before any Git ancestry command is run.
+function attemptContextEntries(slug) {
+  const project = getProject(slug);
+  const attempts = listAttempts(slug);
+  const entries = attempts.map((attempt) => {
+    const handoffPath = join(storeAttemptDir(slug, attempt.id), "HANDOFF.md");
+    const handoff = readAttemptHandoffFile(slug, attempt.id) || "";
+    const parsed = parseCurrentHandoff(handoff);
+    return {
+      id: attempt.id,
+      handoffPath,
+      nextAction: handoffNextAction(handoff),
+      references: handoffWorkReferences(handoff),
+      updatedAt: handoffUpdatedAt(handoff, handoffPath, parsed),
+      updateNumber: parsed.updateNumber,
+      reviewRevision: parsed.reviewRevision,
+    };
+  });
+  const repositoryPath = attempts.find((attempt) => attempt.responsibility_path)?.responsibility_path
+    || project?.main_path
+    || process.cwd();
+  return { entries, repositoryPath };
+}
+
+export function attemptContextStates(slug) {
+  const { entries, repositoryPath } = attemptContextEntries(slug);
+  const relations = new Map();
+  const relationFor = (target, current, candidate) => {
+    const key = `${current || ""}:${candidate || ""}`;
+    if (!relations.has(key)) relations.set(key, revisionRelation(target, current, candidate));
+    return relations.get(key);
+  };
+  return new Map(entries.map((entry) => [entry.id, contextForAttempt(entry, entries, repositoryPath, relationFor)]));
 }
 
 export function attemptResponsibility(slug, worktreePath) {
@@ -1245,6 +1281,20 @@ function withProgressLock(slug, action) {
   }
 }
 
+function nextProgressUpdateNumber(slug) {
+  const path = join(storeProjectDir(slug), ".progress-sequence");
+  let current = 0;
+  try {
+    current = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
+    if (!Number.isSafeInteger(current) || current < 0) current = 0;
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  const next = current + 1;
+  atomicWrite(path, `${next}\n`);
+  return next;
+}
+
 // Record one progress checkpoint through the canonical core so CLI and MCP
 // cannot drift. Canonical and attempt handoffs are updated from their own
 // bases; the attempt write happens first and the authoritative canonical write
@@ -1260,6 +1310,7 @@ export function recordProgress(slug, { message, timestamp, phase, next, files, a
     const update = {
       message,
       timestamp: timestamp || new Date().toISOString(),
+      updateNumber: nextProgressUpdateNumber(slug),
       phase: phase || null,
       next,
       files: files || [],

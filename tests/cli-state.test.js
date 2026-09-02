@@ -223,9 +223,11 @@ test("dirf state active keeps DIRF available and reuses the attempt claimed by t
   assert.match(stale.attempt.attention, /newer or conflicting project work/i);
   assert.equal(stale.attempt.newer_attempt_id, second.id);
   assert.match(stale.attempt.newer_handoff_path, new RegExp(second.id));
+  assert.doesNotMatch(JSON.stringify(stale), /Ask to merge PR 21/, "public state JSON must not leak the stale merge instruction");
 
   const staleDetail = JSON.parse(run(["state", "get-attempt", first.id, "--path", main, "--json"], { DIRF_HOME: home }, main));
   assert.equal(staleDetail.next_action, null, "all state views must suppress the stale next step");
+  assert.doesNotMatch(JSON.stringify(staleDetail), /Ask to merge PR 21/, "attempt detail must not leak the stale merge instruction");
 
   run([
     "record-progress", "The old review recorded a later unrelated checkpoint", "--attempt", first.id,
@@ -276,6 +278,39 @@ test("dirf state active keeps DIRF available and reuses the attempt claimed by t
   const conflict = JSON.parse(run(["state", "active", "--path", main, "--json"], { DIRF_HOME: home }, main));
   assert.equal(conflict.state, "conflict");
   assert.deepEqual(conflict.attempts.map(({ id }) => id), [second.id, third.id]);
+});
+
+test("serialized update order wins when same-revision timestamps disagree", () => {
+  const home = freshHome();
+  const main = mkdtempSync(join(tmpdir(), "same-revision-order-"));
+  execFileSync("git", ["init", "-q"], { cwd: main, timeout: TIMEOUT });
+  run(["setup", main], { DIRF_HOME: home }, main);
+  const first = JSON.parse(run([
+    "build", "first-review", "review PR 21", "--path", main, "--json",
+  ], { DIRF_HOME: home }, main)).attempt;
+  run(["resume", first.id, "--path", main], { DIRF_HOME: home }, main);
+  const second = JSON.parse(run([
+    "build", "second-review", "review PR 21 again", "--path", main, "--json",
+  ], { DIRF_HOME: home }, main)).attempt;
+
+  run([
+    "record-progress", "The first review looked clear", "--attempt", first.id,
+    "--path", main, "--next", "Ask to merge PR 21",
+    "--work-item", "pr:21", "--review-revision", "a".repeat(40),
+    "--timestamp", "2026-09-02T02:00:00.000Z",
+  ], { DIRF_HOME: home }, main);
+  run([
+    "record-progress", "A second review found a problem", "--attempt", second.id,
+    "--path", main, "--next", "Stop and fix PR 21",
+    "--work-item", "pr:21", "--review-revision", "a".repeat(40),
+    "--timestamp", "2026-09-02T01:00:00.000Z",
+  ], { DIRF_HOME: home }, main);
+
+  const state = JSON.parse(run(["state", "active", "--path", main, "--json"], { DIRF_HOME: home }, main));
+  assert.equal(state.attempt.needs_refresh, true);
+  assert.equal(state.attempt.next_action, null);
+  assert.equal(state.attempt.newer_attempt_id, second.id);
+  assert.doesNotMatch(JSON.stringify(state), /Ask to merge PR 21/);
 });
 
 test("dirf resume never composes attempts or context from another project", () => {

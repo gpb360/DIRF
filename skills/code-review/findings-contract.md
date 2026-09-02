@@ -6,7 +6,7 @@ Create `review.json` with this shape:
 {
   "schema_version": 2,
   "target": {
-    "repository": "owner/repository",
+    "repository": "https://github.com/owner/repository.git",
     "pr_number": 123,
     "base_sha": "40-character SHA",
     "head_sha": "40-character SHA",

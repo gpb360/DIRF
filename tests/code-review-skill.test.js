@@ -103,14 +103,14 @@ test("clean, well-evidenced review passes", () => {
   assert.equal(assertReviewReady(review, gitContext()).ready, true);
 });
 
-test("readiness fails when issues remain or the review targets an older commit", () => {
+test("readiness fails when issues remain or the checkout differs from the reviewed commit", () => {
   assert.throws(
     () => assertReviewReady(withFinding(artifact(), finding({ id: "P2-001", priority: "P2" })), gitContext()),
     /1 review issue remains/i,
   );
   assert.throws(
     () => assertReviewReady(artifact(), gitContext({ current_head: "c".repeat(40) })),
-    /older commit/i,
+    /checkout commit differs/i,
   );
   assert.throws(
     () => assertReviewReady(artifact({ completion: { review_complete: true, required_checks: "pending", unresolved_threads: 0 } }), gitContext()),
@@ -179,8 +179,22 @@ test("historical schema version 1 reviews remain readable but cannot authorize m
     completion: undefined,
   });
   assert.doesNotThrow(() => validateReview(legacy));
-  assert.doesNotThrow(() => renderReview(legacy));
+  const rendered = renderReview(legacy);
+  assert.match(rendered, /\*\*Gate:\*\* NOT APPLICABLE — historical report/);
+  assert.match(rendered, /\*\*Grade:\*\* NOT APPLICABLE/);
+  assert.match(rendered, /\*\*Definition of done:\*\* NOT APPLICABLE/);
+  assert.doesNotMatch(rendered, /\*\*Definition of done:\*\* MET/);
   assert.throws(() => assertReviewReady(legacy, gitContext()), /schema version 2/i);
+});
+
+test("schema version 2 requires the documented canonical repository URL", () => {
+  assert.doesNotThrow(() => validateReview(artifact({
+    target: { ...artifact().target, repository: "https://github.com/owner/repository.git" },
+  })));
+  assert.throws(
+    () => validateReview(artifact({ target: { ...artifact().target, repository: "owner/repository" } })),
+    /canonical repository URL/i,
+  );
 });
 
 test("validator rejects low-confidence and absolute-path comments", () => {

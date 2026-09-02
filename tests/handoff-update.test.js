@@ -36,11 +36,13 @@ test("progress timestamps make newer project work detectable", () => {
   const updated = updateProgressSection("# DIRF Handoff\n", {
     message: "Found a new review issue",
     timestamp: "2026-09-02T01:30:00.000Z",
+    updateNumber: 7,
     next: "Fix the issue and review the updated PR again",
     files: [],
   });
 
   assert.equal(parseCurrentHandoff(updated).lastUpdated, "2026-09-02T01:30:00.000Z");
+  assert.equal(parseCurrentHandoff(updated).updateNumber, 7);
 });
 
 test("updateProgressSection adds progress sections when the canonical handoff is skeletal", () => {

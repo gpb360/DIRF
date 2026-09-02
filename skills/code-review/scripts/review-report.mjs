@@ -47,6 +47,17 @@ function relativeFile(value) {
   return nonEmptyString(value) && !isAbsolute(value) && !value.replaceAll("\\", "/").split("/").includes("..");
 }
 
+function repositoryUrl(value) {
+  if (!nonEmptyString(value) || /\s/.test(value)) return false;
+  if (/^git@[^:]+:.+/.test(value)) return true;
+  try {
+    const parsed = new URL(value);
+    return Boolean(parsed.protocol && parsed.pathname && (parsed.protocol === "file:" || parsed.hostname));
+  } catch {
+    return false;
+  }
+}
+
 export function validateReview(review) {
   const errors = [];
 
@@ -58,6 +69,7 @@ export function validateReview(review) {
     errors.push("target must be an object");
   } else {
     if (!nonEmptyString(review.target.repository)) errors.push("target.repository is required");
+    else if (strict && !repositoryUrl(review.target.repository)) errors.push("target.repository must be the canonical repository URL");
     if (strict && (!Number.isInteger(review.target.pr_number) || review.target.pr_number < 1)) errors.push("target.pr_number must be a positive integer");
     if (!SHA_PATTERN.test(review.target.base_sha || "")) errors.push("target.base_sha must be a 40-character Git SHA");
     if (!SHA_PATTERN.test(review.target.head_sha || "")) errors.push("target.head_sha must be a 40-character Git SHA");
@@ -221,7 +233,7 @@ export function assertReviewReady(review, gitContext) {
   }
   const currentHead = gitContext?.current_head || "";
   if (!SHA_PATTERN.test(currentHead) || review.target.head_sha.toLowerCase() !== currentHead.toLowerCase()) {
-    throw new Error("The review covers an older commit. Review the current commit before asking to merge.");
+    throw new Error("The checkout commit differs from the reviewed commit. Check out and review the current PR commit before asking to merge.");
   }
   if (!SHA_PATTERN.test(gitContext?.remote_pr_head || "") || review.target.head_sha.toLowerCase() !== gitContext.remote_pr_head.toLowerCase()) {
     throw new Error("The pull-request commit changed. Refresh it and review the current commit before asking to merge.");
@@ -287,14 +299,22 @@ export function renderReview(review) {
   const verdict = deriveVerdict(review);
   const grade = deriveGrade(review);
   const counts = priorityCounts(review);
+  const historical = review.schema_version === 1;
+  const displayedGate = historical ? "NOT APPLICABLE — historical report" : verdict;
+  const displayedGrade = historical ? "NOT APPLICABLE" : grade;
+  const doneStatus = historical
+    ? "NOT APPLICABLE — historical schema version 1 reports are read-only and cannot authorize a merge"
+    : verdict === "PASS"
+      ? "MET — no P0-P3 findings remain on this exact head"
+      : "NOT MET — fix every P0-P3 finding, verify the behavior, and re-review the new head";
   const lines = [
     "# DIRF PR review",
     "",
-    `**Gate:** ${verdict}`,
-    `**Grade:** ${grade}`,
+    `**Gate:** ${displayedGate}`,
+    `**Grade:** ${displayedGrade}`,
     `**Review confidence:** Quality ${review.confidence.quality}% · Evidence ${review.confidence.evidence}%`,
     `**Priority count:** P0 ${counts.P0} · P1 ${counts.P1} · P2 ${counts.P2} · P3 ${counts.P3}`,
-    `**Definition of done:** ${verdict === "PASS" ? "MET — no P0-P3 findings remain on this exact head" : "NOT MET — fix every P0-P3 finding, verify the behavior, and re-review the new head"}`,
+    `**Definition of done:** ${doneStatus}`,
     `**Target:** \`${review.target.repository}\` at \`${review.target.head_sha}\` against \`${review.target.base_sha}\` (${review.target.mode})`,
     "",
     "## Walkthrough",
@@ -404,6 +424,9 @@ export function run(argv) {
     return `Valid DIRF review artifact: ${deriveVerdict(review)}`;
   }
   if (command === "ready") {
+    validateReview(review);
+    if (review.schema_version !== 2) throw new Error("Merge readiness requires a schema version 2 review. Historical version 1 reports remain readable.");
+    if (review.target.mode !== "full") throw new Error("Merge readiness requires a full review of the current pull request.");
     const context = currentGitContext(review);
     assertReviewReady(review, context);
     return `Ready: no review issues remain, all required checks passed, and the review matches live PR #${review.target.pr_number} at ${context.current_head.slice(0, 12)}.`;
