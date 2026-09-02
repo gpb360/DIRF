@@ -687,6 +687,25 @@ function buildRevisionGraph(target, revisions) {
   }
 }
 
+function existingCommitRevisions(target, revisions) {
+  if (!revisions.length) return new Set();
+  try {
+    const output = execFileSync("git", ["-C", target, "cat-file", "--batch-check=%(objectname) %(objecttype)"], {
+      encoding: "utf8",
+      input: `${revisions.join("\n")}\n`,
+      timeout: GIT_TIMEOUT,
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    return new Set(output.trim().split(/\r?\n/).filter(Boolean).flatMap((line) => {
+      const [object, type] = line.trim().split(/\s+/);
+      return type === "commit" ? [object.toLowerCase()] : [];
+    }));
+  } catch {
+    return new Set();
+  }
+}
+
 function graphContainsAncestor(graph, ancestor, descendant) {
   if (!graph) return false;
   const wanted = ancestor.toLowerCase();
@@ -760,9 +779,9 @@ function contextForAttempt(entry, entries, repositoryPath, relationFor = revisio
     newer_handoff_path: requiresReconciliation ? null : newerRelated?.handoffPath || null,
     attention: needsRefresh
       ? conflict
-        ? "Another task records a conflicting reviewed commit for the same work. Reconcile the two tasks before continuing."
+        ? "Two tasks point to different PR commits. Check the current PR commit, update the task that matches it, and stop or update the other task before continuing."
         : unverifiedRevisions
-          ? "DIRF could not verify how another reviewed commit relates to this one. Reconcile the two tasks before continuing."
+          ? "DIRF cannot tell which task matches the current PR version. Check or fetch the current PR commit, update the matching task, and stop or update the other task before continuing."
         : "Newer project work may have changed this task. Check the other review before continuing."
       : null,
   };
@@ -803,13 +822,14 @@ export function attemptContextStates(slug) {
     .filter((entry) => [...entry.references].some((reference) => referenceCounts.get(reference) > 1))
     .map((entry) => entry.reviewRevision?.toLowerCase())
     .filter((revision) => /^[0-9a-f]{40}$/.test(revision || "")))];
-  const graph = buildRevisionGraph(repositoryPath, revisions);
+  const existingRevisions = existingCommitRevisions(repositoryPath, revisions);
+  const graph = buildRevisionGraph(repositoryPath, revisions.filter((revision) => existingRevisions.has(revision)));
   const relations = new Map();
   const relationFor = (_target, current, candidate) => {
     const key = `${current || ""}:${candidate || ""}`;
     if (!relations.has(key)) {
       let relation = "unknown";
-      if (/^[0-9a-f]{40}$/i.test(current || "") && /^[0-9a-f]{40}$/i.test(candidate || "")) {
+      if (existingRevisions.has(current?.toLowerCase()) && existingRevisions.has(candidate?.toLowerCase())) {
         if (current.toLowerCase() === candidate.toLowerCase()) relation = "same";
         else if (graphContainsAncestor(graph, current, candidate)) relation = "candidate_newer";
         else if (graphContainsAncestor(graph, candidate, current)) relation = "current_newer";
@@ -1408,6 +1428,9 @@ function nextProgressUpdateNumber(slug) {
     if (Number.isSafeInteger(recorded) && recorded > current) current = recorded;
   }
   const next = current + 1;
+  if (!Number.isSafeInteger(next)) {
+    throw new Error("DIRF cannot safely save this update because the project update counter is too large.");
+  }
   atomicWrite(path, `${next}\n`);
   return next;
 }

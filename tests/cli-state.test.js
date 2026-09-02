@@ -377,6 +377,14 @@ test("a missing update counter rebuilds from persisted handoffs", () => {
   assert.equal(staleValidRecovery.needs_refresh, true);
   assert.equal(staleValidRecovery.next_action, null);
   assert.doesNotMatch(JSON.stringify(staleValidRecovery), /Ask to merge PR 21/);
+
+  writeFileSync(join(home, "projects", project.slug, ".progress-sequence"), `${Number.MAX_SAFE_INTEGER}\n`);
+  const overflow = spawnSync(process.execPath, [CLI,
+    "record-progress", "Counter overflow must fail", "--attempt", correction.id, "--path", main,
+    "--next", "Stop and fix PR 21", "--work-item", "pr:21", "--review-revision", revision,
+  ], { cwd: main, encoding: "utf8", timeout: TIMEOUT, env: { ...process.env, DIRF_HOME: home } });
+  assert.notEqual(overflow.status, 0);
+  assert.match(overflow.stderr, /update counter is too large/i);
 });
 
 test("an older reviewed commit cannot replace or leak through canonical guidance", () => {
@@ -453,7 +461,7 @@ test("divergent reviewed commits are called conflicting instead of newer", () =>
       cwd: main, encoding: "utf8", timeout: TIMEOUT, env: { ...process.env, DIRF_HOME: home },
     });
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, new RegExp(`conflicts with task ${other.id}`, "i"));
+    assert.match(result.stderr, new RegExp(`task ${other.id}.*different PR commits`, "i"));
     assert.doesNotMatch(result.stderr, /newer task|older information/i);
   }
   const detail = JSON.parse(run(["state", "get-attempt", reviewA.id, "--path", main, "--json"], { DIRF_HOME: home }, main));
@@ -468,6 +476,7 @@ test("unavailable reviewed commits are called unverified instead of conflicting"
   execFileSync("git", ["init", "-q"], { cwd: main, timeout: TIMEOUT });
   run(["setup", main], { DIRF_HOME: home }, main);
   const reviewA = JSON.parse(run(["build", "review-a", "review PR 21", "--path", main, "--json"], { DIRF_HOME: home }, main)).attempt;
+  run(["resume", reviewA.id, "--path", main], { DIRF_HOME: home }, main);
   const reviewB = JSON.parse(run(["build", "review-b", "review PR 21", "--path", main, "--json"], { DIRF_HOME: home }, main)).attempt;
   run([
     "record-progress", "Recorded unavailable A", "--attempt", reviewA.id, "--path", main,
@@ -485,8 +494,52 @@ test("unavailable reviewed commits are called unverified instead of conflicting"
     cwd: main, encoding: "utf8", timeout: TIMEOUT, env: { ...process.env, DIRF_HOME: home },
   });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /unverified commit relationship/i);
+  assert.match(result.stderr, /cannot tell whether this task.*matches the current PR version/i);
   assert.doesNotMatch(result.stderr, /conflicts with|newer task|older information/i);
+  const hook = JSON.parse(run(["state", "active", "--path", main, "--hook"], { DIRF_HOME: home }, main));
+  assert.match(hook.hookSpecificOutput.additionalContext, /cannot tell which task matches the current PR version/i);
+  assert.doesNotMatch(hook.hookSpecificOutput.additionalContext, /conflicting reviewed commit/i);
+});
+
+test("an unavailable revision in one PR does not poison another PR list projection", () => {
+  const home = freshHome();
+  const main = mkdtempSync(join(tmpdir(), "isolated-review-graphs-"));
+  execFileSync("git", ["init", "-q"], { cwd: main, timeout: TIMEOUT });
+  execFileSync("git", ["config", "user.email", "dirf@example.invalid"], { cwd: main, timeout: TIMEOUT });
+  execFileSync("git", ["config", "user.name", "DIRF Test"], { cwd: main, timeout: TIMEOUT });
+  writeFileSync(join(main, "review.txt"), "A\n");
+  execFileSync("git", ["add", "review.txt"], { cwd: main, timeout: TIMEOUT });
+  execFileSync("git", ["commit", "-qm", "A"], { cwd: main, timeout: TIMEOUT });
+  const revisionA = execFileSync("git", ["rev-parse", "HEAD"], { cwd: main, encoding: "utf8", timeout: TIMEOUT }).trim();
+  writeFileSync(join(main, "review.txt"), "B\n");
+  execFileSync("git", ["commit", "-qam", "B"], { cwd: main, timeout: TIMEOUT });
+  const revisionB = execFileSync("git", ["rev-parse", "HEAD"], { cwd: main, encoding: "utf8", timeout: TIMEOUT }).trim();
+  run(["setup", main], { DIRF_HOME: home }, main);
+  const validOld = JSON.parse(run(["build", "valid-old", "review PR 21", "--path", main, "--json"], { DIRF_HOME: home }, main)).attempt;
+  const validNew = JSON.parse(run(["build", "valid-new", "review PR 21", "--path", main, "--json"], { DIRF_HOME: home }, main)).attempt;
+  const missingA = JSON.parse(run(["build", "missing-a", "review PR 22", "--path", main, "--json"], { DIRF_HOME: home }, main)).attempt;
+  const missingB = JSON.parse(run(["build", "missing-b", "review PR 22", "--path", main, "--json"], { DIRF_HOME: home }, main)).attempt;
+  for (const [attempt, workItem, revision, next] of [
+    [validOld, "pr:21", revisionA, "Review PR 21 again"],
+    [validNew, "pr:21", revisionB, "Continue current PR 21 review"],
+    [missingA, "pr:22", "a".repeat(40), "Reconcile PR 22 A"],
+    [missingB, "pr:22", "b".repeat(40), "Reconcile PR 22 B"],
+  ]) {
+    run([
+      "record-progress", next, "--attempt", attempt.id, "--path", main,
+      "--next", next, "--work-item", workItem, "--review-revision", revision,
+    ], { DIRF_HOME: home }, main);
+  }
+
+  const listed = JSON.parse(run(["state", "list-attempts", "--path", main, "--json"], { DIRF_HOME: home }, main));
+  const oldList = listed.find(({ id }) => id === validOld.id);
+  const newList = listed.find(({ id }) => id === validNew.id);
+  assert.equal(oldList.related_task_relation, "candidate_newer");
+  assert.equal(oldList.needs_refresh, true);
+  assert.equal(newList.needs_refresh, false);
+  const newDetail = JSON.parse(run(["state", "get-attempt", validNew.id, "--path", main, "--json"], { DIRF_HOME: home }, main));
+  assert.equal(newDetail.needs_refresh, newList.needs_refresh);
+  assert.equal(newDetail.related_task_relation, newList.related_task_relation);
 });
 
 test("dirf resume never composes attempts or context from another project", () => {

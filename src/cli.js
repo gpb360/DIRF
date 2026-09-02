@@ -647,10 +647,10 @@ function cmdResume(args) {
   const context = attemptContextState(project.slug, attempt.id);
   if (context.needs_refresh) {
     if (context.related_task_requires_reconciliation) {
-      const reason = context.related_task_relation === "conflict"
-        ? "conflicts with"
-        : "has an unverified commit relationship with";
-      throw new Error(`This task ${reason} task ${context.related_attempt_id}. Read both handoffs, including ${context.related_handoff_path}, and reconcile which reviewed commit owns the work before continuing.`);
+      if (context.related_task_relation === "conflict") {
+        throw new Error(`This task and task ${context.related_attempt_id} point to different PR commits. Check the current PR commit, update the task that matches it, and stop or update the other task before continuing. Other handoff: ${context.related_handoff_path}`);
+      }
+      throw new Error(`DIRF cannot tell whether this task or task ${context.related_attempt_id} matches the current PR version. Check or fetch the current PR commit, update the task that matches it, and stop or update the other task before continuing. Other handoff: ${context.related_handoff_path}`);
     }
     throw new Error(`This task has older information. Read newer task ${context.newer_attempt_id} at ${context.newer_handoff_path} before continuing.`);
   }
@@ -1010,7 +1010,9 @@ function cmdStateActive(args) {
     if (result.state === "active") {
       additionalContext = active.needs_refresh
         ? active.related_task_requires_reconciliation
-          ? `DIRF found another task with a conflicting reviewed commit for the same pull request. Do not follow either next step yet. Read task ${active.related_attempt_id} at ${active.related_handoff_path} and reconcile which commit owns the work.`
+          ? active.related_task_relation === "conflict"
+            ? `Two tasks point to different PR commits. Check the current PR commit, update the task that matches it, and stop or update task ${active.related_attempt_id}. Other handoff: ${active.related_handoff_path}`
+            : `DIRF cannot tell which task matches the current PR version. Check or fetch the current PR commit, update the matching task, and stop or update task ${active.related_attempt_id}. Other handoff: ${active.related_handoff_path}`
           : `DIRF found newer work for the same pull request. Do not follow this task's old next step. Read task ${active.newer_attempt_id} at ${active.newer_handoff_path}, update this task, and continue only from the corrected next step.`
         : `DIRF already has work in this checkout. Continue task ${active.id} (${active.name}). Current stage: ${active.current_phase || "not recorded"}. Next: ${active.next_action || "continue the current stage"}. Load ${active.workflow_path} and ${active.handoff_path} only if needed.`;
     } else if (result.state === "conflict") {
@@ -1028,7 +1030,7 @@ function cmdStateActive(args) {
     if (active.needs_refresh) {
       console.log(`Attention: ${active.attention}`);
       if (active.related_task_requires_reconciliation) {
-        console.log(`Next: Read task ${active.related_attempt_id} at ${active.related_handoff_path} and reconcile which reviewed commit owns the work.`);
+        console.log(`Next: Check the current PR commit, update the task that matches it, and stop or update task ${active.related_attempt_id}. Other handoff: ${active.related_handoff_path}`);
       } else {
         console.log(`Next: Read task ${active.newer_attempt_id} at ${active.newer_handoff_path} and replace this task's old next step before continuing.`);
       }
