@@ -657,6 +657,40 @@ function revisionRelation(target, currentRevision, candidateRevision) {
   return "conflict";
 }
 
+function buildRevisionGraph(target, revisions) {
+  if (revisions.length < 2) return new Map();
+  try {
+    const output = execFileSync("git", ["-C", target, "rev-list", "--parents", ...revisions], {
+      encoding: "utf8",
+      timeout: GIT_TIMEOUT,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    return new Map(output.trim().split(/\r?\n/).filter(Boolean).map((line) => {
+      const [commit, ...parents] = line.trim().split(/\s+/).map((value) => value.toLowerCase());
+      return [commit, parents];
+    }));
+  } catch {
+    return null;
+  }
+}
+
+function graphContainsAncestor(graph, ancestor, descendant) {
+  if (!graph) return false;
+  const wanted = ancestor.toLowerCase();
+  const pending = [descendant.toLowerCase()];
+  const visited = new Set();
+  while (pending.length) {
+    const current = pending.pop();
+    if (current === wanted) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    pending.push(...(graph.get(current) || []));
+  }
+  return false;
+}
+
 // An attempt can become stale when another attempt records newer work for the
 // same pull request. Keep the old handoff for audit history, but do not present
 // its old next step as safe current guidance.
@@ -698,13 +732,27 @@ function contextForAttempt(entry, entries, repositoryPath, relationFor = revisio
     })[0] || null;
 
   const needsRefresh = Boolean(newerRelated);
+  const conflict = newerRelated?.relation === "conflict";
+  const unverifiedRevisions = newerRelated?.relation === "unknown"
+    && entry.reviewRevision
+    && newerRelated.reviewRevision
+    && entry.reviewRevision !== newerRelated.reviewRevision;
+  const requiresReconciliation = Boolean(conflict || unverifiedRevisions);
   return {
     needs_refresh: needsRefresh,
     next_action: needsRefresh ? null : entry.nextAction,
-    newer_attempt_id: newerRelated?.id || null,
-    newer_handoff_path: newerRelated?.handoffPath || null,
+    related_task_relation: newerRelated?.relation || null,
+    related_task_requires_reconciliation: requiresReconciliation,
+    related_attempt_id: newerRelated?.id || null,
+    related_handoff_path: newerRelated?.handoffPath || null,
+    newer_attempt_id: requiresReconciliation ? null : newerRelated?.id || null,
+    newer_handoff_path: requiresReconciliation ? null : newerRelated?.handoffPath || null,
     attention: needsRefresh
-      ? "Newer or conflicting project work may have changed this task. Check the other review before continuing."
+      ? conflict
+        ? "Another task records a conflicting reviewed commit for the same work. Reconcile the two tasks before continuing."
+        : unverifiedRevisions
+          ? "DIRF could not verify how another reviewed commit relates to this one. Reconcile the two tasks before continuing."
+        : "Newer project work may have changed this task. Check the other review before continuing."
       : null,
   };
 }
@@ -736,13 +784,63 @@ function attemptContextEntries(slug) {
 
 export function attemptContextStates(slug) {
   const { entries, repositoryPath } = attemptContextEntries(slug);
+  const referenceCounts = new Map();
+  for (const entry of entries) {
+    for (const reference of entry.references) referenceCounts.set(reference, (referenceCounts.get(reference) || 0) + 1);
+  }
+  const revisions = [...new Set(entries
+    .filter((entry) => [...entry.references].some((reference) => referenceCounts.get(reference) > 1))
+    .map((entry) => entry.reviewRevision?.toLowerCase())
+    .filter((revision) => /^[0-9a-f]{40}$/.test(revision || "")))];
+  const graph = buildRevisionGraph(repositoryPath, revisions);
   const relations = new Map();
-  const relationFor = (target, current, candidate) => {
+  const relationFor = (_target, current, candidate) => {
     const key = `${current || ""}:${candidate || ""}`;
-    if (!relations.has(key)) relations.set(key, revisionRelation(target, current, candidate));
+    if (!relations.has(key)) {
+      let relation = "unknown";
+      if (/^[0-9a-f]{40}$/i.test(current || "") && /^[0-9a-f]{40}$/i.test(candidate || "")) {
+        if (current.toLowerCase() === candidate.toLowerCase()) relation = "same";
+        else if (graphContainsAncestor(graph, current, candidate)) relation = "candidate_newer";
+        else if (graphContainsAncestor(graph, candidate, current)) relation = "current_newer";
+        else if (graph) relation = "conflict";
+      }
+      relations.set(key, relation);
+    }
     return relations.get(key);
   };
   return new Map(entries.map((entry) => [entry.id, contextForAttempt(entry, entries, repositoryPath, relationFor)]));
+}
+
+// Canonical project guidance is a fallback. If an attempt contains newer or
+// conflicting guidance for the same work item, withhold the fallback instead
+// of exposing an obsolete next step.
+export function projectHandoffContextState(slug) {
+  const handoff = readHandoff(slug);
+  if (handoff === null) return {
+    handoff: null,
+    needs_refresh: false,
+    related_task_relation: null,
+    related_task_requires_reconciliation: false,
+    related_attempt_id: null,
+    related_handoff_path: null,
+    newer_attempt_id: null,
+    newer_handoff_path: null,
+    attention: null,
+  };
+  const path = join(storeProjectDir(slug), "HANDOFF.md");
+  const parsed = parseCurrentHandoff(handoff);
+  const { entries, repositoryPath } = attemptContextEntries(slug);
+  const entry = {
+    id: "project-handoff",
+    handoffPath: path,
+    nextAction: handoffNextAction(handoff),
+    references: handoffWorkReferences(handoff),
+    updatedAt: handoffUpdatedAt(handoff, path, parsed),
+    updateNumber: parsed.updateNumber,
+    reviewRevision: parsed.reviewRevision,
+  };
+  const context = contextForAttempt(entry, entries, repositoryPath);
+  return { ...context, handoff: context.needs_refresh ? null : handoff };
 }
 
 export function attemptResponsibility(slug, worktreePath) {
@@ -1284,15 +1382,35 @@ function withProgressLock(slug, action) {
 function nextProgressUpdateNumber(slug) {
   const path = join(storeProjectDir(slug), ".progress-sequence");
   let current = 0;
+  let reconcile = false;
   try {
     current = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
-    if (!Number.isSafeInteger(current) || current < 0) current = 0;
+    if (!Number.isSafeInteger(current) || current < 0) reconcile = true;
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
+    reconcile = true;
+  }
+  if (reconcile) {
+    current = 0;
+    const handoffs = [readHandoff(slug), ...listAttempts(slug).map((attempt) => readAttemptHandoffFile(slug, attempt.id))];
+    for (const handoff of handoffs) {
+      const recorded = parseCurrentHandoff(handoff || "").updateNumber;
+      if (Number.isSafeInteger(recorded) && recorded > current) current = recorded;
+    }
   }
   const next = current + 1;
   atomicWrite(path, `${next}\n`);
   return next;
+}
+
+function canonicalAcceptsProgress(slug, canonicalBase, { workItem, reviewRevision }) {
+  if (!workItem || !/^[0-9a-f]{40}$/i.test(reviewRevision || "")) return true;
+  const current = parseCurrentHandoff(canonicalBase);
+  if (current.workItem?.trim().toLowerCase() !== workItem.trim().toLowerCase()) return true;
+  if (!/^[0-9a-f]{40}$/i.test(current.reviewRevision || "")) return true;
+  const project = getProject(slug);
+  const relation = revisionRelation(project?.main_path || process.cwd(), current.reviewRevision, reviewRevision);
+  return relation !== "current_newer" && relation !== "conflict";
 }
 
 // Record one progress checkpoint through the canonical core so CLI and MCP
@@ -1317,7 +1435,9 @@ export function recordProgress(slug, { message, timestamp, phase, next, files, a
       workItem: workItem || null,
       reviewRevision: reviewRevision || null,
     };
-    const updatedHandoff = updateProgressSection(canonicalBase, update);
+    const updatedHandoff = canonicalAcceptsProgress(slug, canonicalBase, update)
+      ? updateProgressSection(canonicalBase, update)
+      : canonicalBase;
     const updatedAttemptHandoff = attempt
       ? updateProgressSection(attemptHandoff || canonicalBase, update)
       : null;

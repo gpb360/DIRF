@@ -7,7 +7,7 @@ import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
 import {
   resolveProject, resolveProjectReference, listProjects,
-  readHandoff, writeHandoff, listAttempts, getAttempt, storeProjectDir, recordProgress,
+  writeHandoff, listAttempts, getAttempt, storeProjectDir, recordProgress, projectHandoffContextState,
 } from "./state.js";
 import { resolve } from "node:path";
 
@@ -40,8 +40,17 @@ function callTool(name, args) {
       return { projects: listProjects() };
     case "dirf_read_handoff": {
       const slug = resolveSlugFromParams(args);
-      const md = readHandoff(slug);
-      return { content: md };
+      const state = projectHandoffContextState(slug);
+      return {
+        content: state.handoff,
+        attention: state.attention,
+        related_task_relation: state.related_task_relation,
+        related_task_requires_reconciliation: state.related_task_requires_reconciliation,
+        related_attempt_id: state.related_attempt_id,
+        related_handoff_path: state.related_handoff_path,
+        newer_attempt_id: state.newer_attempt_id,
+        newer_handoff_path: state.newer_handoff_path,
+      };
     }
     case "dirf_write_handoff": {
       const slug = resolveSlugFromParams(args);

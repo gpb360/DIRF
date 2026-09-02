@@ -30,7 +30,7 @@ import { inspect, detectStackProfile } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings } from "./state.js";
+import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, projectHandoffContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings } from "./state.js";
 import { ARTIFACT_TYPES, explainGoverningArtifact } from "./artifacts.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 import {
@@ -646,6 +646,12 @@ function cmdResume(args) {
   const project = resolveProject(target);
   const context = attemptContextState(project.slug, attempt.id);
   if (context.needs_refresh) {
+    if (context.related_task_requires_reconciliation) {
+      const reason = context.related_task_relation === "conflict"
+        ? "conflicts with"
+        : "has an unverified commit relationship with";
+      throw new Error(`This task ${reason} task ${context.related_attempt_id}. Read both handoffs, including ${context.related_handoff_path}, and reconcile which reviewed commit owns the work before continuing.`);
+    }
     throw new Error(`This task has older information. Read newer task ${context.newer_attempt_id} at ${context.newer_handoff_path} before continuing.`);
   }
   const stored = claimAttemptCheckout(project.slug, attempt.id, checkoutRoot(target));
@@ -674,7 +680,8 @@ function cmdResume(args) {
   catch { /* legacy state can predate canonical config */ }
   const contextPath = config?.context?.path ? join(target, config.context.path) : null;
   const attemptHandoff = readFileSync(handoff, "utf8");
-  const projectHandoff = readHandoff(project.slug);
+  const projectHandoffState = projectHandoffContextState(project.slug);
+  const projectHandoff = projectHandoffState.handoff;
   const projectHandoffPath = join(storeProjectDir(project.slug), "HANDOFF.md");
   const projectBrain = {
     config,
@@ -683,6 +690,7 @@ function cmdResume(args) {
       content: contextPath && existsSync(contextPath) ? readFileSync(contextPath, "utf8") : null,
     },
     handoff: projectHandoff,
+    handoff_attention: projectHandoffState.attention,
     attempts: listAttemptsState(project.slug).map((item) => ({
       id: item.id,
       name: item.name,
@@ -710,6 +718,7 @@ function cmdResume(args) {
       project_brain: projectBrain,
       attempt_handoff: attemptHandoff,
       project_handoff: projectHandoff,
+      project_handoff_attention: projectHandoffState.attention,
       pending_gates: pendingGates(project.slug, attempt.id),
       recorded_evidence: recordedEvidence(project.slug, attempt.id),
       resume_prompt: prompt,
@@ -722,7 +731,11 @@ function cmdResume(args) {
   console.log(`Load workflow: ${workflow}`);
   console.log(`Load project config: ${join(storeProjectDir(project.slug), "config.json")}`);
   console.log(`Load project context: ${contextPath || "(not configured)"}`);
-  console.log(`Load canonical handoff: ${projectHandoffPath}`);
+  if (projectHandoffState.needs_refresh) {
+    console.log(`Skip canonical handoff: ${projectHandoffState.attention} Read task ${projectHandoffState.related_attempt_id} at ${projectHandoffState.related_handoff_path}`);
+  } else {
+    console.log(`Load canonical handoff: ${projectHandoffPath}`);
+  }
   console.log(`Load attempt handoff: ${handoff}\n`);
   // Reconciliation on resume: surface unresolved gates (the reconciler analog)
   // and recorded evidence (replay completed phases — do not re-run them).
@@ -899,7 +912,12 @@ function cmdStateRegister(args) {
 
 function cmdStateReadHandoff(args) {
   const slug = resolveStateSlug(args);
-  const md = readHandoff(slug);
+  const state = projectHandoffContextState(slug);
+  const md = state.handoff;
+  if (state.needs_refresh) {
+    console.log(`DIRF withheld the canonical handoff. ${state.attention} Read task ${state.related_attempt_id} at ${state.related_handoff_path}.`);
+    return;
+  }
   if (md === null) { console.error(`No HANDOFF.md for ${slug}`); process.exitCode = 1; return; }
   process.stdout.write(md);
 }
@@ -991,7 +1009,9 @@ function cmdStateActive(args) {
     let additionalContext;
     if (result.state === "active") {
       additionalContext = active.needs_refresh
-        ? `DIRF found newer work for the same pull request. Do not follow this task's old next step. Read task ${active.newer_attempt_id} at ${active.newer_handoff_path}, update this task, and continue only from the corrected next step.`
+        ? active.related_task_requires_reconciliation
+          ? `DIRF found another task with a conflicting reviewed commit for the same pull request. Do not follow either next step yet. Read task ${active.related_attempt_id} at ${active.related_handoff_path} and reconcile which commit owns the work.`
+          : `DIRF found newer work for the same pull request. Do not follow this task's old next step. Read task ${active.newer_attempt_id} at ${active.newer_handoff_path}, update this task, and continue only from the corrected next step.`
         : `DIRF already has work in this checkout. Continue task ${active.id} (${active.name}). Current stage: ${active.current_phase || "not recorded"}. Next: ${active.next_action || "continue the current stage"}. Load ${active.workflow_path} and ${active.handoff_path} only if needed.`;
     } else if (result.state === "conflict") {
       additionalContext = `DIRF responsibility conflict in this checkout: ${attempts.map(({ id }) => id).join(", ")}. Stop and select the intended attempt explicitly; do not choose the latest.`;
@@ -1007,7 +1027,11 @@ function cmdStateActive(args) {
     console.log(`Stage: ${active.current_phase || "not recorded"}`);
     if (active.needs_refresh) {
       console.log(`Attention: ${active.attention}`);
-      console.log(`Next: Read task ${active.newer_attempt_id} at ${active.newer_handoff_path} and replace this task's old next step before continuing.`);
+      if (active.related_task_requires_reconciliation) {
+        console.log(`Next: Read task ${active.related_attempt_id} at ${active.related_handoff_path} and reconcile which reviewed commit owns the work.`);
+      } else {
+        console.log(`Next: Read task ${active.newer_attempt_id} at ${active.newer_handoff_path} and replace this task's old next step before continuing.`);
+      }
     } else {
       console.log(`Next: ${active.next_action || "continue the current stage"}`);
     }
