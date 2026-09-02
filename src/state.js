@@ -448,7 +448,8 @@ export function attemptPhases(slug, idOrName) {
 // Playbooks declare per-phase gates (config.workflow.gates), flattened into the
 // persisted workflow.json at selection time (same precedent as
 // conditional_contract). Gate kinds:
-//   verify   — the phase must be advanced past WITH a recorded evidence record
+//   verify   — the phase must be advanced past WITH a recorded evidence record;
+//              it may also require an accepted implementation_evidence artifact
 //   decision — the phase must be advanced past WITH an accepted gate record
 //              (user-owned decision — see the Decision Ownership policy)
 //   soft     — tracked only; advance allowed without a record unless --strict
@@ -488,6 +489,9 @@ function gateRequirement(gates, records, evidence, attempt, phase, strict = fals
     if (declared && evidence[phase].command !== declared) {
       return { kind, reason: `Phase "${phase}" evidence command must match its declared verify command: ${JSON.stringify(declared)}` };
     }
+    if (gate.artifact_type && !governingAttemptArtifact(attempt, gate.artifact_type)) {
+      return { kind, reason: `Phase "${phase}" requires an accepted governing artifact of type "${gate.artifact_type}"` };
+    }
     return null;
   }
   if (kind === "soft" && !strict) return null;
@@ -523,7 +527,7 @@ export function attemptGateState(slug, attempt) {
       );
       const artifactType = gates[phase].artifact_type || null;
       const governingArtifact = artifactType ? governingAttemptArtifact(attempt, artifactType) : null;
-      const artifactPending = kind === "decision" && record?.status === "accepted" && artifactType && !governingArtifact;
+      const artifactPending = artifactType && !governingArtifact && record?.status !== "denied";
       const decisionEvidencePending = kind === "decision" && record?.status === "accepted" && declaredVerify && !evidenceMatches;
       let status = "pending";
       if (kind === "decision" && record) status = record.status;

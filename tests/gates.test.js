@@ -83,6 +83,22 @@ function artifactGateFixture() {
   return { home, root, slug, attempt };
 }
 
+function implementationEvidenceGateFixture() {
+  const home = mkdtempSync(join(tmpdir(), "dirf-evidence-gate-home-"));
+  process.env.DIRF_HOME = home;
+  const root = repo();
+  const { slug } = registerProject(root);
+  const attempt = createAttemptInStore(slug, "evidence-gated", new Date("2026-08-01T00:00:00.000Z"));
+  writeFileSync(join(attempt.folder, "workflow.json"), JSON.stringify({
+    workflow: {
+      phases: ["define", "verify", "ship"],
+      gates: { verify: { kind: "verify", verify: "node --test", artifact_type: "implementation_evidence" } },
+    },
+  }));
+  writeFileSync(join(attempt.folder, "implementation-evidence.md"), "# Verified implementation\n");
+  return { home, root, slug, attempt };
+}
+
 function finalGateFixture(gate) {
   const home = mkdtempSync(join(tmpdir(), "dirf-final-gate-home-"));
   process.env.DIRF_HOME = home;
@@ -98,6 +114,15 @@ function finalGateFixture(gate) {
 function acceptPlan(slug, attempt) {
   recordAttemptArtifact(slug, attempt.id, { id: "plan-v1", type: "plan", path: "plan.md" });
   return acceptAttemptArtifact(slug, attempt.id, "plan-v1");
+}
+
+function acceptImplementationEvidence(slug, attempt) {
+  recordAttemptArtifact(slug, attempt.id, {
+    id: "implementation-evidence-v1",
+    type: "implementation_evidence",
+    path: "implementation-evidence.md",
+  });
+  return acceptAttemptArtifact(slug, attempt.id, "implementation-evidence-v1");
 }
 
 test("verify gates block advance until evidence is recorded", () => {
@@ -129,6 +154,91 @@ test("verify gates block advance until evidence is recorded", () => {
   assert.equal(current.current_phase, "verify");
   assert.equal(current.evidence.build.command, "node --test");
   assert.equal(current.evidence.build.output, "tests.log");
+});
+
+test("implementation-evidence verify gates require exact command evidence and an accepted governing artifact", () => {
+  const { slug, attempt } = implementationEvidenceGateFixture();
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+
+  assert.deepEqual(
+    attemptGates(slug, attempt.id).map(({ phase, status, artifact_type, artifact_id }) => ({ phase, status, artifact_type, artifact_id })),
+    [{ phase: "verify", status: "pending", artifact_type: "implementation_evidence", artifact_id: null }],
+  );
+  assert.throws(
+    () => updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "node --test", output: "all pass" } }),
+    /accepted governing artifact.*implementation_evidence/,
+  );
+  recordAttemptArtifact(slug, attempt.id, {
+    id: "implementation-evidence-v1",
+    type: "implementation_evidence",
+    path: "implementation-evidence.md",
+  });
+  assert.throws(
+    () => updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "node --test", output: "all pass" } }),
+    /accepted governing artifact.*implementation_evidence/,
+  );
+  acceptAttemptArtifact(slug, attempt.id, "implementation-evidence-v1");
+  assert.deepEqual(
+    attemptGates(slug, attempt.id).map(({ phase, status, artifact_type, artifact_id }) => ({ phase, status, artifact_type, artifact_id })),
+    [{ phase: "verify", status: "pending", artifact_type: "implementation_evidence", artifact_id: "implementation-evidence-v1" }],
+  );
+  const advanced = updateAttemptLifecycle(slug, attempt.id, "advance", {
+    evidence: { command: "node --test", output: "all pass" },
+  });
+  assert.equal(advanced.current_phase, "ship");
+  assert.equal(attemptGates(slug, attempt.id).find((gate) => gate.phase === "verify").status, "satisfied");
+});
+
+test("implementation-evidence verify gates fail closed when accepted content changes or disappears", () => {
+  for (const change of ["mutated", "deleted"]) {
+    const { slug, attempt } = implementationEvidenceGateFixture();
+    updateAttemptLifecycle(slug, attempt.id, "start");
+    updateAttemptLifecycle(slug, attempt.id, "advance");
+    acceptImplementationEvidence(slug, attempt);
+
+    if (change === "mutated") {
+      writeFileSync(join(attempt.folder, "implementation-evidence.md"), "# Changed after acceptance\n");
+      assert.throws(() => attemptGates(slug, attempt.id), /Artifact content changed after acceptance/);
+      assert.throws(
+        () => updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "node --test" } }),
+        /Artifact content changed after acceptance/,
+      );
+    } else {
+      rmSync(join(attempt.folder, "implementation-evidence.md"));
+      assert.throws(() => attemptGates(slug, attempt.id), /Artifact content does not exist/);
+      assert.throws(
+        () => updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "node --test" } }),
+        /Artifact content does not exist/,
+      );
+    }
+  }
+});
+
+test("completion enforces an implementation-evidence verify gate on the final phase", () => {
+  const { slug, attempt } = finalGateFixture({
+    kind: "verify",
+    verify: "node --test",
+    artifact_type: "implementation_evidence",
+  });
+  writeFileSync(join(attempt.folder, "implementation-evidence.md"), "# Verified implementation\n");
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+
+  assert.throws(
+    () => updateAttemptLifecycle(slug, attempt.id, "complete", {
+      confirm: true,
+      evidence: { command: "node --test", output: "all pass" },
+    }),
+    /accepted governing artifact.*implementation_evidence/,
+  );
+  acceptImplementationEvidence(slug, attempt);
+  const done = updateAttemptLifecycle(slug, attempt.id, "complete", {
+    confirm: true,
+    evidence: { command: "node --test", output: "all pass" },
+  });
+  assert.equal(done.status, "done");
+  assert.equal(attemptGates(slug, attempt.id).find((gate) => gate.phase === "approve").status, "satisfied");
 });
 
 test("decision gates block advance until an accepted record; deny requires a comment", () => {
@@ -543,8 +653,12 @@ test("reconcile validates gate declarations against declared phases", () => {
   assert.ok(missingVerify.some((e) => /verify must be a non-empty string for verify gates/.test(e)));
   const unknownArtifact = reconcile({ triage: base, gated: { ...withGates, workflow: { ...base.workflow, gates: { b: { kind: "decision", artifact_type: "wat" } } } } });
   assert.ok(unknownArtifact.some((e) => /artifact_type must be one of/.test(e)));
+  const evidenceArtifactOnVerify = { ...base, workflow: { ...base.workflow, gates: { b: { kind: "verify", verify: "node --test", artifact_type: "implementation_evidence" } } } };
+  assert.deepEqual(reconcile({ triage: base, gated: evidenceArtifactOnVerify }), []);
   const artifactOnVerify = reconcile({ triage: base, gated: { ...withGates, workflow: { ...base.workflow, gates: { b: { kind: "verify", artifact_type: "plan" } } } } });
-  assert.ok(artifactOnVerify.some((e) => /artifact_type is only valid for decision gates/.test(e)));
+  assert.ok(artifactOnVerify.some((e) => /verify gates may only require implementation_evidence/.test(e)));
+  const artifactOnSoft = reconcile({ triage: base, gated: { ...withGates, workflow: { ...base.workflow, gates: { b: { kind: "soft", artifact_type: "implementation_evidence" } } } } });
+  assert.ok(artifactOnSoft.some((e) => /only valid for decision gates or implementation_evidence verify gates/.test(e)));
   const notObject = reconcile({ triage: base, gated: { ...withGates, workflow: { ...base.workflow, gates: "x" } } });
   assert.ok(notObject.some((e) => /workflow.gates must be an object/.test(e)));
 });
@@ -571,8 +685,11 @@ test("validateSnapshot accepts valid gates and rejects malformed ones", () => {
   assert.ok(missingVerify.some((e) => /verify must be a non-empty string for verify gates/.test(e)));
   const unknownArtifact = validateSnapshot({ ...base, workflow: { ...base.workflow, gates: { b: { kind: "decision", artifact_type: "wat" } } } }, "demo.json");
   assert.ok(unknownArtifact.some((e) => /artifact_type must be one of/.test(e)));
+  assert.deepEqual(validateSnapshot({ ...base, workflow: { ...base.workflow, gates: { b: { kind: "verify", verify: "node --test", artifact_type: "implementation_evidence" } } } }, "demo.json"), []);
   const artifactOnVerify = validateSnapshot({ ...base, workflow: { ...base.workflow, gates: { b: { kind: "verify", artifact_type: "plan" } } } }, "demo.json");
-  assert.ok(artifactOnVerify.some((e) => /artifact_type is only valid for decision gates/.test(e)));
+  assert.ok(artifactOnVerify.some((e) => /verify gates may only require implementation_evidence/.test(e)));
+  const artifactOnSoft = validateSnapshot({ ...base, workflow: { ...base.workflow, gates: { b: { kind: "soft", artifact_type: "implementation_evidence" } } } }, "demo.json");
+  assert.ok(artifactOnSoft.some((e) => /only valid for decision gates or implementation_evidence verify gates/.test(e)));
 });
 
 test("source playbooks and snapshots share agent contract validation", () => {

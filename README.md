@@ -262,7 +262,10 @@ An attempt may record portable metadata for research, design, structure, plans,
 implementation evidence, and plan deltas. Artifact content stays inside the
 attempt folder; recording it does not imply acceptance. DIRF resolves the
 governing accepted version deterministically from the supersession graph and
-can require that content at an existing decision gate.
+can require that content at an existing decision gate. A verify gate may also
+opt into `artifact_type: "implementation_evidence"`, requiring both its exact
+command evidence and an accepted, SHA-bound implementation-evidence artifact.
+Verify gates without that declaration remain backward compatible.
 
 ```bash
 dirf artifact record <attempt> --file artifact.json --path "../my-project"
