@@ -349,6 +349,34 @@ test("a missing update counter rebuilds from persisted handoffs", () => {
   assert.equal(staleDetail.needs_refresh, true);
   assert.equal(staleDetail.next_action, null);
   assert.doesNotMatch(JSON.stringify(staleDetail), /Ask to merge PR 21/);
+
+  run([
+    "record-progress", "Another stale checkpoint", "--attempt", stale.id, "--path", main,
+    "--next", "Ask to merge PR 21", "--work-item", "pr:21", "--review-revision", revision,
+  ], { DIRF_HOME: home }, main);
+  writeFileSync(join(home, "projects", project.slug, ".progress-sequence"), "0junk\n");
+  run([
+    "record-progress", "Correction after corrupt counter recovery", "--attempt", correction.id, "--path", main,
+    "--next", "Stop and fix PR 21", "--work-item", "pr:21", "--review-revision", revision,
+  ], { DIRF_HOME: home }, main);
+  const corruptRecovery = JSON.parse(run(["state", "get-attempt", stale.id, "--path", main, "--json"], { DIRF_HOME: home }, main));
+  assert.equal(corruptRecovery.needs_refresh, true);
+  assert.equal(corruptRecovery.next_action, null);
+  assert.doesNotMatch(JSON.stringify(corruptRecovery), /Ask to merge PR 21/);
+
+  run([
+    "record-progress", "Stale checkpoint after corrupt recovery", "--attempt", stale.id, "--path", main,
+    "--next", "Ask to merge PR 21", "--work-item", "pr:21", "--review-revision", revision,
+  ], { DIRF_HOME: home }, main);
+  writeFileSync(join(home, "projects", project.slug, ".progress-sequence"), "1\n");
+  run([
+    "record-progress", "Correction after stale valid counter", "--attempt", correction.id, "--path", main,
+    "--next", "Stop and fix PR 21", "--work-item", "pr:21", "--review-revision", revision,
+  ], { DIRF_HOME: home }, main);
+  const staleValidRecovery = JSON.parse(run(["state", "get-attempt", stale.id, "--path", main, "--json"], { DIRF_HOME: home }, main));
+  assert.equal(staleValidRecovery.needs_refresh, true);
+  assert.equal(staleValidRecovery.next_action, null);
+  assert.doesNotMatch(JSON.stringify(staleValidRecovery), /Ask to merge PR 21/);
 });
 
 test("an older reviewed commit cannot replace or leak through canonical guidance", () => {
@@ -378,7 +406,7 @@ test("an older reviewed commit cannot replace or leak through canonical guidance
   ], { DIRF_HOME: home }, main);
   run([
     "record-progress", "Old task wrote another checkpoint", "--attempt", oldReview.id, "--path", main,
-    "--next", "Ask to merge PR 21", "--work-item", "pr:21", "--review-revision", revisionA,
+    "--next", "Ask to merge PR 21",
   ], { DIRF_HOME: home }, main);
 
   const canonical = run(["state", "read-handoff", "--path", main], { DIRF_HOME: home }, main);
@@ -432,6 +460,33 @@ test("divergent reviewed commits are called conflicting instead of newer", () =>
   assert.equal(detail.related_task_relation, "conflict");
   assert.equal(detail.related_attempt_id, reviewB.id);
   assert.equal(detail.newer_attempt_id, null);
+});
+
+test("unavailable reviewed commits are called unverified instead of conflicting", () => {
+  const home = freshHome();
+  const main = mkdtempSync(join(tmpdir(), "unverified-reviews-"));
+  execFileSync("git", ["init", "-q"], { cwd: main, timeout: TIMEOUT });
+  run(["setup", main], { DIRF_HOME: home }, main);
+  const reviewA = JSON.parse(run(["build", "review-a", "review PR 21", "--path", main, "--json"], { DIRF_HOME: home }, main)).attempt;
+  const reviewB = JSON.parse(run(["build", "review-b", "review PR 21", "--path", main, "--json"], { DIRF_HOME: home }, main)).attempt;
+  run([
+    "record-progress", "Recorded unavailable A", "--attempt", reviewA.id, "--path", main,
+    "--next", "Continue PR 21 from A", "--work-item", "pr:21", "--review-revision", "a".repeat(40),
+  ], { DIRF_HOME: home }, main);
+  run([
+    "record-progress", "Recorded unavailable B", "--attempt", reviewB.id, "--path", main,
+    "--next", "Continue PR 21 from B", "--work-item", "pr:21", "--review-revision", "b".repeat(40),
+  ], { DIRF_HOME: home }, main);
+
+  const detail = JSON.parse(run(["state", "get-attempt", reviewA.id, "--path", main, "--json"], { DIRF_HOME: home }, main));
+  assert.equal(detail.related_task_relation, "unknown");
+  assert.equal(detail.related_task_requires_reconciliation, true);
+  const result = spawnSync(process.execPath, [CLI, "resume", reviewA.id, "--path", main], {
+    cwd: main, encoding: "utf8", timeout: TIMEOUT, env: { ...process.env, DIRF_HOME: home },
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unverified commit relationship/i);
+  assert.doesNotMatch(result.stderr, /conflicts with|newer task|older information/i);
 });
 
 test("dirf resume never composes attempts or context from another project", () => {

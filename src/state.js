@@ -642,6 +642,17 @@ function handoffWorkReferences(markdown) {
 function revisionRelation(target, currentRevision, candidateRevision) {
   if (!/^[0-9a-f]{40}$/i.test(currentRevision || "") || !/^[0-9a-f]{40}$/i.test(candidateRevision || "")) return "unknown";
   if (currentRevision.toLowerCase() === candidateRevision.toLowerCase()) return "same";
+  const commitExists = (revision) => {
+    try {
+      execFileSync("git", ["-C", target, "cat-file", "-e", `${revision}^{commit}`], {
+        timeout: GIT_TIMEOUT, windowsHide: true, stdio: "ignore",
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (!commitExists(currentRevision) || !commitExists(candidateRevision)) return "unknown";
   const isAncestor = (older, newer) => {
     try {
       execFileSync("git", ["-C", target, "merge-base", "--is-ancestor", older, newer], {
@@ -1382,21 +1393,19 @@ function withProgressLock(slug, action) {
 function nextProgressUpdateNumber(slug) {
   const path = join(storeProjectDir(slug), ".progress-sequence");
   let current = 0;
-  let reconcile = false;
   try {
-    current = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
-    if (!Number.isSafeInteger(current) || current < 0) reconcile = true;
+    const stored = readFileSync(path, "utf8").trim();
+    if (/^\d+$/.test(stored)) {
+      current = Number(stored);
+      if (!Number.isSafeInteger(current) || current < 0) current = 0;
+    }
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
-    reconcile = true;
   }
-  if (reconcile) {
-    current = 0;
-    const handoffs = [readHandoff(slug), ...listAttempts(slug).map((attempt) => readAttemptHandoffFile(slug, attempt.id))];
-    for (const handoff of handoffs) {
-      const recorded = parseCurrentHandoff(handoff || "").updateNumber;
-      if (Number.isSafeInteger(recorded) && recorded > current) current = recorded;
-    }
+  const handoffs = [readHandoff(slug), ...listAttempts(slug).map((attempt) => readAttemptHandoffFile(slug, attempt.id))];
+  for (const handoff of handoffs) {
+    const recorded = parseCurrentHandoff(handoff || "").updateNumber;
+    if (Number.isSafeInteger(recorded) && recorded > current) current = recorded;
   }
   const next = current + 1;
   atomicWrite(path, `${next}\n`);
@@ -1425,6 +1434,7 @@ export function recordProgress(slug, { message, timestamp, phase, next, files, a
     const attemptHandoff = attempt ? readAttemptHandoffFile(slug, attempt.id) : null;
     const fallback = "# DIRF Handoff\n\n## Objective\n\n(Work in progress)\n";
     const canonicalBase = readHandoff(slug) || fallback;
+    const recordedAttemptContext = parseCurrentHandoff(attemptHandoff || "");
     const update = {
       message,
       timestamp: timestamp || new Date().toISOString(),
@@ -1432,8 +1442,8 @@ export function recordProgress(slug, { message, timestamp, phase, next, files, a
       phase: phase || null,
       next,
       files: files || [],
-      workItem: workItem || null,
-      reviewRevision: reviewRevision || null,
+      workItem: workItem || recordedAttemptContext.workItem || null,
+      reviewRevision: reviewRevision || recordedAttemptContext.reviewRevision || null,
     };
     const updatedHandoff = canonicalAcceptsProgress(slug, canonicalBase, update)
       ? updateProgressSection(canonicalBase, update)
