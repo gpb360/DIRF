@@ -4,12 +4,10 @@ Create `review.json` with this shape:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "target": {
     "repository": "owner/repository",
     "pr_number": 123,
-    "base_ref": "refs/heads/main",
-    "remote_head_ref": "refs/pull/123/head",
     "base_sha": "40-character SHA",
     "head_sha": "40-character SHA",
     "mode": "full"
@@ -82,7 +80,8 @@ The renderer also derives an A-F readiness grade and explicit P0-P3 counts for
 the detailed report. Normal user updates should use ordinary language.
 
 Before asking to merge, run `dirf review ready review.json`. Readiness requires
-the live PR commit, the repository and review base to match the checkout, zero
+the live GitHub PR commit, the repository and review base to match the checkout, zero
 findings, a completed review, every recorded verification and required check to
-have passed, and zero unresolved review conversations. Incremental reviews must
-also record `previous_head_sha`; it must be an ancestor of the current commit.
+have passed, and zero unresolved review conversations. Final merge readiness
+requires a full review. Historical schema-v1 reports remain valid for reading
+and rendering, but cannot authorize a merge.

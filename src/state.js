@@ -639,6 +639,24 @@ function handoffWorkReferences(markdown) {
   return references;
 }
 
+function revisionRelation(target, currentRevision, candidateRevision) {
+  if (!/^[0-9a-f]{40}$/i.test(currentRevision || "") || !/^[0-9a-f]{40}$/i.test(candidateRevision || "")) return "unknown";
+  if (currentRevision.toLowerCase() === candidateRevision.toLowerCase()) return "same";
+  const isAncestor = (older, newer) => {
+    try {
+      execFileSync("git", ["-C", target, "merge-base", "--is-ancestor", older, newer], {
+        timeout: GIT_TIMEOUT, windowsHide: true, stdio: "ignore",
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (isAncestor(currentRevision, candidateRevision)) return "candidate_newer";
+  if (isAncestor(candidateRevision, currentRevision)) return "current_newer";
+  return "conflict";
+}
+
 // An attempt can become stale when another attempt records newer work for the
 // same pull request. Keep the old handoff for audit history, but do not present
 // its old next step as safe current guidance.
@@ -649,6 +667,8 @@ export function attemptContextState(slug, idOrName) {
   const nextAction = handoffNextAction(handoff);
   const references = handoffWorkReferences(handoff);
   const updatedAt = handoffUpdatedAt(handoff, handoffPath);
+  const currentRevision = parseCurrentHandoff(handoff).reviewRevision;
+  const repositoryPath = attempt.responsibility_path || getProject(slug)?.main_path || process.cwd();
 
   const newerRelated = listAttempts(slug)
     .filter((candidate) => candidate.id !== attempt.id)
@@ -656,15 +676,25 @@ export function attemptContextState(slug, idOrName) {
       const candidatePath = join(storeAttemptDir(slug, candidate.id), "HANDOFF.md");
       const candidateHandoff = readAttemptHandoffFile(slug, candidate.id) || "";
       const candidateReferences = handoffWorkReferences(candidateHandoff);
+      const candidateRevision = parseCurrentHandoff(candidateHandoff).reviewRevision;
+      const relation = revisionRelation(repositoryPath, currentRevision, candidateRevision);
       return {
         id: candidate.id,
         updatedAt: handoffUpdatedAt(candidateHandoff, candidatePath),
         handoffPath: candidatePath,
+        relation,
+        supersedes: relation === "candidate_newer"
+          || relation === "conflict"
+          || (relation === "unknown" && currentRevision && candidateRevision && currentRevision !== candidateRevision)
+          || (["same", "unknown"].includes(relation) && handoffUpdatedAt(candidateHandoff, candidatePath) > updatedAt),
         related: [...references].some((reference) => candidateReferences.has(reference)),
       };
     })
-    .filter((candidate) => candidate.related && candidate.updatedAt > updatedAt)
-    .sort((left, right) => right.updatedAt - left.updatedAt)[0] || null;
+    .filter((candidate) => candidate.related && candidate.supersedes)
+    .sort((left, right) => {
+      const priority = (value) => value === "candidate_newer" ? 2 : value === "conflict" ? 1 : 0;
+      return priority(right.relation) - priority(left.relation) || right.updatedAt - left.updatedAt;
+    })[0] || null;
 
   const needsRefresh = Boolean(newerRelated);
   return {
@@ -674,7 +704,7 @@ export function attemptContextState(slug, idOrName) {
     newer_attempt_id: newerRelated?.id || null,
     newer_handoff_path: newerRelated?.handoffPath || null,
     attention: needsRefresh
-      ? "Newer project work may have changed this task. Check the newer review before continuing."
+      ? "Newer or conflicting project work may have changed this task. Check the other review before continuing."
       : null,
   };
 }
@@ -1535,7 +1565,7 @@ export function portfolioSnapshot(now = new Date()) {
         status_source: effective.get(latest.id).status_source,
         current_phase: latest.current_phase || null,
         updated_at: latest.updated_at || latest.created_at,
-        next_action: attemptNextAction(project.slug, latest.id),
+        ...attemptContextState(project.slug, latest.id),
       } : null,
     };
   });

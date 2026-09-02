@@ -4,8 +4,8 @@
 
 Resolve the canonical repository and target before analysis. Prefer immutable SHAs over branch names. Capture:
 
-- repository, PR number, and provider-specific remote PR-head reference;
-- current remote base reference and its merge-base SHA;
+- canonical repository URL and GitHub PR number;
+- current merge-base SHA;
 - exact head SHA;
 - full or incremental mode;
 - issue, specification, PR body, and repository instructions;
@@ -45,7 +45,9 @@ Create the structured artifact described in `findings-contract.md`. Validate and
 The publication is complete when there is one review for the current commit and
 every inline finding also appears in the detailed report. Publication does not
 complete the workflow while any finding remains. Record `completion` and a
-structured status for every verification in `review.json`, then run
+structured status for every verification in the schema-v2 `review.json`, then run
 `dirf review ready review.json` before asking to merge. When recording progress,
 store the stable PR identity with `--work-item pr:NUMBER` and the reviewed commit
 with `--review-revision SHA` so newer work can invalidate an older next step.
+The final readiness check requires a full review; incremental reports can guide
+the fix loop but cannot authorize merge approval.

@@ -51,24 +51,19 @@ export function validateReview(review) {
   const errors = [];
 
   if (!isObject(review)) throw new ReviewValidationError(["root must be an object"]);
-  if (review.schema_version !== 1) errors.push("schema_version must equal 1");
+  if (![1, 2].includes(review.schema_version)) errors.push("schema_version must equal 1 or 2");
+  const strict = review.schema_version === 2;
 
   if (!isObject(review.target)) {
     errors.push("target must be an object");
   } else {
     if (!nonEmptyString(review.target.repository)) errors.push("target.repository is required");
-    if (!Number.isInteger(review.target.pr_number) || review.target.pr_number < 1) errors.push("target.pr_number must be a positive integer");
-    if (!/^refs\/[A-Za-z0-9._/-]+$/.test(review.target.base_ref || "") || review.target.base_ref.includes("..")) {
-      errors.push("target.base_ref must be a safe refs/... Git reference");
-    }
-    if (!/^refs\/[A-Za-z0-9._/-]+$/.test(review.target.remote_head_ref || "") || review.target.remote_head_ref.includes("..")) {
-      errors.push("target.remote_head_ref must be a safe refs/... Git reference");
-    }
+    if (strict && (!Number.isInteger(review.target.pr_number) || review.target.pr_number < 1)) errors.push("target.pr_number must be a positive integer");
     if (!SHA_PATTERN.test(review.target.base_sha || "")) errors.push("target.base_sha must be a 40-character Git SHA");
     if (!SHA_PATTERN.test(review.target.head_sha || "")) errors.push("target.head_sha must be a 40-character Git SHA");
     if (review.target.base_sha === review.target.head_sha) errors.push("target.base_sha and target.head_sha must differ");
     if (!MODES.has(review.target.mode)) errors.push("target.mode must be full or incremental");
-    if (review.target.mode === "incremental" && !SHA_PATTERN.test(review.target.previous_head_sha || "")) {
+    if (strict && review.target.mode === "incremental" && !SHA_PATTERN.test(review.target.previous_head_sha || "")) {
       errors.push("target.previous_head_sha must be a 40-character Git SHA in incremental mode");
     }
   }
@@ -151,8 +146,12 @@ export function validateReview(review) {
     errors.push("verification must be an array");
   } else {
     review.verification.forEach((item, index) => {
-      if (!isObject(item) || !nonEmptyString(item.command) || !nonEmptyString(item.result) || !VERIFICATION_STATUSES.has(item.status)) {
-        errors.push(`verification[${index}] requires command, status (passed, pending, or failed), and result`);
+      const missingCore = !isObject(item) || !nonEmptyString(item.command) || !nonEmptyString(item.result);
+      const invalidStatus = strict && !VERIFICATION_STATUSES.has(item?.status);
+      if (missingCore || invalidStatus) {
+        errors.push(strict
+          ? `verification[${index}] requires command, status (passed, pending, or failed), and result`
+          : `verification[${index}] requires command and result`);
       }
     });
   }
@@ -160,9 +159,9 @@ export function validateReview(review) {
   if (!Array.isArray(review.limitations) || review.limitations.some((item) => !nonEmptyString(item))) {
     errors.push("limitations must be an array of non-empty strings");
   }
-  if (!isObject(review.completion)) {
+  if (strict && !isObject(review.completion)) {
     errors.push("completion must be an object");
-  } else {
+  } else if (review.completion !== undefined) {
     if (typeof review.completion.review_complete !== "boolean") errors.push("completion.review_complete must be true or false");
     if (!VERIFICATION_STATUSES.has(review.completion.required_checks)) {
       errors.push("completion.required_checks must be passed, pending, or failed");
@@ -186,7 +185,7 @@ export function deriveVerdict(review) {
   if (
     review.findings.length > 0 ||
     review.limitations.length > 0 ||
-    review.verification.some(({ status }) => status !== "passed") ||
+    review.verification.some(({ status }) => status && status !== "passed") ||
     review.confidence.quality < 85 ||
     review.confidence.evidence < 80 ||
     (review.completion && (
@@ -213,6 +212,8 @@ function normalizeRepository(value) {
 
 export function assertReviewReady(review, gitContext) {
   validateReview(review);
+  if (review.schema_version !== 2) throw new Error("Merge readiness requires a schema version 2 review. Historical version 1 reports remain readable.");
+  if (review.target.mode !== "full") throw new Error("Merge readiness requires a full review of the current pull request.");
   const counts = priorityCounts(review);
   const issueCount = Object.values(counts).reduce((sum, count) => sum + count, 0);
   if (issueCount > 0) {
@@ -223,18 +224,15 @@ export function assertReviewReady(review, gitContext) {
     throw new Error("The review covers an older commit. Review the current commit before asking to merge.");
   }
   if (!SHA_PATTERN.test(gitContext?.remote_pr_head || "") || review.target.head_sha.toLowerCase() !== gitContext.remote_pr_head.toLowerCase()) {
-    throw new Error("The pull request has a newer commit. Refresh it and review that commit before asking to merge.");
+    throw new Error("The pull-request commit changed. Refresh it and review the current commit before asking to merge.");
   }
   const expectedRepository = normalizeRepository(review.target.repository);
   const actualRepository = normalizeRepository(gitContext?.repository);
-  if (!actualRepository || !(actualRepository === expectedRepository || actualRepository.endsWith(`/${expectedRepository}`))) {
+  if (!actualRepository || actualRepository !== expectedRepository) {
     throw new Error("The review names a different repository from this checkout.");
   }
   if (!gitContext?.base_exists || !gitContext?.base_is_ancestor || !gitContext?.base_matches_merge_base) {
     throw new Error("The review base is missing or does not match the current pull-request base.");
-  }
-  if (review.target.mode === "incremental" && (!gitContext?.previous_head_exists || !gitContext?.previous_head_is_ancestor)) {
-    throw new Error("The previous reviewed commit is missing or is not an ancestor of the current commit.");
   }
   if (!review.completion?.review_complete) throw new Error("The latest review is not complete yet.");
   if (review.verification.some(({ status }) => status !== "passed") || review.completion.required_checks !== "passed") {
@@ -260,6 +258,7 @@ export function deriveGrade(review) {
   const counts = priorityCounts(review);
   if (counts.P0 > 0 || counts.P1 > 0) return "F";
   if (counts.P2 > 0) return "D";
+  if (deriveVerdict(review) !== "PASS") return "C";
   if (
     counts.P3 > 0 ||
     review.limitations.length > 0 ||
@@ -280,7 +279,7 @@ function sortedFindings(findings) {
 }
 
 function marker(review) {
-  return `<!-- dirf-review:v1;head=${review.target.head_sha};mode=${review.target.mode} -->`;
+  return `<!-- dirf-review:v${review.schema_version};head=${review.target.head_sha};mode=${review.target.mode} -->`;
 }
 
 export function renderReview(review) {
@@ -328,7 +327,7 @@ export function renderReview(review) {
 
   lines.push("## Verification", "");
   if (review.verification.length === 0) lines.push("No verification command completed.");
-  else lines.push(...review.verification.map(({ command, status, result }) => `- \`${command}\` — ${status}: ${result}`));
+  else lines.push(...review.verification.map(({ command, status, result }) => `- \`${command}\` — ${status ? `${status}: ` : ""}${result}`));
 
   if (review.limitations.length > 0) {
     lines.push("", "## Limitations", "", ...review.limitations.map((limitation) => `- ${limitation}`));
@@ -361,23 +360,29 @@ function gitSucceeds(args) {
 
 function currentGitContext(review) {
   let remotePrHead = "";
-  let remoteBaseHead = "";
+  let remoteMergeHead = "";
+  const prHeadRef = `refs/pull/${review.target.pr_number}/head`;
+  const prMergeRef = `refs/pull/${review.target.pr_number}/merge`;
   try {
-    remotePrHead = gitOutput(["ls-remote", "--exit-code", "origin", review.target.remote_head_ref]).split(/\s+/)[0] || "";
-    remoteBaseHead = gitOutput(["ls-remote", "--exit-code", "origin", review.target.base_ref]).split(/\s+/)[0] || "";
+    remotePrHead = gitOutput(["ls-remote", "--exit-code", "origin", prHeadRef]).split(/\s+/)[0] || "";
+    remoteMergeHead = gitOutput(["ls-remote", "--exit-code", "origin", prMergeRef]).split(/\s+/)[0] || "";
   } catch {
-    throw new Error("DIRF could not read the live pull-request commit and base from origin.");
+    throw new Error("DIRF could not read the live pull-request commit and merge base from origin.");
   }
   const currentHead = gitOutput(["rev-parse", "HEAD"]);
   const base = review.target.base_sha;
-  const previous = review.target.previous_head_sha;
-  if (!gitSucceeds(["cat-file", "-e", `${remoteBaseHead}^{commit}`])) {
+  if (!gitSucceeds(["cat-file", "-e", `${remoteMergeHead}^{commit}`])) {
     try {
-      execFileSync("git", ["fetch", "--quiet", "--no-tags", "origin", remoteBaseHead], { windowsHide: true, stdio: "ignore" });
+      execFileSync("git", ["fetch", "--quiet", "--no-tags", "origin", remoteMergeHead], { windowsHide: true, stdio: "ignore" });
     } catch {
-      throw new Error("DIRF could not load the current pull-request base commit from origin.");
+      throw new Error("DIRF could not load the live pull-request merge commit from origin.");
     }
   }
+  const mergeParents = gitOutput(["rev-list", "--parents", "-n", "1", remoteMergeHead]).split(/\s+/);
+  if (mergeParents.length !== 3 || mergeParents[2].toLowerCase() !== remotePrHead.toLowerCase()) {
+    throw new Error("DIRF could not verify the pull-request head against its live merge commit.");
+  }
+  const remoteBaseHead = mergeParents[1];
   let currentMergeBase = "";
   try { currentMergeBase = gitOutput(["merge-base", remoteBaseHead, currentHead]); } catch { /* reported below */ }
   return {
@@ -387,8 +392,6 @@ function currentGitContext(review) {
     base_exists: gitSucceeds(["cat-file", "-e", `${base}^{commit}`]),
     base_is_ancestor: gitSucceeds(["merge-base", "--is-ancestor", base, currentHead]),
     base_matches_merge_base: currentMergeBase.toLowerCase() === base.toLowerCase(),
-    previous_head_exists: review.target.mode === "full" || gitSucceeds(["cat-file", "-e", `${previous}^{commit}`]),
-    previous_head_is_ancestor: review.target.mode === "full" || gitSucceeds(["merge-base", "--is-ancestor", previous, currentHead]),
   };
 }
 

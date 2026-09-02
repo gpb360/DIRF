@@ -18,8 +18,8 @@ const SHA_B = "b".repeat(40);
 
 function artifact(overrides = {}) {
   return {
-    schema_version: 1,
-    target: { repository: "owner/repo", pr_number: 42, base_ref: "refs/heads/main", remote_head_ref: "refs/pull/42/head", base_sha: SHA_A, head_sha: SHA_B, mode: "full" },
+    schema_version: 2,
+    target: { repository: "https://example.test/owner/repo.git", pr_number: 42, base_sha: SHA_A, head_sha: SHA_B, mode: "full" },
     walkthrough: [{ area: "persistence", summary: "Changes the write boundary", files: ["src/store.js"] }],
     axes: Object.fromEntries([
       "spec",
@@ -122,7 +122,7 @@ test("readiness rejects the wrong repository, invalid base, stale live PR, and f
   assert.throws(() => assertReviewReady(artifact(), gitContext({ repository: "https://example.test/other/repo.git" })), /different repository/i);
   assert.throws(() => assertReviewReady(artifact(), gitContext({ base_exists: false })), /review base/i);
   assert.throws(() => assertReviewReady(artifact(), gitContext({ base_matches_merge_base: false })), /review base/i);
-  assert.throws(() => assertReviewReady(artifact(), gitContext({ remote_pr_head: "c".repeat(40) })), /newer commit/i);
+  assert.throws(() => assertReviewReady(artifact(), gitContext({ remote_pr_head: "c".repeat(40) })), /commit changed/i);
   assert.throws(
     () => assertReviewReady(artifact({ verification: [{ command: "npm test", status: "failed", result: "12 tests failed" }] }), gitContext()),
     /checks have not all passed/i,
@@ -131,8 +131,8 @@ test("readiness rejects the wrong repository, invalid base, stale live PR, and f
     target: { ...artifact().target, mode: "incremental", previous_head_sha: "c".repeat(40) },
   });
   assert.throws(
-    () => assertReviewReady(incremental, gitContext({ previous_head_is_ancestor: false })),
-    /previous reviewed commit/i,
+    () => assertReviewReady(incremental, gitContext()),
+    /requires a full review/i,
   );
 });
 
@@ -148,6 +148,7 @@ test("grades every review and exposes all four priority counts", () => {
   assert.equal(deriveGrade(withFinding(artifact(), finding({ id: "P3-001", priority: "P3" }))), "C");
   assert.equal(deriveGrade(withFinding(artifact(), finding({ id: "P2-001", priority: "P2" }))), "D");
   assert.equal(deriveGrade(withFinding(artifact(), finding())), "F");
+  assert.equal(deriveGrade(artifact({ verification: [{ command: "npm test", status: "failed", result: "failed" }] })), "C");
   assert.deepEqual(priorityCounts(withFinding(artifact(), finding({ id: "P2-001", priority: "P2" }))), {
     P0: 0, P1: 0, P2: 1, P3: 0,
   });
@@ -168,6 +169,18 @@ test("completion and structured verification status are required", () => {
     () => validateReview(artifact({ verification: [{ command: "npm test", result: "passed" }] })),
     /verification\[0\].*status/i,
   );
+});
+
+test("historical schema version 1 reviews remain readable but cannot authorize merge", () => {
+  const legacy = artifact({
+    schema_version: 1,
+    target: { repository: "owner/repo", base_sha: SHA_A, head_sha: SHA_B, mode: "full" },
+    verification: [{ command: "npm test", result: "passed" }],
+    completion: undefined,
+  });
+  assert.doesNotThrow(() => validateReview(legacy));
+  assert.doesNotThrow(() => renderReview(legacy));
+  assert.throws(() => assertReviewReady(legacy, gitContext()), /schema version 2/i);
 });
 
 test("validator rejects low-confidence and absolute-path comments", () => {
@@ -196,7 +209,7 @@ test("renderer emits ordered, confidence-scored findings and an exact-head marke
   assert.match(rendered, /\*\*Definition of done:\*\* NOT MET/);
   assert.ok(rendered.indexOf("[P1]") < rendered.indexOf("[P2]"));
   assert.match(rendered, /94% confidence/);
-  assert.match(rendered, new RegExp(`<!-- dirf-review:v1;head=${SHA_B};mode=full -->`));
+  assert.match(rendered, new RegExp(`<!-- dirf-review:v2;head=${SHA_B};mode=full -->`));
 });
 
 test("clean render clearly marks the zero-finding definition of done", () => {

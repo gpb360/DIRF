@@ -15,7 +15,7 @@ Produce a review another maintainer can act on without reconstructing your reaso
 
 ## Contract
 
-1. Freeze the review target: record repository, PR number, remote base and PR-head references, base SHA, head SHA, review mode, and the applicable repository instructions. Completion: the artifact identifies one immutable head and the current base used for its three-dot diff.
+1. Freeze the review target: record the canonical repository URL, GitHub PR number, base SHA, head SHA, review mode, and the applicable repository instructions. Completion: the artifact identifies one immutable head and the current base used for its three-dot diff.
 2. Read the whole change before commenting. Include PR intent, changed files, relevant call sites, migrations, tests, and prior review comments. Completion: `walkthrough` names every changed subsystem and its behavior change.
 3. Review independently across the axes in [review-axes.md](review-axes.md). Trace data and control flow beyond edited lines when a changed contract has callers or persistence effects. Completion: every applicable axis is marked `checked`, `finding`, or `not_applicable` with evidence.
 4. Prove each finding. State the triggering input or state, execution path, wrong outcome, user or system impact, and the smallest source-level correction. Completion: every published finding meets [findings-contract.md](findings-contract.md) and has confidence of at least 80.
@@ -42,4 +42,4 @@ Produce a review another maintainer can act on without reconstructing your reaso
 - Style preferences, speculative risks without a reachable failure path, and issues outside the changed behavior are not findings.
 - A dismissed false positive is not a finding. A retained finding cannot be waived to manufacture PASS; it must be fixed and the new head re-reviewed.
 
-Use incremental mode only for commits newer than the last reviewed head. Re-run full mode after force-pushes, base changes, cross-cutting contract changes, or when the previous review artifact cannot be trusted.
+Use incremental mode only for commits newer than the last reviewed head. Re-run full mode after force-pushes, base changes, cross-cutting contract changes, when the previous review artifact cannot be trusted, and always before asking for merge approval.

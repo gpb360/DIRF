@@ -15,11 +15,11 @@ function run(cwd, args) {
   return spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", timeout: 30_000 });
 }
 
-function reviewFor(base, head) {
+function reviewFor(repository, base, head, prNumber = 1) {
   const axes = ["spec", "correctness", "concurrency", "security", "data", "frontend", "testing", "standards"];
   return {
-    schema_version: 1,
-    target: { repository: "origin", pr_number: 1, base_ref: "refs/heads/main", remote_head_ref: "refs/pull/1/head", base_sha: base, head_sha: head, mode: "full" },
+    schema_version: 2,
+    target: { repository, pr_number: prNumber, base_sha: base, head_sha: head, mode: "full" },
     walkthrough: [{ area: "workflow", summary: "Checks the updated review workflow", files: ["change.txt"] }],
     axes: Object.fromEntries(axes.map((axis) => [axis, { status: "checked", evidence: `${axis} checked` }])),
     confidence: { quality: 90, evidence: 90 },
@@ -49,15 +49,31 @@ test("dirf review ready checks the local range and live pull-request commit", ()
   git(work, ["commit", "-q", "-am", "head"]);
   const head = git(work, ["rev-parse", "HEAD"]);
   git(work, ["push", "-q", "origin", "HEAD:refs/pull/1/head"]);
+  const tree = git(work, ["rev-parse", "HEAD^{tree}"]);
+  const merge = execFileSync("git", ["commit-tree", tree, "-p", base, "-p", head], {
+    cwd: work, encoding: "utf8", input: "test merge\n",
+  }).trim();
+  git(work, ["push", "-q", "origin", `${merge}:refs/pull/1/merge`]);
 
   const reviewPath = join(root, "review.json");
-  writeFileSync(reviewPath, JSON.stringify(reviewFor(base, head)));
+  writeFileSync(reviewPath, JSON.stringify(reviewFor(origin, base, head)));
   const ready = run(work, ["review", "ready", reviewPath]);
   assert.equal(ready.status, 0, ready.stderr);
   assert.match(ready.stdout, /Ready: no review issues remain/);
 
-  git(origin, ["update-ref", "refs/pull/1/head", base]);
+  const newerHead = execFileSync("git", ["commit-tree", tree, "-p", head], {
+    cwd: work, encoding: "utf8", input: "new PR head\n",
+  }).trim();
+  const newerMerge = execFileSync("git", ["commit-tree", tree, "-p", base, "-p", newerHead], {
+    cwd: work, encoding: "utf8", input: "new test merge\n",
+  }).trim();
+  git(work, ["push", "-q", "origin", `${newerHead}:refs/pull/1/head`, `+${newerMerge}:refs/pull/1/merge`]);
   const stale = run(work, ["review", "ready", reviewPath]);
   assert.notEqual(stale.status, 0);
-  assert.match(stale.stderr, /pull request has a newer commit/i);
+  assert.match(stale.stderr, /pull-request commit changed/i);
+
+  writeFileSync(reviewPath, JSON.stringify(reviewFor(origin, base, head, 2)));
+  const wrongPr = run(work, ["review", "ready", reviewPath]);
+  assert.notEqual(wrongPr.status, 0);
+  assert.match(wrongPr.stderr, /could not read the live pull-request/i);
 });

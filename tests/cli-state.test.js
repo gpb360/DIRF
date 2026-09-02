@@ -206,11 +206,13 @@ test("dirf state active keeps DIRF available and reuses the attempt claimed by t
   run([
     "record-progress", "The first PR review looked clear", "--attempt", first.id,
     "--path", main, "--next", "Ask to merge PR 21",
+    "--work-item", "pr:21", "--review-revision", "a".repeat(40),
     "--timestamp", "2026-09-02T01:00:00.000Z",
   ], { DIRF_HOME: home }, main);
   run([
     "record-progress", "A newer review found two issues", "--attempt", second.id,
     "--path", main, "--next", "Ask to merge PR 21",
+    "--work-item", "pr:21", "--review-revision", "b".repeat(40),
     "--timestamp", "2026-09-02T01:05:00.000Z",
   ], { DIRF_HOME: home }, main);
 
@@ -218,9 +220,21 @@ test("dirf state active keeps DIRF available and reuses the attempt claimed by t
   assert.equal(stale.attempt.id, first.id);
   assert.equal(stale.attempt.needs_refresh, true);
   assert.equal(stale.attempt.next_action, null, "DIRF must not repeat an old merge instruction");
-  assert.match(stale.attempt.attention, /newer project work may have changed this task/i);
+  assert.match(stale.attempt.attention, /newer or conflicting project work/i);
   assert.equal(stale.attempt.newer_attempt_id, second.id);
   assert.match(stale.attempt.newer_handoff_path, new RegExp(second.id));
+
+  const staleDetail = JSON.parse(run(["state", "get-attempt", first.id, "--path", main, "--json"], { DIRF_HOME: home }, main));
+  assert.equal(staleDetail.next_action, null, "all state views must suppress the stale next step");
+
+  run([
+    "record-progress", "The old review recorded a later unrelated checkpoint", "--attempt", first.id,
+    "--path", main, "--next", "Ask to merge PR 21",
+    "--work-item", "pr:21", "--review-revision", "a".repeat(40),
+    "--timestamp", "2026-09-02T01:10:00.000Z",
+  ], { DIRF_HOME: home }, main);
+  const stillStale = JSON.parse(run(["state", "active", "--path", main, "--json"], { DIRF_HOME: home }, main));
+  assert.equal(stillStale.attempt.next_action, null, "an older reviewed commit cannot become current by writing a later checkpoint");
 
   const staleResume = spawnSync(process.execPath, [CLI, "resume", first.id, "--path", main], {
     cwd: main, encoding: "utf8", timeout: TIMEOUT, env: { ...process.env, DIRF_HOME: home },
@@ -232,9 +246,21 @@ test("dirf state active keeps DIRF available and reuses the attempt claimed by t
     cwd: main, encoding: "utf8", timeout: TIMEOUT, env: { ...process.env, DIRF_HOME: home },
   });
   assert.notEqual(duplicate.status, 0);
-  assert.match(duplicate.stderr, new RegExp(`already governed by ${first.id}`));
+  assert.match(duplicate.stderr, /older information/i);
 
   run(["attempt", "block", first.id, "--reason", "waiting", "--path", main], { DIRF_HOME: home }, main);
+  run([
+    "record-progress", "Reconciled the old task to the reviewed commit", "--attempt", first.id,
+    "--path", main, "--next", "No separate action",
+    "--work-item", "pr:21", "--review-revision", "b".repeat(40),
+    "--timestamp", "2026-09-02T01:11:00.000Z",
+  ], { DIRF_HOME: home }, main);
+  run([
+    "record-progress", "Confirmed the second task owns the current review", "--attempt", second.id,
+    "--path", main, "--next", "Continue PR 21 review",
+    "--work-item", "pr:21", "--review-revision", "b".repeat(40),
+    "--timestamp", "2026-09-02T01:12:00.000Z",
+  ], { DIRF_HOME: home }, main);
   const available = JSON.parse(run(["state", "active", "--path", main, "--hook"], { DIRF_HOME: home }, main));
   assert.match(available.hookSpecificOutput.additionalContext, /DIRF is available.*no in-progress attempt is bound/i);
 
