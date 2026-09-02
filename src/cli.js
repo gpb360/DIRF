@@ -640,6 +640,10 @@ function cmdResume(args) {
   const target = projectRoot(args.path);
   const attempt = findAttempt(target, args.name);
   const project = resolveProject(target);
+  const context = attemptContextState(project.slug, attempt.id);
+  if (context.needs_refresh) {
+    throw new Error(`This task has older information. Read newer task ${context.newer_attempt_id} at ${context.newer_handoff_path} before continuing.`);
+  }
   const stored = claimAttemptCheckout(project.slug, attempt.id, checkoutRoot(target));
   const planPath = join(attempt.folder, "workflow.json");
   if (existsSync(planPath)) {
@@ -979,7 +983,7 @@ function cmdStateActive(args) {
     let additionalContext;
     if (result.state === "active") {
       additionalContext = active.needs_refresh
-        ? `DIRF found newer work for the same pull request. Do not follow this task's old next step. Read the newer review, update this task, and continue only from the corrected next step.`
+        ? `DIRF found newer work for the same pull request. Do not follow this task's old next step. Read task ${active.newer_attempt_id} at ${active.newer_handoff_path}, update this task, and continue only from the corrected next step.`
         : `DIRF already has work in this checkout. Continue task ${active.id} (${active.name}). Current stage: ${active.current_phase || "not recorded"}. Next: ${active.next_action || "continue the current stage"}. Load ${active.workflow_path} and ${active.handoff_path} only if needed.`;
     } else if (result.state === "conflict") {
       additionalContext = `DIRF responsibility conflict in this checkout: ${attempts.map(({ id }) => id).join(", ")}. Stop and select the intended attempt explicitly; do not choose the latest.`;
@@ -995,7 +999,7 @@ function cmdStateActive(args) {
     console.log(`Stage: ${active.current_phase || "not recorded"}`);
     if (active.needs_refresh) {
       console.log(`Attention: ${active.attention}`);
-      console.log("Next: Read the newer review and replace this task's old next step before continuing.");
+      console.log(`Next: Read task ${active.newer_attempt_id} at ${active.newer_handoff_path} and replace this task's old next step before continuing.`);
     } else {
       console.log(`Next: ${active.next_action || "continue the current stage"}`);
     }
@@ -1339,6 +1343,8 @@ function cmdRecordProgress(args) {
       next: args.next || "Continue work",
       files: args.files ? args.files.split(",") : [],
       attemptId: args.attempt || null,
+      workItem: args.workItem || null,
+      reviewRevision: args.reviewRevision || null,
     };
 
     const { lifecycle: synced } = recordProgress(project.slug, updateData);
@@ -1404,6 +1410,8 @@ function parse(argv) {
     if (a === "--next") { out.next = rest[++i]; continue; }
     if (a === "--files") { out.files = rest[++i]; continue; }
     if (a === "--timestamp") { out.timestamp = rest[++i]; continue; }
+    if (a === "--work-item") { out.workItem = rest[++i]; continue; }
+    if (a === "--review-revision") { out.reviewRevision = rest[++i]; continue; }
     if (a === "--evidence") { out.evidence = rest[++i]; continue; }
     if (a === "--output") { out.output = rest[++i]; continue; }
     if (a === "--policy") { out.policy = rest[++i]; continue; }
@@ -1435,7 +1443,7 @@ Usage:
   dirf list [--path DIR]                               list saved attempts
   dirf status [--path DIR]                             show project and repository state
   dirf resume <name-or-id> [--path DIR]                load the workflow handoff
-  dirf record-progress "<message>" [--path DIR] [--attempt ID|UNIQUE_NAME] [--phase PHASE] [--next ACTION] [--files FILES]
+  dirf record-progress "<message>" [--path DIR] [--attempt ID|UNIQUE_NAME] [--phase PHASE] [--next ACTION] [--files FILES] [--work-item ITEM] [--review-revision SHA]
                                                       record progress, update HANDOFF.md and sync the attempt lifecycle
   dirf attempt <action> <id> [--path DIR]              update lifecycle state
                                                       (advance: [--evidence "CMD" [--output F]] [--strict] [--auto])

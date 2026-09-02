@@ -19,7 +19,7 @@ const SHA_B = "b".repeat(40);
 function artifact(overrides = {}) {
   return {
     schema_version: 1,
-    target: { repository: "owner/repo", base_sha: SHA_A, head_sha: SHA_B, mode: "full" },
+    target: { repository: "owner/repo", pr_number: 42, base_ref: "refs/heads/main", remote_head_ref: "refs/pull/42/head", base_sha: SHA_A, head_sha: SHA_B, mode: "full" },
     walkthrough: [{ area: "persistence", summary: "Changes the write boundary", files: ["src/store.js"] }],
     axes: Object.fromEntries([
       "spec",
@@ -33,9 +33,23 @@ function artifact(overrides = {}) {
     ].map((axis) => [axis, { status: "checked", evidence: `${axis} was inspected` }])),
     confidence: { quality: 90, evidence: 90 },
     findings: [],
-    verification: [{ command: "node --test", result: "passed" }],
+    verification: [{ command: "node --test", status: "passed", result: "12 tests passed" }],
     limitations: [],
     completion: { review_complete: true, required_checks: "passed", unresolved_threads: 0 },
+    ...overrides,
+  };
+}
+
+function gitContext(overrides = {}) {
+  return {
+    current_head: SHA_B,
+    remote_pr_head: SHA_B,
+    repository: "https://example.test/owner/repo.git",
+    base_exists: true,
+    base_is_ancestor: true,
+    base_matches_merge_base: true,
+    previous_head_exists: true,
+    previous_head_is_ancestor: true,
     ...overrides,
   };
 }
@@ -76,6 +90,7 @@ test("bundled code-review skill resolves its progressive disclosure files", () =
 test("PR-review playbook binds the graded code-review contract", () => {
   const folder = join(ROOT, "playbooks", "pr-review");
   const unit = loadUnit(folder);
+  assert.equal(unit.meta.description, unit.meta.config.description);
   assert.deepEqual(unit.meta.uses, ["../../skills/code-review"]);
   const graph = resolveGraph(folder, { allowedRoots: [join(ROOT, "playbooks"), join(ROOT, "skills")] });
   assert.ok(graph.some((entry) => entry.meta.name === "code-review"));
@@ -85,21 +100,39 @@ test("clean, well-evidenced review passes", () => {
   const review = artifact();
   assert.equal(validateReview(review), review);
   assert.equal(deriveVerdict(review), "PASS");
-  assert.equal(assertReviewReady(review, SHA_B).ready, true);
+  assert.equal(assertReviewReady(review, gitContext()).ready, true);
 });
 
 test("readiness fails when issues remain or the review targets an older commit", () => {
   assert.throws(
-    () => assertReviewReady(withFinding(artifact(), finding({ id: "P2-001", priority: "P2" })), SHA_B),
+    () => assertReviewReady(withFinding(artifact(), finding({ id: "P2-001", priority: "P2" })), gitContext()),
     /1 review issue remains/i,
   );
   assert.throws(
-    () => assertReviewReady(artifact(), "c".repeat(40)),
+    () => assertReviewReady(artifact(), gitContext({ current_head: "c".repeat(40) })),
     /older commit/i,
   );
   assert.throws(
-    () => assertReviewReady(artifact({ completion: { review_complete: true, required_checks: "pending", unresolved_threads: 0 } }), SHA_B),
+    () => assertReviewReady(artifact({ completion: { review_complete: true, required_checks: "pending", unresolved_threads: 0 } }), gitContext()),
     /checks have not all passed/i,
+  );
+});
+
+test("readiness rejects the wrong repository, invalid base, stale live PR, and failed verification", () => {
+  assert.throws(() => assertReviewReady(artifact(), gitContext({ repository: "https://example.test/other/repo.git" })), /different repository/i);
+  assert.throws(() => assertReviewReady(artifact(), gitContext({ base_exists: false })), /review base/i);
+  assert.throws(() => assertReviewReady(artifact(), gitContext({ base_matches_merge_base: false })), /review base/i);
+  assert.throws(() => assertReviewReady(artifact(), gitContext({ remote_pr_head: "c".repeat(40) })), /newer commit/i);
+  assert.throws(
+    () => assertReviewReady(artifact({ verification: [{ command: "npm test", status: "failed", result: "12 tests failed" }] }), gitContext()),
+    /checks have not all passed/i,
+  );
+  const incremental = artifact({
+    target: { ...artifact().target, mode: "incremental", previous_head_sha: "c".repeat(40) },
+  });
+  assert.throws(
+    () => assertReviewReady(incremental, gitContext({ previous_head_is_ancestor: false })),
+    /previous reviewed commit/i,
   );
 });
 
@@ -124,6 +157,17 @@ test("insufficient clean-review evidence cannot pass", () => {
   assert.equal(deriveVerdict(artifact({ confidence: { quality: 90, evidence: 79 } })), "CONDITIONAL");
   assert.equal(deriveVerdict(artifact({ confidence: { quality: 84, evidence: 90 } })), "CONDITIONAL");
   assert.equal(deriveVerdict(artifact({ limitations: ["Database verification was unavailable"] })), "CONDITIONAL");
+});
+
+test("completion and structured verification status are required", () => {
+  assert.throws(
+    () => validateReview(artifact({ completion: undefined })),
+    /completion must be an object/i,
+  );
+  assert.throws(
+    () => validateReview(artifact({ verification: [{ command: "npm test", result: "passed" }] })),
+    /verification\[0\].*status/i,
+  );
 });
 
 test("validator rejects low-confidence and absolute-path comments", () => {

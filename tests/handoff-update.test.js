@@ -17,6 +17,8 @@ test("updateProgressSection updates the standard DIRF handoff without retaining 
     phase: "verify",
     next: "Review exact head before merge",
     files: ["src/cli.js"],
+    workItem: "pr:21",
+    reviewRevision: "a".repeat(40),
   });
   const parsed = parseCurrentHandoff(updated);
 
@@ -25,6 +27,8 @@ test("updateProgressSection updates the standard DIRF handoff without retaining 
   assert.deepEqual(parsed.completedSteps, ["Published PR 21"]);
   assert.deepEqual(parsed.changedFiles, ["src/cli.js"]);
   assert.equal(parsed.nextAction, "Review exact head before merge");
+  assert.equal(parsed.workItem, "pr:21");
+  assert.equal(parsed.reviewRevision, "a".repeat(40));
   assert.doesNotMatch(updated, /start the first workflow phase/);
 });
 

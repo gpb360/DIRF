@@ -623,11 +623,18 @@ function handoffUpdatedAt(markdown, path) {
 
 function handoffWorkReferences(markdown) {
   const references = new Set();
-  for (const match of String(markdown || "").matchAll(/\bPR\s*#?\s*(\d+)\b/gi)) {
+  const current = parseCurrentHandoff(markdown);
+  if (current.workItem) references.add(current.workItem.trim().toLowerCase());
+  const legacyCurrentText = [current.objective, current.nextAction, current.currentPhase].filter(Boolean).join("\n");
+  for (const match of legacyCurrentText.matchAll(/\bPR\s*#?\s*(\d+)\b/gi)) {
     references.add(`pr:${match[1]}`);
   }
-  for (const match of String(markdown || "").matchAll(/\/pull\/(\d+)\b/gi)) {
+  for (const match of legacyCurrentText.matchAll(/\/pull\/(\d+)\b/gi)) {
     references.add(`pr:${match[1]}`);
+  }
+  for (const match of legacyCurrentText.matchAll(/\b[\w.-]+\/[\w.-]+#(\d+)\b/gi)) references.add(`pr:${match[1]}`);
+  if (/\b(?:pr|pull request|review|merge)\b/i.test(legacyCurrentText)) {
+    for (const match of legacyCurrentText.matchAll(/(?:^|\s)#(\d+)\b/g)) references.add(`pr:${match[1]}`);
   }
   return references;
 }
@@ -652,19 +659,20 @@ export function attemptContextState(slug, idOrName) {
       return {
         id: candidate.id,
         updatedAt: handoffUpdatedAt(candidateHandoff, candidatePath),
-        nextAction: handoffNextAction(candidateHandoff),
+        handoffPath: candidatePath,
         related: [...references].some((reference) => candidateReferences.has(reference)),
       };
     })
     .filter((candidate) => candidate.related && candidate.updatedAt > updatedAt)
     .sort((left, right) => right.updatedAt - left.updatedAt)[0] || null;
 
-  const needsRefresh = Boolean(newerRelated && newerRelated.nextAction !== nextAction);
+  const needsRefresh = Boolean(newerRelated);
   return {
     needs_refresh: needsRefresh,
     next_action: needsRefresh ? null : nextAction,
     stored_next_action: nextAction,
     newer_attempt_id: newerRelated?.id || null,
+    newer_handoff_path: newerRelated?.handoffPath || null,
     attention: needsRefresh
       ? "Newer project work may have changed this task. Check the newer review before continuing."
       : null,
@@ -1212,7 +1220,7 @@ function withProgressLock(slug, action) {
 // bases; the attempt write happens first and the authoritative canonical write
 // happens last. Concurrent attempts therefore keep scoped history while the
 // project handoff remains a last-writer-wins snapshot.
-export function recordProgress(slug, { message, timestamp, phase, next, files, attemptId }) {
+export function recordProgress(slug, { message, timestamp, phase, next, files, attemptId, workItem, reviewRevision }) {
   if (!getProject(slug)) throw new Error(`Unknown DIRF project ${slug}`);
   return withProgressLock(slug, () => {
     const attempt = progressAttempt(slug, attemptId);
@@ -1225,6 +1233,8 @@ export function recordProgress(slug, { message, timestamp, phase, next, files, a
       phase: phase || null,
       next,
       files: files || [],
+      workItem: workItem || null,
+      reviewRevision: reviewRevision || null,
     };
     const updatedHandoff = updateProgressSection(canonicalBase, update);
     const updatedAttemptHandoff = attempt

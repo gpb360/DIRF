@@ -210,7 +210,7 @@ test("dirf state active keeps DIRF available and reuses the attempt claimed by t
   ], { DIRF_HOME: home }, main);
   run([
     "record-progress", "A newer review found two issues", "--attempt", second.id,
-    "--path", main, "--next", "Fix both issues and review PR 21 again",
+    "--path", main, "--next", "Ask to merge PR 21",
     "--timestamp", "2026-09-02T01:05:00.000Z",
   ], { DIRF_HOME: home }, main);
 
@@ -219,6 +219,14 @@ test("dirf state active keeps DIRF available and reuses the attempt claimed by t
   assert.equal(stale.attempt.needs_refresh, true);
   assert.equal(stale.attempt.next_action, null, "DIRF must not repeat an old merge instruction");
   assert.match(stale.attempt.attention, /newer project work may have changed this task/i);
+  assert.equal(stale.attempt.newer_attempt_id, second.id);
+  assert.match(stale.attempt.newer_handoff_path, new RegExp(second.id));
+
+  const staleResume = spawnSync(process.execPath, [CLI, "resume", first.id, "--path", main], {
+    cwd: main, encoding: "utf8", timeout: TIMEOUT, env: { ...process.env, DIRF_HOME: home },
+  });
+  assert.notEqual(staleResume.status, 0);
+  assert.match(staleResume.stderr, new RegExp(`older information.*${second.id}`, "i"));
 
   const duplicate = spawnSync(process.execPath, [CLI, "resume", second.id, "--path", main], {
     cwd: main, encoding: "utf8", timeout: TIMEOUT, env: { ...process.env, DIRF_HOME: home },

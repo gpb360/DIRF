@@ -15,11 +15,11 @@ Produce a review another maintainer can act on without reconstructing your reaso
 
 ## Contract
 
-1. Freeze the review target: record repository, base SHA, head SHA, review mode, and the applicable repository instructions. Completion: the artifact identifies one immutable head and the base used for its three-dot diff.
+1. Freeze the review target: record repository, PR number, remote base and PR-head references, base SHA, head SHA, review mode, and the applicable repository instructions. Completion: the artifact identifies one immutable head and the current base used for its three-dot diff.
 2. Read the whole change before commenting. Include PR intent, changed files, relevant call sites, migrations, tests, and prior review comments. Completion: `walkthrough` names every changed subsystem and its behavior change.
 3. Review independently across the axes in [review-axes.md](review-axes.md). Trace data and control flow beyond edited lines when a changed contract has callers or persistence effects. Completion: every applicable axis is marked `checked`, `finding`, or `not_applicable` with evidence.
 4. Prove each finding. State the triggering input or state, execution path, wrong outcome, user or system impact, and the smallest source-level correction. Completion: every published finding meets [findings-contract.md](findings-contract.md) and has confidence of at least 80.
-5. Verify proportionally. Run the narrowest relevant tests and static checks; add database, browser, concurrency, or security proof when the change crosses those boundaries. Completion: each command and outcome is recorded, including blockers and unrun checks.
+5. Verify proportionally. Run the narrowest relevant tests and static checks; add database, browser, concurrency, or security proof when the change crosses those boundaries. Completion: each command has a structured passed, pending, or failed status plus its outcome, including blockers and unrun checks.
 6. Write `review.json`, validate it, then render the human review:
    - `dirf review validate review.json`
    - `dirf review render review.json`

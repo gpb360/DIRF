@@ -49,7 +49,7 @@ function meaningfulLines(section) {
     .filter((line) => line && !/^(?:-\s+)?_\([^)]+\)_$/.test(line));
 }
 
-export function updateProgressSection(handoffMarkdown, { message, timestamp, phase, next, files }) {
+export function updateProgressSection(handoffMarkdown, { message, timestamp, phase, next, files, workItem, reviewRevision }) {
   const parsed = splitSections(handoffMarkdown);
 
   if (timestamp) {
@@ -61,6 +61,9 @@ export function updateProgressSection(handoffMarkdown, { message, timestamp, pha
   if (phase) {
     ensureSection(parsed.sections, "Current phase").content = sectionContent([phase]);
   }
+
+  if (workItem) ensureSection(parsed.sections, "Work item").content = sectionContent([workItem]);
+  if (reviewRevision) ensureSection(parsed.sections, "Review revision").content = sectionContent([reviewRevision]);
 
   const lastAction = findSection(parsed.sections, ["Last action"]);
   if (lastAction) {
@@ -97,22 +100,28 @@ export function updateProgressSection(handoffMarkdown, { message, timestamp, pha
 export function parseCurrentHandoff(handoffMarkdown) {
   const { sections } = splitSections(handoffMarkdown);
   const currentPhase = findSection(sections, ["Current phase"]);
+  const objective = findSection(sections, ["Objective"]);
   const lastAction = findSection(sections, ["Last action"]);
   const completed = findSection(sections, ["Completed", "Completed steps"]);
   const changed = findSection(sections, ["Changed files"]);
   const next = findSection(sections, ["Exact next action"]);
   const lastUpdated = findSection(sections, ["Last updated"]);
+  const workItem = findSection(sections, ["Work item"]);
+  const reviewRevision = findSection(sections, ["Review revision"]);
   const firstValue = (section) => section ? meaningfulLines(section)[0] || null : null;
   const bulletValues = (section) => section
     ? meaningfulLines(section).filter((line) => line.startsWith("- ")).map((line) => line.slice(2).trim())
     : [];
 
   return {
+    objective: firstValue(objective),
     currentPhase: firstValue(currentPhase),
     lastAction: firstValue(lastAction),
     completedSteps: bulletValues(completed),
     changedFiles: bulletValues(changed),
     nextAction: firstValue(next),
     lastUpdated: firstValue(lastUpdated),
+    workItem: firstValue(workItem),
+    reviewRevision: firstValue(reviewRevision),
   };
 }

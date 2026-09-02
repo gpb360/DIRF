@@ -2,7 +2,7 @@
 name: pr-review
 kind: playbook
 order: 1
-description: "Review a pull request at an exact head for provable bugs, regressions, security risks, and missing tests with confidence-scored findings."
+description: "Review a pull request, fix every confirmed issue, and repeat until the current commit is clear and all required checks pass."
 uses: ["../../skills/code-review"]
 details: []
 inputs: ["task"]

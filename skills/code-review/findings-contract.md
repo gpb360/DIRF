@@ -7,6 +7,9 @@ Create `review.json` with this shape:
   "schema_version": 1,
   "target": {
     "repository": "owner/repository",
+    "pr_number": 123,
+    "base_ref": "refs/heads/main",
+    "remote_head_ref": "refs/pull/123/head",
     "base_sha": "40-character SHA",
     "head_sha": "40-character SHA",
     "mode": "full"
@@ -39,7 +42,7 @@ Create `review.json` with this shape:
     }
   ],
   "verification": [
-    { "command": "node --test tests/store.test.js", "result": "passed" }
+    { "command": "node --test tests/store.test.js", "status": "passed", "result": "12 tests passed" }
   ],
   "limitations": [],
   "completion": {
@@ -79,5 +82,7 @@ The renderer also derives an A-F readiness grade and explicit P0-P3 counts for
 the detailed report. Normal user updates should use ordinary language.
 
 Before asking to merge, run `dirf review ready review.json`. Readiness requires
-the current commit, zero findings, a completed review, every required check
-passed, and zero unresolved review conversations.
+the live PR commit, the repository and review base to match the checkout, zero
+findings, a completed review, every recorded verification and required check to
+have passed, and zero unresolved review conversations. Incremental reviews must
+also record `previous_head_sha`; it must be an ancestor of the current commit.
