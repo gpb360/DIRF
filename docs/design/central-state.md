@@ -36,8 +36,10 @@ features.
 
 ### Store topology
 
-- `~/.dirf/projects/<slug>/` holds canonical `config.json`, `HANDOFF.md`, and
-  `attempts/`. This extends the existing `~/.dirf/` home-dir precedent already
+- `~/.dirf/projects/<slug>/` holds canonical `config.json`, `HANDOFF.md`,
+  `execution-authority.json`, and `attempts/`. The authority record contains
+  only the trusted harness capability hash. This extends the existing
+  `~/.dirf/` home-dir precedent already
   used by `loadTrustedSources` (`src/skills.js`).
 - `~/.dirf/projects.json` — the registry of known projects.
 - Target checkouts keep **zero DIRF state** except a ~50-byte

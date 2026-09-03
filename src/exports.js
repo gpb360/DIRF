@@ -9,11 +9,11 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { attemptNextAction, effectiveAttemptStatus, listAttempts } from "./state.js";
 
-const STATUS_LABEL = { active: "Active", completed: "Completed", stale: "Stale", archived: "Archived", empty: "Empty" };
-const STATUS_ICON = { active: "🚀", completed: "✅", stale: "🕰️", archived: "📦", empty: "📭" };
-const STATUS_ORDER = ["active", "completed", "stale", "archived", "empty"];
-const STATUS_COLOR = { active: "5", completed: "4", stale: "2", archived: "6", empty: "1" };
-const ATTEMPT_COLOR = { planned: "3", in_progress: "5", blocked: "1", done: "4", historical: "6" };
+const STATUS_LABEL = { active: "Active", idle: "Idle", completed: "Completed", stale: "Stale", archived: "Archived", empty: "Empty" };
+const STATUS_ICON = { active: "🚀", idle: "⏸️", completed: "✅", stale: "🕰️", archived: "📦", empty: "📭" };
+const STATUS_ORDER = ["active", "idle", "completed", "stale", "archived", "empty"];
+const STATUS_COLOR = { active: "5", idle: "3", completed: "4", stale: "2", archived: "6", empty: "1" };
+const ATTEMPT_COLOR = { planned: "3", in_progress: "5", blocked: "1", abandoned: "2", done: "4", historical: "6" };
 
 function canvasId(value) {
   // JSON Canvas spec: ids are unique 16-char lowercase hex strings.

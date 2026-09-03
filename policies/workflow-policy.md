@@ -16,6 +16,13 @@ Use this policy in every generated workflow prompt.
 - Select scratch space inside the active workspace. Never silently fall back to another drive or the operating-system temp directory.
 - Persist capability names and provider hints, not installation paths.
 
+## Delegated Status
+- The orchestrator is the only execution-registry writer for its Attempt; user-owned lifecycle and decision actions remain separate.
+- The harness binds the execution authority token during trusted setup before children run and keeps it out of child environments; identity variables and a self-written transfer reason do not grant registry authority or abandonment rights.
+- Every child assignment identifies the parent Attempt and requires the child to report its state, result, blocker, and handoff back to the orchestrator.
+- Child agents do not call DIRF state commands. The orchestrator submits their reports as one bounded execution snapshot.
+- A child is a separate Attempt only when it needs an independent lifecycle and handoff.
+
 ## Build Bias
 - Start with the smallest useful workflow.
 - Prefer standard library and native platform features.

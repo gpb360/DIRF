@@ -138,6 +138,9 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.match(readme, /uses: \["playbook"\]/);
   assert.match(policy, /The user's task defines what the workflow delivers/);
   assert.match(policy, /they do not add deliverables/);
+  assert.match(policy, /The orchestrator is the only execution-registry writer/);
+  assert.match(policy, /state, result, blocker, and handoff back to the orchestrator/);
+  assert.match(policy, /Child agents do not call DIRF state commands/);
   assert.match(policy, /the authoritative requirement source, the exact registry model and intended capability, and the approved provider abstraction or contract/);
   assert.match(policy, /when a model- or provider-specific skill or contract exists, read and cite it before implementation, review, testing, or a merge-readiness claim/);
   assert.match(policy, /exact registry identifier, capability or type .* approved provider route, request payload, expected response or callback shape, pricing, and lifecycle status/);

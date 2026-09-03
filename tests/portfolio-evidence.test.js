@@ -111,11 +111,11 @@ test("historical attempts with evidence count as done; template placeholders do 
   assert.equal(project.attempts.historical, 1);
 });
 
-test("open work still beats handoff evidence in the classification", () => {
+test("open work without live harness evidence stays idle despite completion text", () => {
   const { slug, now } = setup();
   addAttempt(slug, "open", daysAgo(1, now), "in_progress", COMPLETE_STATUS_LINE);
   addAttempt(slug, "done-via-evidence", daysAgo(5, now), "planned", COMPLETE_STATUS_LINE);
-  assert.equal(portfolioSnapshot(now).projects[0].status, "active");
+  assert.equal(portfolioSnapshot(now).projects[0].status, "idle");
 });
 
 test("canonical progress refreshes portfolio activity without rewriting the registry", () => {
@@ -136,7 +136,7 @@ test("canonical progress refreshes portfolio activity without rewriting the regi
   const stored = JSON.parse(readFileSync(registryPath, "utf8"));
   assert.equal(stored.projects[slug].last_seen, daysAgo(60, now).toISOString());
   const project = portfolioSnapshot(now).projects[0];
-  assert.equal(project.status, "active");
+  assert.equal(project.status, "idle");
   assert.ok(Date.parse(project.last_activity) > Date.parse(stored.projects[slug].last_seen));
 });
 

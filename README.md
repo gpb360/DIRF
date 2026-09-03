@@ -332,7 +332,7 @@ dirf review render <review.json>                        render a review artifact
 dirf review ready <review.json>                         fail closed unless the exact PR is merge-ready
 
 # portfolio (cross-project view — see "Portfolio" below)
-dirf portfolio [--json]                              classify every project: active/stale/completed/archived/empty
+dirf portfolio [--json]                              classify every project: active/idle/stale/completed/archived/empty
 dirf project <complete|reopen|archive|status> [...]  explicit project status override
 dirf export obsidian [--out DIR]                     export the portfolio into an Obsidian vault (notes + canvas)
 dirf export graphify [--out DIR] [--skip-render]     export the portfolio as a graphify graph (+ HTML render)
@@ -515,9 +515,10 @@ anywhere on the machine. It derives a status for each project and its attempts:
 
 | Status | Meaning |
 |---|---|
-| `active` | open work (in-progress/blocked attempts) or activity within the staleness threshold |
+| `active` | at least one Attempt has a fresh harness observation reporting active work |
+| `idle` | unfinished work exists, but no fresh harness observation says it is active |
 | `completed` | all tracked attempts done, or the handoff carries `## Status: Complete.` |
-| `stale` | nothing open and no activity past the threshold — likely abandoned |
+| `stale` | no live work and no project activity past the threshold; abandonment is never inferred |
 | `archived` | explicitly archived (`dirf project archive`) |
 | `empty` | registered but no attempts yet |
 

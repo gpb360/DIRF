@@ -30,7 +30,7 @@ import { inspect, detectStackProfile } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, projectHandoffContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings } from "./state.js";
+import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, projectHandoffContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, attemptNextAction, projectWorkSnapshot, observeAttempt, bindExecutionAuthority, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings } from "./state.js";
 import { ARTIFACT_TYPES, explainGoverningArtifact } from "./artifacts.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 import {
@@ -580,6 +580,8 @@ function publicAttemptForSlug(slug, attempt, context = null) {
     phases,
     worker: attempt.worker || null,
     blocker: attempt.blocker || null,
+    abandonment_reason: attempt.abandonment_reason || null,
+    abandoned_at: attempt.abandoned_at || null,
     wait: attempt.wait || null,
     worktree_path: attempt.worktree_path || null,
     gates,
@@ -793,8 +795,12 @@ function cmdMigrate(name, target) {
 function cmdSetup(args) {
   const target = args._[0] || args.path || ".";
   const result = setupProject(target, { tracker: args.tracker, context: args.context, reservePercent: args.reservePercent });
+  const authority = process.env.DIRF_ORCHESTRATOR_TOKEN
+    ? bindExecutionAuthority(result.slug, process.env.DIRF_ORCHESTRATOR_TOKEN)
+    : null;
   console.log(`DIRF configured: ${result.root}`);
   console.log(result.created.length ? `Created: ${result.created.join(", ")}` : "Already configured; no files changed.");
+  if (authority) console.log(authority.changed ? "Execution authority initialized." : "Execution authority already initialized.");
   const discovered = enrichDiscovered(discover(result.root));
   const gaps = findCapabilityGaps(loadPlaybooks(), discovered);
   console.log(`Detected ${Object.keys(discovered).length} installed skills; no skills were installed.`);
@@ -962,6 +968,18 @@ function cmdStateGetAttempt(args) {
   console.log(`folder: ${a.folder}`);
 }
 
+function currentExecutionFromEnv(env) {
+  const harness = env.DIRF_HARNESS || (env.CODEX_THREAD_ID ? "codex" : null);
+  const sessionId = env.DIRF_SESSION_ID || env.CODEX_THREAD_ID || null;
+  if (!harness || !sessionId) return null;
+  return {
+    harness,
+    sessionId,
+    authorityToken: env.DIRF_ORCHESTRATOR_TOKEN || null,
+    status: env.DIRF_EXECUTION_STATUS || "active",
+  };
+}
+
 function cmdStateActive(args) {
   const target = projectRoot(args.path || ".");
   const project = resolveProject(target);
@@ -978,6 +996,8 @@ function cmdStateActive(args) {
     return;
   }
   const responsibility = attemptResponsibility(project.slug, checkout);
+  const execution = responsibility.attempt ? currentExecutionFromEnv(process.env) : null;
+  if (execution?.authorityToken) observeAttempt(project.slug, responsibility.attempt.id, { ...execution, worktreePath: checkout });
   const attempts = responsibility.attempts.map((attempt) => ({
     id: attempt.id,
     name: attempt.name,
@@ -1104,7 +1124,7 @@ function cmdAttempt(args) {
   const slug = resolveStateSlug(args);
   const action = args._[0];
   const id = args._[1];
-  if (!action) throw new Error("usage: dirf attempt <start-tracking|start|assign|advance|block|reopen|complete|link|gate|sync-from-handoff> <id> [options]");
+  if (!action) throw new Error("usage: dirf attempt <start-tracking|start|assign|advance|block|abandon|reopen|complete|link|observe|gate|sync-from-handoff> <id> [options]");
   if (action === "sync-from-handoff") {
     // One attempt, or the whole project when no id is given. Backfills
     // attempt.json status from completion evidence in HANDOFF.md.
@@ -1120,11 +1140,30 @@ function cmdAttempt(args) {
     console.log(`Backfilled ${outcomes.filter((o) => o.changed).length} of ${outcomes.length} attempt(s) from handoff evidence.`);
     return;
   }
-  if (!id) throw new Error("usage: dirf attempt <start-tracking|start|assign|advance|block|reopen|complete|link|gate|sync-from-handoff> <id> [options]");
+  if (!id) throw new Error("usage: dirf attempt <start-tracking|start|assign|advance|block|abandon|reopen|complete|link|observe|gate|sync-from-handoff> <id> [options]");
   let result;
   let extra = null;
   if (action === "start-tracking") result = startTrackingAttempt(slug, id);
   else if (action === "link") result = linkAttemptWorktree(slug, id, args.worktree);
+  else if (action === "observe") {
+    const owner = currentExecutionFromEnv(process.env);
+    if (!owner) throw new Error("attempt observe requires trusted harness identity in DIRF_HARNESS and DIRF_SESSION_ID (or CODEX_THREAD_ID)");
+    if (!owner.authorityToken) throw new Error("attempt observe requires DIRF_ORCHESTRATOR_TOKEN from the trusted harness adapter");
+    let snapshot = {};
+    if (args.file) {
+      try { snapshot = JSON.parse(readFileSync(args.file, "utf8")); }
+      catch { throw new Error(`execution snapshot must contain valid JSON: ${args.file}`); }
+      if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) throw new Error("execution snapshot must be a JSON object");
+    }
+    result = observeAttempt(slug, id, {
+      ...owner,
+      status: args.executionStatus || snapshot.status || owner.status,
+      worktreePath: args.worktree || checkoutRoot(projectRoot(args.path || ".")),
+      observedAt: args.observedAt,
+      transferReason: args.transferReason,
+      ...(snapshot.children !== undefined ? { children: snapshot.children } : {}),
+    });
+  }
   else if (action === "gate") {
     const phase = args._[2];
     const decision = args._[3];
@@ -1141,6 +1180,7 @@ function cmdAttempt(args) {
     result = updateAttemptLifecycle(slug, id, action, {
       worker: args.worker,
       reason: args.reason || args._[2],
+      authorityToken: action === "abandon" ? process.env.DIRF_ORCHESTRATOR_TOKEN : undefined,
       confirm: args.confirm,
       evidence: args.evidence ? { command: args.evidence, output: args.output } : undefined,
       strict: args.strict,
@@ -1217,7 +1257,7 @@ function cmdStateMigrateCleanup(args) {
 
 function formatPortfolioSummary(snapshot) {
   const parts = [];
-  for (const status of ["active", "completed", "stale", "archived", "empty"]) {
+  for (const status of ["active", "idle", "completed", "stale", "archived", "empty"]) {
     const n = snapshot.summary[status] || 0;
     if (n) parts.push(`${n} ${status}`);
   }
@@ -1246,7 +1286,23 @@ function cmdProject(args) {
   if (action === "status") {
     const entry = portfolioSnapshot().projects.find((p) => p.slug === slug);
     if (!entry) throw new Error(`Unknown DIRF project ${slug}`);
+    const work = projectWorkSnapshot(slug);
+    if (args.json) { console.log(JSON.stringify(work, null, 2)); return; }
     console.log(`status: ${entry.status}${entry.explicit_status ? ` (explicit ${entry.explicit_status})` : " (derived)"}`);
+    console.log(`work: ${Object.entries(work.summary).filter(([key]) => key !== "total").map(([key, value]) => `${key}: ${value}`).join(", ")}`);
+    for (const attempt of work.attempts.filter(({ live_state }) => !["completed", "planned", "historical"].includes(live_state))) {
+      const owner = attempt.execution ? ` · ${attempt.execution.harness}:${attempt.execution.session_id}` : "";
+      const location = attempt.worktree_path ? ` · ${attempt.worktree_path}${attempt.execution?.branch ? ` [${attempt.execution.branch}]` : ""}` : "";
+      console.log(`  ${attempt.live_state.padEnd(10)} ${attempt.id}  ${attempt.name}${owner}${location}`);
+      for (const child of attempt.execution?.children || []) {
+        const blocker = child.blocker ? ` · blocker: ${child.blocker}` : "";
+        console.log(`    child ${child.status.padEnd(9)} ${child.harness}:${child.session_id} · ${child.assignment}${blocker}`);
+      }
+      if (attempt.abandonment_reason) console.log(`    abandoned: ${attempt.abandonment_reason}`);
+      if (attempt.handoff_path) console.log(`    handoff: ${attempt.handoff_path}`);
+      if (attempt.next_action) console.log(`    next: ${attempt.next_action}`);
+    }
+    if (work.continuation) console.log(`continue: ${work.continuation.handoff_path}${work.continuation.next_action ? ` · ${work.continuation.next_action}` : ""}`);
     return;
   }
   if (action === "complete") { setProjectStatus(slug, "complete"); console.log(`Marked ${slug} complete (explicit).`); return; }
@@ -1427,6 +1483,9 @@ function parse(argv) {
     if (a === "--worker") { out.worker = rest[++i]; continue; }
     if (a === "--reason") { out.reason = rest[++i]; continue; }
     if (a === "--worktree") { out.worktree = rest[++i]; continue; }
+    if (a === "--execution-status") { out.executionStatus = rest[++i]; continue; }
+    if (a === "--observed-at") { out.observedAt = rest[++i]; continue; }
+    if (a === "--transfer-reason") { out.transferReason = rest[++i]; continue; }
     if (a === "--stale-days") { out.staleDays = Number(rest[++i]); continue; }
     if (a === "--stale-project-days") { out.staleProjectDays = Number(rest[++i]); continue; }
     if (a === "--archive-reminder-days") { out.archiveReminderDays = Number(rest[++i]); continue; }
@@ -1478,10 +1537,11 @@ Usage:
   dirf resume <name-or-id> [--path DIR]                load the workflow handoff
   dirf record-progress "<message>" [--path DIR] [--attempt ID|UNIQUE_NAME] [--phase PHASE] [--next ACTION] [--files FILES] [--work-item ITEM] [--review-revision SHA]
                                                       record progress, update HANDOFF.md and sync the attempt lifecycle
-  dirf attempt <action> <id> [--path DIR]              update lifecycle state
+  dirf attempt <action> <id> [--path DIR]              update lifecycle or execution ownership
                                                       (advance: [--evidence "CMD" [--output F]] [--strict] [--auto])
                                                       (complete: --confirm [--evidence "CMD" [--output F]] [--strict])
                                                       (gate <phase> accept|deny [--comment "..."]; block [--wait input|blocker])
+                                                      (abandon: --reason "..." + DIRF_ORCHESTRATOR_TOKEN; observe: trusted harness env + DIRF_ORCHESTRATOR_TOKEN + active|idle|unknown [--file SNAPSHOT] [--transfer-reason "..."])
                                                       (sync-from-handoff: backfill done from handoff evidence; no id = all)
   dirf artifact list <attempt> [--json]                list typed artifacts and governing versions
   dirf artifact record <attempt> --file FILE [--json] record one metadata JSON object (add is an alias)
@@ -1492,7 +1552,7 @@ Usage:
   dirf validate                                        validate registries
   dirf skills scan [--path DIR]                        show installed skills
   dirf portfolio [--json]                             cross-project status view (active/stale/completed/...)
-  dirf project <complete|reopen|archive|status> [...] explicit project status override
+  dirf project <complete|reopen|archive|status> [...] explicit project status or reconciled --json view
   dirf export playbooks                                regenerate legacy playbooks JSON
   dirf export obsidian [--out DIR]                     export portfolio into an Obsidian vault (notes + canvas)
   dirf export graphify [--out DIR] [--skip-render]    export portfolio as a graphify graph (+ HTML render)
