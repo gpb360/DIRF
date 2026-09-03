@@ -250,7 +250,7 @@ export function assertReviewReady(review, gitContext) {
   if (review.verification.some(({ status }) => status !== "passed") || review.completion.required_checks !== "passed") {
     throw new Error("The required checks have not all passed.");
   }
-  if (!gitContext?.live_checks_skipped && (gitContext?.live_checks_passed === false || gitContext?.live_checks_passed === undefined)) {
+  if (!gitContext?.live_checks_skipped && gitContext?.live_checks_passed === false) {
     throw new Error("Live pull-request checks were not verified.");
   }
   if (review.completion.unresolved_threads !== 0) {
