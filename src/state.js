@@ -724,8 +724,38 @@ function graphContainsAncestor(graph, ancestor, descendant) {
 // An attempt can become stale when another attempt records newer work for the
 // same pull request. Keep the old handoff for audit history, but do not present
 // its old next step as safe current guidance.
-export function attemptContextState(slug, idOrName) {
+export function attemptContextState(slug, idOrName, options = {}) {
   const attempt = getAttempt(slug, idOrName);
+  if (options.bounded) {
+    const handoffPath = join(storeAttemptDir(slug, attempt.id), "HANDOFF.md");
+    const handoff = readAttemptHandoffFile(slug, attempt.id) || "";
+    const parsed = parseCurrentHandoff(handoff);
+    const entry = {
+      id: attempt.id,
+      handoffPath,
+      nextAction: handoffNextAction(handoff),
+      references: handoffWorkReferences(handoff),
+      updatedAt: handoffUpdatedAt(handoff, handoffPath, parsed),
+      updateNumber: parsed.updateNumber,
+      reviewRevision: parsed.reviewRevision,
+    };
+    const canonicalPath = join(storeProjectDir(slug), "HANDOFF.md");
+    const canonical = readHandoff(slug) || "";
+    const canonicalParsed = parseCurrentHandoff(canonical);
+    const entries = [entry];
+    if (canonicalParsed.attemptId && canonicalParsed.attemptId !== attempt.id) {
+      entries.push({
+        id: canonicalParsed.attemptId,
+        handoffPath: join(storeAttemptDir(slug, canonicalParsed.attemptId), "HANDOFF.md"),
+        nextAction: handoffNextAction(canonical),
+        references: handoffWorkReferences(canonical),
+        updatedAt: handoffUpdatedAt(canonical, canonicalPath, canonicalParsed),
+        updateNumber: canonicalParsed.updateNumber,
+        reviewRevision: canonicalParsed.reviewRevision,
+      });
+    }
+    return contextForAttempt(entry, entries, getProject(slug)?.main_path || process.cwd());
+  }
   const { entries, repositoryPath } = attemptContextEntries(slug);
   const entry = entries.find((candidate) => candidate.id === attempt.id);
   return contextForAttempt(entry, entries, repositoryPath);
@@ -1436,8 +1466,10 @@ function nextProgressUpdateNumber(slug) {
 }
 
 function canonicalAcceptsProgress(slug, canonicalBase, { workItem, reviewRevision }) {
-  if (!workItem || !/^[0-9a-f]{40}$/i.test(reviewRevision || "")) return true;
   const current = parseCurrentHandoff(canonicalBase);
+  const currentHasIdentity = Boolean(current.workItem?.trim());
+  if (currentHasIdentity && (!workItem || !/^[0-9a-f]{40}$/i.test(reviewRevision || ""))) return false;
+  if (!workItem || !/^[0-9a-f]{40}$/i.test(reviewRevision || "")) return true;
   if (current.workItem?.trim().toLowerCase() !== workItem.trim().toLowerCase()) return true;
   if (!/^[0-9a-f]{40}$/i.test(current.reviewRevision || "")) return true;
   const project = getProject(slug);
@@ -1467,6 +1499,7 @@ export function recordProgress(slug, { message, timestamp, phase, next, files, a
       files: files || [],
       workItem: workItem || recordedAttemptContext.workItem || null,
       reviewRevision: reviewRevision || recordedAttemptContext.reviewRevision || null,
+      attemptId: attempt?.id || null,
     };
     const updatedHandoff = canonicalAcceptsProgress(slug, canonicalBase, update)
       ? updateProgressSection(canonicalBase, update)

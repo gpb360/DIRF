@@ -202,6 +202,9 @@ Reference existing specs/tickets/decisions rather than restating them.
 | `dirf artifact record <id> --file F` | validate and record one typed artifact metadata object (`add` is an alias) |
 | `dirf artifact list <id> [--json]` | list artifacts and governing accepted versions |
 | `dirf artifact accept <id> <artifact-id>` | explicitly accept a recorded artifact |
+| `dirf review validate <review.json>` | validate a review artifact |
+| `dirf review render <review.json>` | render a review artifact as Markdown |
+| `dirf review ready <review.json>` | fail closed unless the exact PR is merge-ready |
 | `dirf list` | list attempts (alias for state list-attempts scoped here) |
 | `dirf state list` | all registered projects (works from anywhere) |
 | `dirf portfolio` | cross-project status view: every project + attempt classified active/stale/completed/archived/empty |

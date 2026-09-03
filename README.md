@@ -326,6 +326,11 @@ dirf artifact list <attempt> [--json]                list artifacts and governin
 dirf artifact record <attempt> --file FILE [--json] record portable metadata (add is an alias)
 dirf artifact accept <attempt> <artifact-id> [--json] explicitly accept a recorded artifact
 
+# review artifacts
+dirf review validate <review.json>                      validate a review artifact
+dirf review render <review.json>                        render a review artifact as Markdown
+dirf review ready <review.json>                         fail closed unless the exact PR is merge-ready
+
 # portfolio (cross-project view — see "Portfolio" below)
 dirf portfolio [--json]                              classify every project: active/stale/completed/archived/empty
 dirf project <complete|reopen|archive|status> [...]  explicit project status override

@@ -250,8 +250,14 @@ export function assertReviewReady(review, gitContext) {
   if (review.verification.some(({ status }) => status !== "passed") || review.completion.required_checks !== "passed") {
     throw new Error("The required checks have not all passed.");
   }
+  if (!gitContext?.live_checks_skipped && (gitContext?.live_checks_passed === false || gitContext?.live_checks_passed === undefined)) {
+    throw new Error("Live pull-request checks were not verified.");
+  }
   if (review.completion.unresolved_threads !== 0) {
     throw new Error(`${review.completion.unresolved_threads} review conversation${review.completion.unresolved_threads === 1 ? " is" : "s are"} still unresolved.`);
+  }
+  if (gitContext?.live_unresolved_threads !== undefined && gitContext.live_unresolved_threads !== 0) {
+    throw new Error(`${gitContext.live_unresolved_threads} live review conversation${gitContext.live_unresolved_threads === 1 ? " is" : "s are"} still unresolved.`);
   }
   if (deriveVerdict(review) !== "PASS") throw new Error("The review is not clear enough to ask for merge approval.");
   return { ready: true, head_sha: review.target.head_sha, pr_number: review.target.pr_number };
@@ -378,6 +384,36 @@ function gitSucceeds(args) {
   }
 }
 
+function ghJson(args, failureMessage) {
+  try {
+    const raw = execFileSync("gh", ["api", ...args], { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+    const parsed = JSON.parse(raw);
+    if (parsed?.errors?.length) throw new Error(parsed.errors.map((error) => error.message).join("; "));
+    return parsed;
+  } catch {
+    throw new Error(failureMessage);
+  }
+}
+
+function liveGithubState(review, remoteHead) {
+  if (/^file:/i.test(String(review.target.repository || "").trim())) return { live_checks_skipped: true };
+  const repository = normalizeRepository(review.target.repository);
+  if (!/^[^/]+\/[^/]+$/.test(repository)) return null;
+  const checks = ghJson([`repos/${repository}/commits/${remoteHead}/check-runs?per_page=100`], "DIRF could not read live pull-request checks from GitHub.");
+  const runs = Array.isArray(checks.check_runs) ? checks.check_runs : [];
+  if (!runs.length || runs.some((run) => run.status !== "completed" || run.conclusion !== "success")) {
+    throw new Error("DIRF could not verify that all live pull-request checks passed.");
+  }
+  const [owner, name] = repository.split("/");
+  const query = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved}}}}}";
+  const graph = ghJson(["graphql", "-f", `query=${query}`, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${review.target.pr_number}`], "DIRF could not read live pull-request conversations from GitHub.");
+  const threads = graph?.data?.repository?.pullRequest?.reviewThreads?.nodes;
+  if (!Array.isArray(threads) || threads.some((thread) => thread.isResolved !== true)) {
+    throw new Error("DIRF could not verify that all live pull-request conversations are resolved.");
+  }
+  return { live_checks_passed: true, live_unresolved_threads: 0 };
+}
+
 function currentGitContext(review) {
   let remotePrHead = "";
   let remoteMergeHead = "";
@@ -412,6 +448,7 @@ function currentGitContext(review) {
     base_exists: gitSucceeds(["cat-file", "-e", `${base}^{commit}`]),
     base_is_ancestor: gitSucceeds(["merge-base", "--is-ancestor", base, currentHead]),
     base_matches_merge_base: currentMergeBase.toLowerCase() === base.toLowerCase(),
+    ...liveGithubState(review, remotePrHead),
   };
 }
 

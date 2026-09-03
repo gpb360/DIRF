@@ -985,7 +985,7 @@ function cmdStateActive(args) {
     responsibility_path: attempt.responsibility_path,
   }));
   const activeContext = responsibility.attempt
-    ? attemptContextState(project.slug, responsibility.attempt.id)
+    ? attemptContextState(project.slug, responsibility.attempt.id, { bounded: true })
     : null;
   const active = responsibility.attempt ? {
     ...attempts[0],

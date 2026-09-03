@@ -49,7 +49,7 @@ function meaningfulLines(section) {
     .filter((line) => line && !/^(?:-\s+)?_\([^)]+\)_$/.test(line));
 }
 
-export function updateProgressSection(handoffMarkdown, { message, timestamp, updateNumber, phase, next, files, workItem, reviewRevision }) {
+export function updateProgressSection(handoffMarkdown, { message, timestamp, updateNumber, phase, next, files, workItem, reviewRevision, attemptId }) {
   const parsed = splitSections(handoffMarkdown);
 
   if (timestamp) {
@@ -68,6 +68,7 @@ export function updateProgressSection(handoffMarkdown, { message, timestamp, upd
 
   if (workItem) ensureSection(parsed.sections, "Work item").content = sectionContent([workItem]);
   if (reviewRevision) ensureSection(parsed.sections, "Review revision").content = sectionContent([reviewRevision]);
+  if (attemptId) ensureSection(parsed.sections, "Attempt ID").content = sectionContent([attemptId]);
 
   const lastAction = findSection(parsed.sections, ["Last action"]);
   if (lastAction) {
@@ -128,6 +129,7 @@ export function parseCurrentHandoff(handoffMarkdown) {
     lastUpdated: firstValue(lastUpdated),
     workItem: firstValue(workItem),
     reviewRevision: firstValue(reviewRevision),
+    attemptId: firstValue(findSection(sections, ["Attempt ID"])),
     updateNumber: Number.parseInt(firstValue(updateNumber) || "", 10) || null,
   };
 }
