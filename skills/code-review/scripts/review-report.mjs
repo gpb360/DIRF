@@ -246,6 +246,15 @@ export function assertReviewReady(review, gitContext) {
   if (!gitContext?.base_exists || !gitContext?.base_is_ancestor || !gitContext?.base_matches_merge_base) {
     throw new Error("The review base is missing or does not match the current pull-request base.");
   }
+  if (!new Set(["open", "merged"]).has(gitContext?.pr_state)) {
+    throw new Error("DIRF could not verify whether the pull request is open or merged.");
+  }
+  if (gitContext.pr_state === "merged" && (
+    !SHA_PATTERN.test(gitContext.merge_commit || "")
+    || !gitContext.merge_commit_is_ancestor
+  )) {
+    throw new Error("DIRF could not verify the merged pull-request commit on its live base branch.");
+  }
   if (!review.completion?.review_complete) throw new Error("The latest review is not complete yet.");
   if (review.verification.some(({ status }) => status !== "passed") || review.completion.required_checks !== "passed") {
     throw new Error("The required checks have not all passed.");
@@ -414,45 +423,132 @@ function liveGithubState(review, remoteHead) {
   return { live_checks_passed: true, live_unresolved_threads: 0 };
 }
 
-function currentGitContext(review) {
+function gitRun(args) {
+  execFileSync("git", args, { windowsHide: true, stdio: "ignore" });
+}
+
+function remoteSha(output) {
+  const value = String(output || "").trim().split(/\s+/)[0] || "";
+  return SHA_PATTERN.test(value) ? value : "";
+}
+
+function githubPullRequest(review) {
+  const repository = normalizeRepository(review.target.repository);
+  try {
+    const output = execFileSync("gh", [
+      "pr",
+      "view",
+      String(review.target.pr_number),
+      "--repo",
+      repository,
+      "--json",
+      "state,mergedAt,mergeCommit,headRefOid,baseRefOid,baseRefName",
+    ], { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+    return JSON.parse(output);
+  } catch {
+    throw new Error("DIRF could not read the merged pull-request state from GitHub. Install and authenticate the GitHub CLI, then retry.");
+  }
+}
+
+function ensureCommit(sha, succeeds, run, message) {
+  if (succeeds(["cat-file", "-e", `${sha}^{commit}`])) return;
+  try {
+    run(["fetch", "--quiet", "--no-tags", "origin", sha]);
+  } catch {
+    throw new Error(message);
+  }
+  if (!succeeds(["cat-file", "-e", `${sha}^{commit}`])) throw new Error(message);
+}
+
+function currentGitContext(review, io = {}) {
+  const output = io.gitOutput || gitOutput;
+  const succeeds = io.gitSucceeds || gitSucceeds;
+  const runGit = io.gitRun || gitRun;
+  const pullRequest = io.pullRequest || githubPullRequest;
+  const liveState = io.liveGithubState || liveGithubState;
   let remotePrHead = "";
   let remoteMergeHead = "";
   const prHeadRef = `refs/pull/${review.target.pr_number}/head`;
   const prMergeRef = `refs/pull/${review.target.pr_number}/merge`;
   try {
-    remotePrHead = gitOutput(["ls-remote", "--exit-code", "origin", prHeadRef]).split(/\s+/)[0] || "";
-    remoteMergeHead = gitOutput(["ls-remote", "--exit-code", "origin", prMergeRef]).split(/\s+/)[0] || "";
+    remotePrHead = remoteSha(output(["ls-remote", "--exit-code", "origin", prHeadRef]));
+    remoteMergeHead = remoteSha(output(["ls-remote", "origin", prMergeRef]));
   } catch {
     throw new Error("DIRF could not read the live pull-request commit and merge base from origin.");
   }
-  const currentHead = gitOutput(["rev-parse", "HEAD"]);
+  if (!remotePrHead) throw new Error("DIRF could not read the live pull-request commit from origin.");
+  const currentHead = output(["rev-parse", "HEAD"]);
   const base = review.target.base_sha;
-  if (!gitSucceeds(["cat-file", "-e", `${remoteMergeHead}^{commit}`])) {
-    try {
-      execFileSync("git", ["fetch", "--quiet", "--no-tags", "origin", remoteMergeHead], { windowsHide: true, stdio: "ignore" });
-    } catch {
-      throw new Error("DIRF could not load the live pull-request merge commit from origin.");
+  let prState = "open";
+  let remoteBaseHead = "";
+  let mergeCommitIsAncestor = false;
+
+  if (remoteMergeHead) {
+    ensureCommit(remoteMergeHead, succeeds, runGit, "DIRF could not load the live pull-request merge commit from origin.");
+    const mergeParents = output(["rev-list", "--parents", "-n", "1", remoteMergeHead]).split(/\s+/);
+    if (mergeParents.length !== 3 || mergeParents[2].toLowerCase() !== remotePrHead.toLowerCase()) {
+      throw new Error("DIRF could not verify the pull-request head against its live merge commit.");
     }
+    remoteBaseHead = mergeParents[1];
+  } else {
+    const pr = pullRequest(review);
+    const mergeCommit = pr?.mergeCommit?.oid || "";
+    const baseRefName = String(pr?.baseRefName || "");
+    if (pr?.state !== "MERGED" || !pr?.mergedAt) {
+      throw new Error("The pull request has no live merge ref and GitHub does not report it as merged.");
+    }
+    if (
+      !SHA_PATTERN.test(pr.headRefOid || "")
+      || !SHA_PATTERN.test(pr.baseRefOid || "")
+      || !SHA_PATTERN.test(mergeCommit)
+      || pr.headRefOid.toLowerCase() !== remotePrHead.toLowerCase()
+      || !succeeds(["check-ref-format", `refs/heads/${baseRefName}`])
+    ) {
+      throw new Error("DIRF could not validate GitHub's merged pull-request metadata.");
+    }
+    const baseRef = `refs/heads/${baseRefName}`;
+    let liveBaseHead = "";
+    try {
+      liveBaseHead = remoteSha(output(["ls-remote", "--exit-code", "origin", baseRef]));
+    } catch {
+      throw new Error("DIRF could not read the merged pull request's live base branch from origin.");
+    }
+    if (!liveBaseHead) throw new Error("DIRF could not read the merged pull request's live base branch from origin.");
+    ensureCommit(mergeCommit, succeeds, runGit, "DIRF could not load GitHub's merged pull-request commit from origin.");
+    ensureCommit(liveBaseHead, succeeds, runGit, "DIRF could not load the merged pull request's live base branch from origin.");
+    const mergeParents = output(["rev-list", "--parents", "-n", "1", mergeCommit]).split(/\s+/);
+    if (
+      mergeParents.length !== 3
+      || mergeParents[1].toLowerCase() !== pr.baseRefOid.toLowerCase()
+      || mergeParents[2].toLowerCase() !== remotePrHead.toLowerCase()
+    ) {
+      throw new Error("DIRF could not verify GitHub's merged pull-request commit against its reported base and head.");
+    }
+    if (!succeeds(["merge-base", "--is-ancestor", mergeCommit, liveBaseHead])) {
+      throw new Error("GitHub's merged pull-request commit is not present on the live base branch.");
+    }
+    remoteMergeHead = mergeCommit;
+    remoteBaseHead = mergeParents[1];
+    mergeCommitIsAncestor = true;
+    prState = "merged";
   }
-  const mergeParents = gitOutput(["rev-list", "--parents", "-n", "1", remoteMergeHead]).split(/\s+/);
-  if (mergeParents.length !== 3 || mergeParents[2].toLowerCase() !== remotePrHead.toLowerCase()) {
-    throw new Error("DIRF could not verify the pull-request head against its live merge commit.");
-  }
-  const remoteBaseHead = mergeParents[1];
   let currentMergeBase = "";
-  try { currentMergeBase = gitOutput(["merge-base", remoteBaseHead, currentHead]); } catch { /* reported below */ }
+  try { currentMergeBase = output(["merge-base", remoteBaseHead, currentHead]); } catch { /* reported below */ }
   return {
     current_head: currentHead,
     remote_pr_head: remotePrHead,
-    repository: gitOutput(["remote", "get-url", "origin"]),
-    base_exists: gitSucceeds(["cat-file", "-e", `${base}^{commit}`]),
-    base_is_ancestor: gitSucceeds(["merge-base", "--is-ancestor", base, currentHead]),
+    repository: output(["remote", "get-url", "origin"]),
+    base_exists: succeeds(["cat-file", "-e", `${base}^{commit}`]),
+    base_is_ancestor: succeeds(["merge-base", "--is-ancestor", base, currentHead]),
     base_matches_merge_base: currentMergeBase.toLowerCase() === base.toLowerCase(),
-    ...liveGithubState(review, remotePrHead),
+    pr_state: prState,
+    merge_commit: remoteMergeHead,
+    merge_commit_is_ancestor: prState === "open" || mergeCommitIsAncestor,
+    ...(prState === "open" ? liveState(review, remotePrHead) : {}),
   };
 }
 
-export function run(argv) {
+export function run(argv, io = {}) {
   const [command, file] = argv;
   if (!file || !new Set(["validate", "render", "ready"]).has(command)) throw new Error(usage());
   const review = loadReview(file);
@@ -464,8 +560,11 @@ export function run(argv) {
     validateReview(review);
     if (review.schema_version !== 2) throw new Error("Merge readiness requires a schema version 2 review. Historical version 1 reports remain readable.");
     if (review.target.mode !== "full") throw new Error("Merge readiness requires a full review of the current pull request.");
-    const context = currentGitContext(review);
+    const context = currentGitContext(review, io);
     assertReviewReady(review, context);
+    if (context.pr_state === "merged") {
+      return `Verified: the review matches merged PR #${review.target.pr_number} at ${context.current_head.slice(0, 12)} with merge commit ${context.merge_commit.slice(0, 12)}.`;
+    }
     return `Ready: no review issues remain, all required checks passed, and the review matches live PR #${review.target.pr_number} at ${context.current_head.slice(0, 12)}.`;
   }
   return renderReview(review);

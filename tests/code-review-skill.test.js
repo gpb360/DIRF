@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ROOT } from "../src/paths.js";
 import { loadUnit, resolveGraph } from "../src/folders.js";
@@ -10,11 +12,14 @@ import {
   deriveVerdict,
   priorityCounts,
   renderReview,
+  run,
   validateReview,
 } from "../skills/code-review/scripts/review-report.mjs";
 
 const SHA_A = "a".repeat(40);
 const SHA_B = "b".repeat(40);
+const SHA_C = "c".repeat(40);
+const SHA_D = "d".repeat(40);
 
 function artifact(overrides = {}) {
   return {
@@ -50,6 +55,9 @@ function gitContext(overrides = {}) {
     base_matches_merge_base: true,
     previous_head_exists: true,
     previous_head_is_ancestor: true,
+    pr_state: "open",
+    merge_commit: SHA_A,
+    merge_commit_is_ancestor: true,
     ...overrides,
   };
 }
@@ -101,6 +109,80 @@ test("clean, well-evidenced review passes", () => {
   assert.equal(validateReview(review), review);
   assert.equal(deriveVerdict(review), "PASS");
   assert.equal(assertReviewReady(review, gitContext()).ready, true);
+});
+
+test("readiness verifies an already-merged PR against GitHub and the live base branch", () => {
+  const reviewPath = join(mkdtempSync(join(tmpdir(), "dirf-merged-review-")), "review.json");
+  writeFileSync(reviewPath, JSON.stringify(artifact()));
+  const outputByCommand = new Map([
+    ["ls-remote --exit-code origin refs/pull/42/head", `${SHA_B}\trefs/pull/42/head`],
+    ["ls-remote origin refs/pull/42/merge", ""],
+    ["rev-parse HEAD", SHA_B],
+    ["ls-remote --exit-code origin refs/heads/main", `${SHA_D}\trefs/heads/main`],
+    [`rev-list --parents -n 1 ${SHA_C}`, `${SHA_C} ${SHA_A} ${SHA_B}`],
+    [`merge-base ${SHA_A} ${SHA_B}`, SHA_A],
+    ["remote get-url origin", "https://example.test/owner/repo.git"],
+  ]);
+  const succeeds = new Set([
+    `cat-file -e ${SHA_C}^{commit}`,
+    `cat-file -e ${SHA_D}^{commit}`,
+    `cat-file -e ${SHA_A}^{commit}`,
+    `merge-base --is-ancestor ${SHA_A} ${SHA_B}`,
+    `merge-base --is-ancestor ${SHA_C} ${SHA_D}`,
+    "check-ref-format refs/heads/main",
+  ]);
+  const mergedPr = {
+    state: "MERGED",
+    mergedAt: "2026-09-02T20:15:23Z",
+    headRefOid: SHA_B,
+    baseRefOid: SHA_A,
+    baseRefName: "main",
+    mergeCommit: { oid: SHA_C },
+  };
+  const io = {
+    gitOutput: (args) => {
+      const command = args.join(" ");
+      if (!outputByCommand.has(command)) throw new Error(`Unexpected git command: ${command}`);
+      return outputByCommand.get(command);
+    },
+    gitSucceeds: (args) => succeeds.has(args.join(" ")),
+    gitRun: () => {
+      throw new Error("all required commits should already exist in this fixture");
+    },
+    pullRequest: () => mergedPr,
+  };
+  assert.match(
+    run(["ready", reviewPath], io),
+    new RegExp(`Verified: the review matches merged PR #42 at ${SHA_B.slice(0, 12)} with merge commit ${SHA_C.slice(0, 12)}`),
+  );
+
+  assert.throws(
+    () => run(["ready", reviewPath], {
+      ...io,
+      pullRequest: () => ({ ...mergedPr, state: "CLOSED", mergedAt: null }),
+    }),
+    /does not report it as merged/i,
+  );
+
+  const wrongParents = new Map(outputByCommand);
+  wrongParents.set(`rev-list --parents -n 1 ${SHA_C}`, `${SHA_C} ${SHA_A} ${SHA_D}`);
+  assert.throws(
+    () => run(["ready", reviewPath], {
+      ...io,
+      gitOutput: (args) => wrongParents.get(args.join(" ")) ?? io.gitOutput(args),
+    }),
+    /against its reported base and head/i,
+  );
+
+  const unreachable = new Set(succeeds);
+  unreachable.delete(`merge-base --is-ancestor ${SHA_C} ${SHA_D}`);
+  assert.throws(
+    () => run(["ready", reviewPath], {
+      ...io,
+      gitSucceeds: (args) => unreachable.has(args.join(" ")),
+    }),
+    /not present on the live base branch/i,
+  );
 });
 
 test("readiness fails when issues remain or the checkout differs from the reviewed commit", () => {
