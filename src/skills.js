@@ -13,7 +13,7 @@
 //   - read SKILL.md first, fall back to skill.json then README.md frontmatter
 //     (catches skills like ui-ux-pro-max that ship no SKILL.md)
 //   - scan ~/.zcode/.../skills roots too (catches skills like superpowers)
-import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, statSync, lstatSync, realpathSync, existsSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import { loadJson, SKILLS, ROOT } from "./paths.js";
@@ -209,12 +209,20 @@ function skillResourceReadiness(folder, metadata) {
   const requiredFiles = requiredFilesMetadata(metadata)
     .map((file) => file.replace(/\\/g, "/"));
   if (!requiredFiles.length) return {};
+  let realFolder;
+  try { realFolder = realpathSync(folder); } catch { return { readiness: SKILL_STATUS.incomplete, required_files: requiredFiles, missing_files: requiredFiles }; }
   const missingFiles = requiredFiles.filter((file) => {
     if (isAbsolute(file)) return true;
     const candidate = resolve(folder, file);
     const fromFolder = relative(folder, candidate).replace(/\\/g, "/");
     if (fromFolder === ".." || fromFolder.startsWith("../") || isAbsolute(fromFolder)) return true;
-    try { return !statSync(candidate).isFile(); } catch { return true; }
+    try {
+      if (lstatSync(candidate).isSymbolicLink()) return true;
+      const realCandidate = realpathSync(candidate);
+      const realRelative = relative(realFolder, realCandidate).replace(/\\/g, "/");
+      if (realRelative === ".." || realRelative.startsWith("../") || isAbsolute(realRelative)) return true;
+      return !statSync(realCandidate).isFile();
+    } catch { return true; }
   });
   return {
     readiness: missingFiles.length ? SKILL_STATUS.incomplete : "ready",
@@ -510,6 +518,7 @@ export function bundledSkills() {
     try {
       const unit = loadUnit(join(BUNDLED_DIR, entry.name));
       if (unit.meta.kind !== "skill") continue;
+      const readiness = skillResourceReadiness(unit.folder, unit.meta);
       index[unit.meta.name] = {
         name: unit.meta.name,
         path: unit.folder,
@@ -518,6 +527,7 @@ export function bundledSkills() {
         provider: "dirf",
         invocation: skillInvocation(unit.folder, unit.meta),
         body_lines: unit.body.split(/\r?\n/).length,
+        ...readiness,
       };
     } catch { /* a malformed bundled unit is validate's problem, not discovery's */ }
   }
