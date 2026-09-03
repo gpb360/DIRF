@@ -1,7 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { fileHash } from "./paths.js";
-import { bundledSkills, discover, enrichDiscovered } from "./skills.js";
+import { SKILL_STATUS, bundledSkills, discover, enrichDiscovered, inspectSkillReadiness, skillIsIncomplete } from "./skills.js";
 
 const ENTRY_FILES = ["SKILL.md", "skill.json", "README.md"];
 
@@ -21,18 +21,20 @@ function entryFile(path) {
 
 function binding(step, path, projectRoot) {
   const entry = entryFile(path);
+  const readiness = entry ? inspectSkillReadiness(entry) : {};
   const relativeEntry = entry && projectRoot
     ? relative(projectRoot, entry)
     : null;
   return {
     skill: step.skill,
     provider: step.provider || "project",
-    status: entry ? "installed" : "missing",
+    status: !entry ? SKILL_STATUS.missing : skillIsIncomplete(readiness) ? SKILL_STATUS.incomplete : SKILL_STATUS.installed,
     entry: entry ? entry.replaceAll("\\", "/") : null,
     relative_entry: relativeEntry && !relativeEntry.startsWith("..") && !isAbsolute(relativeEntry)
       ? relativeEntry.replaceAll("\\", "/")
       : null,
     fingerprint: entry ? fileHash(entry) : null,
+    ...readiness,
   };
 }
 

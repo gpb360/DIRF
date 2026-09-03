@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { AGENTS_DIR, REGISTRY, ROOT, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, loadJson } from "./paths.js";
 import { reconcile, validateAgentContracts, validateWorkflowGates } from "./flow.js";
 import { loadPlaybookFolders, resolveGraph } from "./folders.js";
-import { bundledSkills, lintSkillMetadata } from "./skills.js";
+import { SKILL_STATUS, SNAPSHOT_SKILL_STATUSES, bundledSkills, lintSkillMetadata, missingSkillFiles, skillIsIncomplete } from "./skills.js";
 import { ISSUE_POLICY_SCHEMA_VERSION } from "./issue-governance.js";
 import { validatePublicationBoundary } from "./publication-boundary.js";
 import { requiredModelCapabilities } from "./model-advice.js";
@@ -201,11 +201,13 @@ export function validateSnapshot(data, label = "workflow") {
       errors.push(`${label}: ${where} must be a resolved skill object`);
       return;
     }
-    if (!new Set(["installed", "recommended", "fallback"]).has(skill.status)) {
-      errors.push(`${label}: ${where} status must be installed, recommended, or fallback`);
-    } else if (data.schema_version < 4 && skill.status === "installed" && typeof skill.path !== "string") {
+    if (!new Set(SNAPSHOT_SKILL_STATUSES).has(skill.status)) {
+      errors.push(`${label}: ${where} status must be installed, incomplete, recommended, or fallback`);
+    } else if (skillIsIncomplete(skill) && !missingSkillFiles(skill).length) {
+      errors.push(`${label}: ${where} incomplete skill must list missing_files`);
+    } else if (data.schema_version < 4 && skill.status === SKILL_STATUS.installed && typeof skill.path !== "string") {
       errors.push(`${label}: ${where} installed skill must include path`);
-    } else if (data.schema_version >= 4 && skill.status === "installed" && typeof skill.provider !== "string") {
+    } else if (data.schema_version >= 4 && skill.status === SKILL_STATUS.installed && typeof skill.provider !== "string") {
       errors.push(`${label}: ${where} installed skill must include provider`);
     } else if (data.schema_version >= 4 && "path" in skill) {
       errors.push(`${label}: ${where} must not persist a runtime path`);

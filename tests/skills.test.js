@@ -29,6 +29,24 @@ test("discover finds local SKILL.md skills", () => {
   assert.equal(idx["demo-skill"].description, "a demo");
 });
 
+test("discover distinguishes runnable skills from incomplete packages", () => {
+  const root = makeRoot();
+  const ready = join(root, "skills", "ready-skill");
+  const broken = join(root, "skills", "broken-skill");
+  write(ready, "SKILL.md",
+    "---\nname: ready-skill\ndescription: ready\nmetadata: {\"required_files\":[\"scripts/run.cjs\"]}\n---\nbody");
+  write(join(ready, "scripts"), "run.cjs", "console.log('ready');\n");
+  write(broken, "SKILL.md",
+    "---\nname: broken-skill\ndescription: broken\nmetadata: {\"required_files\":[\"scripts/run.cjs\"]}\n---\nbody");
+
+  const idx = skills.discover(root);
+  assert.equal(idx["ready-skill"].readiness, "ready");
+  assert.deepEqual(idx["ready-skill"].required_files, ["scripts/run.cjs"]);
+  assert.equal(idx["ready-skill"].missing_files, undefined);
+  assert.equal(idx["broken-skill"].readiness, "incomplete");
+  assert.deepEqual(idx["broken-skill"].missing_files, ["scripts/run.cjs"]);
+});
+
 test("discover reads skill.json when no SKILL.md (ui-ux-pro-max case)", () => {
   const root = makeRoot();
   write(join(root, "skills", "ui-ux-pro-max"), "skill.json",
@@ -60,6 +78,24 @@ test("resolve marks installed vs recommended without persisting runtime paths", 
   assert.equal(byName.ponytail.provider, "agents");
   assert.equal(byName.impeccable.status, "recommended");
   assert.equal(byName.impeccable.path, undefined);
+});
+
+test("resolve reports an incomplete installed package without hiding its missing resources", () => {
+  const discovered = {
+    "broken-skill": {
+      name: "broken-skill",
+      path: "/skills/broken-skill",
+      file: "SKILL.md",
+      description: "broken",
+      provider: "agents",
+      readiness: "incomplete",
+      missing_files: ["scripts/run.cjs"],
+    },
+  };
+  const [resolved] = skills.resolveAgentSkills("worker", ["broken-skill"], [], discovered);
+  assert.equal(resolved.status, "incomplete");
+  assert.deepEqual(resolved.missing_files, ["scripts/run.cjs"]);
+  assert.equal(resolved.path, undefined);
 });
 
 test("resolve dedupes baseline and agent-specific", () => {
@@ -210,6 +246,7 @@ test("lintSkillMetadata surfaces spec-level quality warnings, never false on cle
   assert.ok(skills.lintSkillMetadata({ name: "x", path: "/s/x", description: `d${"x".repeat(1025)}` }).some((w) => /spec cap 1024/.test(w)));
   assert.ok(skills.lintSkillMetadata({ name: "x", path: "/s/x", description: "d", body_lines: 501 }).some((w) => /keep under 500/.test(w)));
   assert.ok(skills.lintSkillMetadata({ name: "x", path: "/s/x", description: "d <xml>tag</xml>" }).some((w) => /XML tags/.test(w)));
+  assert.ok(skills.lintSkillMetadata({ name: "x", path: "/s/x", description: "d", readiness: "incomplete", missing_files: ["scripts/run.cjs"] }).some((w) => /missing required files: scripts\/run\.cjs/.test(w)));
 });
 
 test("tokenBudget reports metadata vs eager-load economics", () => {

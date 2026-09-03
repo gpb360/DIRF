@@ -72,6 +72,10 @@ the store at `~/.dirf/projects/<slug>/attempts/<id>/`. It prints the attempt id.
 Open that attempt's `README.md` — it's the operating workflow (ordered phases,
 agent roles, done-when checks, policy). Execute it one phase at a time.
 
+An entrypoint alone does not prove that a skill is runnable. See
+[Declare required skill resources](writing-great-playbooks.md#declare-required-skill-resources)
+for the readiness and routing contract.
+
 To see the routed skill flow without building:
 
 ```bash

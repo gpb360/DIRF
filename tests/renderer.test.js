@@ -204,6 +204,18 @@ test("skill steps point to installed files without copying them", () => {
   assert.match(missingLine, /⚠️/);
   assert.doesNotMatch(missingLine, /✅/);
   assert.match(buildHtml(workflow, missingBinding), /chip recommended'>tdd/);
+
+  const incompleteDir = mkdtempSync(join(tmpdir(), "dirf-instr-incomplete-"));
+  const incompleteBinding = [{
+    skill: "tdd", provider: "codex", status: "incomplete", entry: installed.replaceAll("\\", "/"),
+    required_files: ["scripts/run.cjs"], missing_files: ["scripts/run.cjs"],
+  }];
+  buildInstructions(workflow, incompleteDir, incompleteBinding);
+  const incompleteWrapper = readFileSync(join(incompleteDir, "skills", "01-tdd", "README.md"), "utf8");
+  assert.match(incompleteWrapper, /skill package is incomplete/);
+  assert.match(incompleteWrapper, /scripts\/run\.cjs/);
+  assert.match(buildHtml(workflow, incompleteBinding), /chip incomplete'>tdd/);
+  assert.match(buildHtml(workflow, incompleteBinding), /missing: scripts\/run\.cjs/);
 });
 
 test("focused output can be disabled without changing task instructions", () => {
