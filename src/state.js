@@ -472,8 +472,12 @@ function gateRequirement(gates, records, evidence, attempt, phase, strict = fals
     if (records[phase]?.status !== "accepted") {
       return { kind, reason: `Phase "${phase}" is a decision gate — record the decision first (dirf attempt gate ... accept|deny --comment "...")` };
     }
-    if (gate.artifact_type && !governingAttemptArtifact(attempt, gate.artifact_type)) {
+    const governing = gate.artifact_type ? governingAttemptArtifact(attempt, gate.artifact_type) : null;
+    if (gate.artifact_type && !governing) {
       return { kind, reason: `Phase "${phase}" requires an accepted governing artifact of type "${gate.artifact_type}"` };
+    }
+    if (gate.artifact_type === "implementation_evidence" && !governing.accepted_sha256) {
+      return { kind, reason: `Phase "${phase}" requires a SHA-bound accepted implementation_evidence artifact` };
     }
     const declared = String(gate.verify || "").trim();
     if (declared && !evidence[phase]) {
@@ -489,8 +493,12 @@ function gateRequirement(gates, records, evidence, attempt, phase, strict = fals
     if (declared && evidence[phase].command !== declared) {
       return { kind, reason: `Phase "${phase}" evidence command must match its declared verify command: ${JSON.stringify(declared)}` };
     }
-    if (gate.artifact_type && !governingAttemptArtifact(attempt, gate.artifact_type)) {
+    const governing = gate.artifact_type ? governingAttemptArtifact(attempt, gate.artifact_type) : null;
+    if (gate.artifact_type && !governing) {
       return { kind, reason: `Phase "${phase}" requires an accepted governing artifact of type "${gate.artifact_type}"` };
+    }
+    if (gate.artifact_type === "implementation_evidence" && !governing.accepted_sha256) {
+      return { kind, reason: `Phase "${phase}" requires a SHA-bound accepted implementation_evidence artifact` };
     }
     return null;
   }
