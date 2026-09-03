@@ -62,6 +62,7 @@ function projectNote(project) {
   const a = project.attempts;
   const activity = project.days_since_activity === null ? "n/a" : `${project.days_since_activity}d ago`;
   const latest = project.latest;
+  const registry = project.work_registry;
   const lines = [
     "---",
     `slug: ${project.slug}`,
@@ -100,6 +101,20 @@ function projectNote(project) {
     `| done (handoff evidence) | ${a.evidence_done || 0} |`,
     `| historical | ${a.historical} |`,
     "",
+    ...(registry ? [
+      "## Live work registry",
+      "",
+      `Live: ${registry.summary.active || 0} · blocked: ${registry.summary.blocked || 0} · resumable: ${registry.summary.resumable || 0} · stale: ${registry.summary.stale || 0} · abandoned: ${registry.summary.abandoned || 0}`,
+      "",
+      ...registry.attempts
+        .filter((attempt) => !["completed", "historical"].includes(attempt.live_state))
+        .map((attempt) => {
+          const owner = attempt.execution ? ` · ${attempt.execution.harness}:${attempt.execution.session_id}` : "";
+          const location = attempt.worktree_path ? ` · ${attempt.worktree_path}` : "";
+          return `- [[attempts/${attempt.id}|${attempt.name}]] — ${attempt.live_state}${owner}${location}${attempt.next_action ? ` · next: ${attempt.next_action}` : ""}`;
+        }),
+      "",
+    ] : []),
     "## Latest attempt",
     "",
   ];
@@ -200,12 +215,15 @@ function canvasJson(snapshot) {
 function projectCanvasText(project) {
   const a = project.attempts;
   const activity = project.days_since_activity === null ? "n/a" : `${project.days_since_activity}d ago`;
+  const registry = project.work_registry;
+  const live = registry?.attempts?.filter((attempt) => ["active", "blocked", "resumable", "stale"].includes(attempt.live_state)) || [];
   return [
     `**${project.name}**  (${project.status})`,
     `attempts: ${a.tracked} tracked / ${a.total} total`,
     a.in_progress ? `🚧 in progress: ${a.in_progress}` : null,
     a.blocked ? `⛔ blocked: ${a.blocked}` : null,
     a.done ? `✅ done: ${a.done}` : null,
+    live.length ? `live registry: ${live.map((attempt) => `${attempt.name} (${attempt.live_state})`).join(", ")}` : null,
     `last activity: ${activity}`,
   ].filter(Boolean).join("\n");
 }

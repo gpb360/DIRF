@@ -1056,6 +1056,7 @@ function updateAttemptLifecycleLocked(slug, idOrName, action, options = {}, now 
       ...attempt,
       status: "done",
       blocker: null,
+      current_execution: null,
       completed_at: timestamp,
       ...(Object.keys(evidence).length ? { evidence } : {}),
     };
@@ -1122,6 +1123,7 @@ function claimAttemptCheckoutLocked(slug, idOrName, worktreePath, now = new Date
   const attempt = getAttempt(slug, idOrName);
   if (!attempt.tracked) return attempt;
   const resolvedPath = resolve(String(worktreePath || ""));
+  const branch = git(resolvedPath, ["branch", "--show-current"], { allowFailure: true }) || null;
   const key = normalizeIdentityKey(resolvedPath);
   const match = inspectProjectWorktrees(slug, now).some((entry) => normalizeIdentityKey(entry.path) === key);
   if (!match) throw new Error("checkout must belong to the attempt's registered project");
@@ -1129,10 +1131,10 @@ function claimAttemptCheckoutLocked(slug, idOrName, worktreePath, now = new Date
     candidate.id !== attempt.id &&
     candidate.status === "in_progress" &&
     candidate.responsibility_path &&
-    normalizeIdentityKey(candidate.responsibility_path) === key);
+    (normalizeIdentityKey(candidate.responsibility_path) === key || (branch && candidate.responsibility_branch === branch)));
   if (owner) throw new Error(`checkout is already governed by ${owner.id}`);
   if (!attempt.responsibility_path) {
-    return writeAttempt(slug, { ...attempt, responsibility_path: portable(resolvedPath), updated_at: now.toISOString() });
+    return writeAttempt(slug, { ...attempt, responsibility_path: portable(resolvedPath), responsibility_branch: branch, updated_at: now.toISOString() });
   }
   if (normalizeIdentityKey(attempt.responsibility_path) !== key) {
     throw new Error(`attempt ${attempt.id} is already responsible for ${attempt.responsibility_path}`);
@@ -1261,6 +1263,10 @@ function observeAttemptLocked(slug, idOrName, options, now) {
 
   const previous = attempt.current_execution || null;
   const sameOwner = previous?.harness === harness && previous?.session_id === sessionId;
+  if (sameOwner && !worktreePath) {
+    worktreePath = previous.worktree_path || null;
+    branch = previous.branch || null;
+  }
   if (previous?.authority_hash && previous.authority_hash !== authorityHash) {
     throw new Error(`execution authority rejected for attempt ${attempt.id}; the trusted harness adapter must retain the original project capability`);
   }
