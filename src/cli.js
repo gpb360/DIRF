@@ -30,7 +30,7 @@ import { inspect, detectStackProfile } from "./inspect.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings } from "./state.js";
+import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, projectHandoffContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings } from "./state.js";
 import { ARTIFACT_TYPES, explainGoverningArtifact } from "./artifacts.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 import {
@@ -43,6 +43,7 @@ import {
 } from "./governance.js";
 import { DEFAULT_ISSUE_POLICY } from "./issue-governance.js";
 import { buildModelAdvice, normalizeModelCatalog } from "./model-advice.js";
+import { run as runReviewReport } from "../skills/code-review/scripts/review-report.mjs";
 import { bindingsFromPlan, refreshSkillBindings } from "./skill-bindings.js";
 
 const LIFECYCLE = {
@@ -564,7 +565,7 @@ function cmdRender(args) {
   renderPlan(planPath, target, args.open);
 }
 
-function publicAttemptForSlug(slug, attempt) {
+function publicAttemptForSlug(slug, attempt, context = null) {
   // One composed read: attemptGateState does a single workflow.json read for
   // the already-loaded attempt (avoid re-looking-up per gate — see M2).
   const { phases, gates } = attemptGateState(slug, attempt);
@@ -584,14 +585,18 @@ function publicAttemptForSlug(slug, attempt) {
     gates,
     pending_gates: gates.filter(gateIsPending).map((gate) => gate.phase),
     evidence: attempt.evidence || {},
-    next_action: attemptNextAction(slug, attempt.id),
+    ...(context || attemptContextState(slug, attempt.id)),
   };
 }
 
 function cmdList(args) {
   const attempts = listAttempts(projectRoot(args.path));
   const slug = resolveProject(projectRoot(args.path)).slug;
-  if (args.json) { console.log(JSON.stringify(attempts.map((attempt) => publicAttemptForSlug(slug, attempt)), null, 2)); return; }
+  if (args.json) {
+    const contexts = attemptContextStates(slug);
+    console.log(JSON.stringify(attempts.map((attempt) => publicAttemptForSlug(slug, attempt, contexts.get(attempt.id))), null, 2));
+    return;
+  }
   if (!attempts.length) { console.log("(no attempts saved)"); return; }
   console.log("Saved attempts:");
   for (const attempt of attempts) console.log(`  - ${attempt.id}  ${attempt.name}`);
@@ -639,6 +644,16 @@ function cmdResume(args) {
   const target = projectRoot(args.path);
   const attempt = findAttempt(target, args.name);
   const project = resolveProject(target);
+  const context = attemptContextState(project.slug, attempt.id);
+  if (context.needs_refresh) {
+    if (context.related_task_requires_reconciliation) {
+      if (context.related_task_relation === "conflict") {
+        throw new Error(`This task and task ${context.related_attempt_id} point to different PR commits. Check the current PR commit, update the task that matches it, and stop or update the other task before continuing. Other handoff: ${context.related_handoff_path}`);
+      }
+      throw new Error(`DIRF cannot tell whether this task or task ${context.related_attempt_id} matches the current PR version. Check or fetch the current PR commit, update the task that matches it, and stop or update the other task before continuing. Other handoff: ${context.related_handoff_path}`);
+    }
+    throw new Error(`This task has older information. Read newer task ${context.newer_attempt_id} at ${context.newer_handoff_path} before continuing.`);
+  }
   const stored = claimAttemptCheckout(project.slug, attempt.id, checkoutRoot(target));
   const planPath = join(attempt.folder, "workflow.json");
   if (existsSync(planPath)) {
@@ -665,7 +680,8 @@ function cmdResume(args) {
   catch { /* legacy state can predate canonical config */ }
   const contextPath = config?.context?.path ? join(target, config.context.path) : null;
   const attemptHandoff = readFileSync(handoff, "utf8");
-  const projectHandoff = readHandoff(project.slug);
+  const projectHandoffState = projectHandoffContextState(project.slug);
+  const projectHandoff = projectHandoffState.handoff;
   const projectHandoffPath = join(storeProjectDir(project.slug), "HANDOFF.md");
   const projectBrain = {
     config,
@@ -674,6 +690,7 @@ function cmdResume(args) {
       content: contextPath && existsSync(contextPath) ? readFileSync(contextPath, "utf8") : null,
     },
     handoff: projectHandoff,
+    handoff_attention: projectHandoffState.attention,
     attempts: listAttemptsState(project.slug).map((item) => ({
       id: item.id,
       name: item.name,
@@ -701,6 +718,7 @@ function cmdResume(args) {
       project_brain: projectBrain,
       attempt_handoff: attemptHandoff,
       project_handoff: projectHandoff,
+      project_handoff_attention: projectHandoffState.attention,
       pending_gates: pendingGates(project.slug, attempt.id),
       recorded_evidence: recordedEvidence(project.slug, attempt.id),
       resume_prompt: prompt,
@@ -713,7 +731,11 @@ function cmdResume(args) {
   console.log(`Load workflow: ${workflow}`);
   console.log(`Load project config: ${join(storeProjectDir(project.slug), "config.json")}`);
   console.log(`Load project context: ${contextPath || "(not configured)"}`);
-  console.log(`Load canonical handoff: ${projectHandoffPath}`);
+  if (projectHandoffState.needs_refresh) {
+    console.log(`Skip canonical handoff: ${projectHandoffState.attention} Read task ${projectHandoffState.related_attempt_id} at ${projectHandoffState.related_handoff_path}`);
+  } else {
+    console.log(`Load canonical handoff: ${projectHandoffPath}`);
+  }
   console.log(`Load attempt handoff: ${handoff}\n`);
   // Reconciliation on resume: surface unresolved gates (the reconciler analog)
   // and recorded evidence (replay completed phases — do not re-run them).
@@ -890,7 +912,12 @@ function cmdStateRegister(args) {
 
 function cmdStateReadHandoff(args) {
   const slug = resolveStateSlug(args);
-  const md = readHandoff(slug);
+  const state = projectHandoffContextState(slug);
+  const md = state.handoff;
+  if (state.needs_refresh) {
+    console.log(`DIRF withheld the canonical handoff. ${state.attention} Read task ${state.related_attempt_id} at ${state.related_handoff_path}.`);
+    return;
+  }
   if (md === null) { console.error(`No HANDOFF.md for ${slug}`); process.exitCode = 1; return; }
   process.stdout.write(md);
 }
@@ -913,7 +940,11 @@ function cmdStateWriteHandoff(args) {
 function cmdStateListAttempts(args) {
   const slug = resolveStateSlug(args);
   const attempts = listAttemptsState(slug);
-  if (args.json) { console.log(JSON.stringify(attempts.map((attempt) => publicAttemptForSlug(slug, attempt)), null, 2)); return; }
+  if (args.json) {
+    const contexts = attemptContextStates(slug);
+    console.log(JSON.stringify(attempts.map((attempt) => publicAttemptForSlug(slug, attempt, contexts.get(attempt.id))), null, 2));
+    return;
+  }
   if (!attempts.length) { console.log("(no attempts saved)"); return; }
   console.log("Saved attempts:");
   for (const a of attempts) console.log(`  - ${a.id}  ${a.name}`);
@@ -953,9 +984,12 @@ function cmdStateActive(args) {
     current_phase: attempt.current_phase || null,
     responsibility_path: attempt.responsibility_path,
   }));
+  const activeContext = responsibility.attempt
+    ? attemptContextState(project.slug, responsibility.attempt.id, { bounded: true })
+    : null;
   const active = responsibility.attempt ? {
     ...attempts[0],
-    next_action: attemptNextAction(project.slug, responsibility.attempt.id),
+    ...activeContext,
     workflow_path: existsSync(join(responsibility.attempt.folder, "README.md"))
       ? join(responsibility.attempt.folder, "README.md")
       : join(responsibility.attempt.folder, "workflow.json"),
@@ -974,7 +1008,13 @@ function cmdStateActive(args) {
   if (args.hook) {
     let additionalContext;
     if (result.state === "active") {
-      additionalContext = `DIRF already governs this checkout. Reuse attempt ${active.id} (${active.name}); do not build a duplicate or enumerate the portfolio. Current phase: ${active.current_phase || "not recorded"}. Next action: ${active.next_action || "continue the current phase"}. Load ${active.workflow_path} and ${active.handoff_path} only if their details are not already in context.`;
+      additionalContext = active.needs_refresh
+        ? active.related_task_requires_reconciliation
+          ? active.related_task_relation === "conflict"
+            ? `Two tasks point to different PR commits. Check the current PR commit, update the task that matches it, and stop or update task ${active.related_attempt_id}. Other handoff: ${active.related_handoff_path}`
+            : `DIRF cannot tell which task matches the current PR version. Check or fetch the current PR commit, update the matching task, and stop or update task ${active.related_attempt_id}. Other handoff: ${active.related_handoff_path}`
+          : `DIRF found newer work for the same pull request. Do not follow this task's old next step. Read task ${active.newer_attempt_id} at ${active.newer_handoff_path}, update this task, and continue only from the corrected next step.`
+        : `DIRF already has work in this checkout. Continue task ${active.id} (${active.name}). Current stage: ${active.current_phase || "not recorded"}. Next: ${active.next_action || "continue the current stage"}. Load ${active.workflow_path} and ${active.handoff_path} only if needed.`;
     } else if (result.state === "conflict") {
       additionalContext = `DIRF responsibility conflict in this checkout: ${attempts.map(({ id }) => id).join(", ")}. Stop and select the intended attempt explicitly; do not choose the latest.`;
     } else {
@@ -985,9 +1025,18 @@ function cmdStateActive(args) {
   }
   if (args.json) { console.log(JSON.stringify(result, null, 2)); return; }
   if (result.state === "active") {
-    console.log(`DIRF active: ${active.id} (${active.name})`);
-    console.log(`Phase: ${active.current_phase || "not recorded"}`);
-    console.log(`Next: ${active.next_action || "continue the current phase"}`);
+    console.log(`DIRF task: ${active.id} (${active.name})`);
+    console.log(`Stage: ${active.current_phase || "not recorded"}`);
+    if (active.needs_refresh) {
+      console.log(`Attention: ${active.attention}`);
+      if (active.related_task_requires_reconciliation) {
+        console.log(`Next: Check the current PR commit, update the task that matches it, and stop or update task ${active.related_attempt_id}. Other handoff: ${active.related_handoff_path}`);
+      } else {
+        console.log(`Next: Read task ${active.newer_attempt_id} at ${active.newer_handoff_path} and replace this task's old next step before continuing.`);
+      }
+    } else {
+      console.log(`Next: ${active.next_action || "continue the current stage"}`);
+    }
   } else if (result.state === "conflict") {
     console.log(`DIRF conflict: ${attempts.map(({ id }) => id).join(", ")}`);
   } else {
@@ -1320,14 +1369,15 @@ function cmdRecordProgress(args) {
     }
 
     // Build update
-    const timestamp = args.timestamp || new Date().toISOString();
     const updateData = {
       message,
-      timestamp,
+      timestamp: args.timestamp || null,
       phase: args.phase || null,
       next: args.next || "Continue work",
       files: args.files ? args.files.split(",") : [],
       attemptId: args.attempt || null,
+      workItem: args.workItem || null,
+      reviewRevision: args.reviewRevision || null,
     };
 
     const { lifecycle: synced } = recordProgress(project.slug, updateData);
@@ -1393,6 +1443,8 @@ function parse(argv) {
     if (a === "--next") { out.next = rest[++i]; continue; }
     if (a === "--files") { out.files = rest[++i]; continue; }
     if (a === "--timestamp") { out.timestamp = rest[++i]; continue; }
+    if (a === "--work-item") { out.workItem = rest[++i]; continue; }
+    if (a === "--review-revision") { out.reviewRevision = rest[++i]; continue; }
     if (a === "--evidence") { out.evidence = rest[++i]; continue; }
     if (a === "--output") { out.output = rest[++i]; continue; }
     if (a === "--policy") { out.policy = rest[++i]; continue; }
@@ -1424,7 +1476,7 @@ Usage:
   dirf list [--path DIR]                               list saved attempts
   dirf status [--path DIR]                             show project and repository state
   dirf resume <name-or-id> [--path DIR]                load the workflow handoff
-  dirf record-progress "<message>" [--path DIR] [--attempt ID|UNIQUE_NAME] [--phase PHASE] [--next ACTION] [--files FILES]
+  dirf record-progress "<message>" [--path DIR] [--attempt ID|UNIQUE_NAME] [--phase PHASE] [--next ACTION] [--files FILES] [--work-item ITEM] [--review-revision SHA]
                                                       record progress, update HANDOFF.md and sync the attempt lifecycle
   dirf attempt <action> <id> [--path DIR]              update lifecycle state
                                                       (advance: [--evidence "CMD" [--output F]] [--strict] [--auto])
@@ -1448,6 +1500,7 @@ Usage:
   dirf flow "<task>" [--path DIR] [--profile FILE] [--models FILE]
                                                       show the ordered skill flow and optional diagnostic model advice
   dirf govern <digest|evaluate|append|verify> [...]    decide actions and maintain a hash-linked evidence ledger
+  dirf review <validate|render|ready> review.json     validate, render, or prove a PR review is ready
   dirf state which [--path DIR]                       what project am I in? (slug + store path)
   dirf state list                                      list all registered projects
   dirf state register [--path DIR]                    register a project explicitly
@@ -1602,6 +1655,17 @@ function cmdGovern(args) {
   process.exitCode = 2;
 }
 
+function cmdReview(args) {
+  const subcommand = args._[0];
+  const file = args._[1];
+  if (!subcommand || !file) {
+    console.error("usage: dirf review <validate|render|ready> review.json");
+    process.exitCode = 2;
+    return;
+  }
+  console.log(runReviewReport([subcommand, file]));
+}
+
 function plainName(task) {
   // Short, filesystem-safe name from a task sentence, for `start work on`.
   return String(task || "")
@@ -1673,6 +1737,7 @@ async function main() {
   else if (cmd === "inspect") { args._ = args._.length ? args._ : [args.path]; cmdInspect(args); }
   else if (cmd === "flow") { cmdFlow(args); }
   else if (cmd === "govern") { cmdGovern(args); }
+  else if (cmd === "review") { cmdReview(args); }
   else if (cmd === "state") {
     const sub = args._[0];
     const subArgs = { ...args, _: args._.slice(1) };

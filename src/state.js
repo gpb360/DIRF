@@ -15,7 +15,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSyn
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { resolveGoverningArtifact, validateArtifactGraph, validatePlanDelta } from "./artifacts.js";
-import { updateProgressSection } from "./handoff-update.js";
+import { parseCurrentHandoff, updateProgressSection } from "./handoff-update.js";
 
 const GIT_TIMEOUT = 30_000;
 
@@ -604,12 +604,304 @@ export function effectiveAttemptStatus(slug, attempt) {
   return { status: attempt.status, status_source: "lifecycle" };
 }
 
-export function attemptNextAction(slug, idOrName) {
-  const handoff = readAttemptHandoff(slug, idOrName);
+function handoffNextAction(handoff) {
   if (!handoff) return null;
   const match = handoff.match(/^## Exact next action\s*\r?\n+([\s\S]*?)(?=^## |\s*$)/m);
   const value = match?.[1]?.trim();
   return value && !/^_\(.*\)_$/.test(value) ? value : null;
+}
+
+export function attemptNextAction(slug, idOrName) {
+  return handoffNextAction(readAttemptHandoff(slug, idOrName));
+}
+
+function handoffUpdatedAt(markdown, path, parsed = parseCurrentHandoff(markdown)) {
+  const recorded = Date.parse(parsed.lastUpdated || "");
+  if (Number.isFinite(recorded)) return recorded;
+  return existsSync(path) ? statSync(path).mtimeMs : 0;
+}
+
+function handoffWorkReferences(markdown) {
+  const references = new Set();
+  const current = parseCurrentHandoff(markdown);
+  if (current.workItem) references.add(current.workItem.trim().toLowerCase());
+  const legacyCurrentText = [current.objective, current.nextAction, current.currentPhase].filter(Boolean).join("\n");
+  for (const match of legacyCurrentText.matchAll(/\bPR\s*#?\s*(\d+)\b/gi)) {
+    references.add(`pr:${match[1]}`);
+  }
+  for (const match of legacyCurrentText.matchAll(/\/pull\/(\d+)\b/gi)) {
+    references.add(`pr:${match[1]}`);
+  }
+  for (const match of legacyCurrentText.matchAll(/\b[\w.-]+\/[\w.-]+#(\d+)\b/gi)) references.add(`pr:${match[1]}`);
+  if (/\b(?:pr|pull request|review|merge)\b/i.test(legacyCurrentText)) {
+    for (const match of legacyCurrentText.matchAll(/(?:^|\s)#(\d+)\b/g)) references.add(`pr:${match[1]}`);
+  }
+  return references;
+}
+
+function revisionRelation(target, currentRevision, candidateRevision) {
+  if (!/^[0-9a-f]{40}$/i.test(currentRevision || "") || !/^[0-9a-f]{40}$/i.test(candidateRevision || "")) return "unknown";
+  if (currentRevision.toLowerCase() === candidateRevision.toLowerCase()) return "same";
+  const commitExists = (revision) => {
+    try {
+      execFileSync("git", ["-C", target, "cat-file", "-e", `${revision}^{commit}`], {
+        timeout: GIT_TIMEOUT, windowsHide: true, stdio: "ignore",
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (!commitExists(currentRevision) || !commitExists(candidateRevision)) return "unknown";
+  const isAncestor = (older, newer) => {
+    try {
+      execFileSync("git", ["-C", target, "merge-base", "--is-ancestor", older, newer], {
+        timeout: GIT_TIMEOUT, windowsHide: true, stdio: "ignore",
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (isAncestor(currentRevision, candidateRevision)) return "candidate_newer";
+  if (isAncestor(candidateRevision, currentRevision)) return "current_newer";
+  return "conflict";
+}
+
+function buildRevisionGraph(target, revisions) {
+  if (revisions.length < 2) return new Map();
+  try {
+    const output = execFileSync("git", ["-C", target, "rev-list", "--parents", ...revisions], {
+      encoding: "utf8",
+      timeout: GIT_TIMEOUT,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    return new Map(output.trim().split(/\r?\n/).filter(Boolean).map((line) => {
+      const [commit, ...parents] = line.trim().split(/\s+/).map((value) => value.toLowerCase());
+      return [commit, parents];
+    }));
+  } catch {
+    return null;
+  }
+}
+
+function existingCommitRevisions(target, revisions) {
+  if (!revisions.length) return new Set();
+  try {
+    const output = execFileSync("git", ["-C", target, "cat-file", "--batch-check=%(objectname) %(objecttype)"], {
+      encoding: "utf8",
+      input: `${revisions.join("\n")}\n`,
+      timeout: GIT_TIMEOUT,
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    return new Set(output.trim().split(/\r?\n/).filter(Boolean).flatMap((line) => {
+      const [object, type] = line.trim().split(/\s+/);
+      return type === "commit" ? [object.toLowerCase()] : [];
+    }));
+  } catch {
+    return new Set();
+  }
+}
+
+function graphContainsAncestor(graph, ancestor, descendant) {
+  if (!graph) return false;
+  const wanted = ancestor.toLowerCase();
+  const pending = [descendant.toLowerCase()];
+  const visited = new Set();
+  while (pending.length) {
+    const current = pending.pop();
+    if (current === wanted) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    pending.push(...(graph.get(current) || []));
+  }
+  return false;
+}
+
+// An attempt can become stale when another attempt records newer work for the
+// same pull request. Keep the old handoff for audit history, but do not present
+// its old next step as safe current guidance.
+export function attemptContextState(slug, idOrName, options = {}) {
+  const attempt = getAttempt(slug, idOrName);
+  if (options.bounded) {
+    const handoffPath = join(storeAttemptDir(slug, attempt.id), "HANDOFF.md");
+    const handoff = readAttemptHandoffFile(slug, attempt.id) || "";
+    const parsed = parseCurrentHandoff(handoff);
+    const entry = {
+      id: attempt.id,
+      handoffPath,
+      nextAction: handoffNextAction(handoff),
+      references: handoffWorkReferences(handoff),
+      updatedAt: handoffUpdatedAt(handoff, handoffPath, parsed),
+      updateNumber: parsed.updateNumber,
+      reviewRevision: parsed.reviewRevision,
+    };
+    const canonicalPath = join(storeProjectDir(slug), "HANDOFF.md");
+    const canonical = readHandoff(slug) || "";
+    const canonicalParsed = parseCurrentHandoff(canonical);
+    const entries = [entry];
+    if (canonicalParsed.attemptId && canonicalParsed.attemptId !== attempt.id) {
+      entries.push({
+        id: canonicalParsed.attemptId,
+        handoffPath: join(storeAttemptDir(slug, canonicalParsed.attemptId), "HANDOFF.md"),
+        nextAction: handoffNextAction(canonical),
+        references: handoffWorkReferences(canonical),
+        updatedAt: handoffUpdatedAt(canonical, canonicalPath, canonicalParsed),
+        updateNumber: canonicalParsed.updateNumber,
+        reviewRevision: canonicalParsed.reviewRevision,
+      });
+    }
+    return contextForAttempt(entry, entries, getProject(slug)?.main_path || process.cwd());
+  }
+  const { entries, repositoryPath } = attemptContextEntries(slug);
+  const entry = entries.find((candidate) => candidate.id === attempt.id);
+  return contextForAttempt(entry, entries, repositoryPath);
+}
+
+function checkpointIsNewer(current, candidate) {
+  if (candidate.updateNumber && current.updateNumber) return candidate.updateNumber > current.updateNumber;
+  if (candidate.updateNumber) return true;
+  if (current.updateNumber) return false;
+  return candidate.updatedAt > current.updatedAt;
+}
+
+function contextForAttempt(entry, entries, repositoryPath, relationFor = revisionRelation) {
+  const newerRelated = entries
+    .filter((candidate) => candidate.id !== entry.id
+      && [...entry.references].some((reference) => candidate.references.has(reference)))
+    .map((candidate) => {
+      const relation = relationFor(repositoryPath, entry.reviewRevision, candidate.reviewRevision);
+      return {
+        ...candidate,
+        relation,
+        supersedes: relation === "candidate_newer"
+          || relation === "conflict"
+          || (relation === "unknown" && entry.reviewRevision && candidate.reviewRevision && entry.reviewRevision !== candidate.reviewRevision)
+          || (["same", "unknown"].includes(relation) && checkpointIsNewer(entry, candidate)),
+      };
+    })
+    .filter((candidate) => candidate.supersedes)
+    .sort((left, right) => {
+      const priority = (value) => value === "candidate_newer" ? 2 : value === "conflict" ? 1 : 0;
+      return priority(right.relation) - priority(left.relation)
+        || (right.updateNumber || 0) - (left.updateNumber || 0)
+        || right.updatedAt - left.updatedAt;
+    })[0] || null;
+
+  const needsRefresh = Boolean(newerRelated);
+  const conflict = newerRelated?.relation === "conflict";
+  const unverifiedRevisions = newerRelated?.relation === "unknown"
+    && entry.reviewRevision
+    && newerRelated.reviewRevision
+    && entry.reviewRevision !== newerRelated.reviewRevision;
+  const requiresReconciliation = Boolean(conflict || unverifiedRevisions);
+  return {
+    needs_refresh: needsRefresh,
+    next_action: needsRefresh ? null : entry.nextAction,
+    related_task_relation: newerRelated?.relation || null,
+    related_task_requires_reconciliation: requiresReconciliation,
+    related_attempt_id: newerRelated?.id || null,
+    related_handoff_path: newerRelated?.handoffPath || null,
+    newer_attempt_id: requiresReconciliation ? null : newerRelated?.id || null,
+    newer_handoff_path: requiresReconciliation ? null : newerRelated?.handoffPath || null,
+    attention: needsRefresh
+      ? conflict
+        ? "Two tasks point to different PR commits. Check the current PR commit, update the task that matches it, and stop or update the other task before continuing."
+        : unverifiedRevisions
+          ? "DIRF cannot tell which task matches the current PR version. Check or fetch the current PR commit, update the matching task, and stop or update the other task before continuing."
+        : "Newer project work may have changed this task. Check the other review before continuing."
+      : null,
+  };
+}
+
+// Parse each handoff once so list views do not repeatedly re-read every task.
+// Work identity is checked before any Git ancestry command is run.
+function attemptContextEntries(slug) {
+  const project = getProject(slug);
+  const attempts = listAttempts(slug);
+  const entries = attempts.map((attempt) => {
+    const handoffPath = join(storeAttemptDir(slug, attempt.id), "HANDOFF.md");
+    const handoff = readAttemptHandoffFile(slug, attempt.id) || "";
+    const parsed = parseCurrentHandoff(handoff);
+    return {
+      id: attempt.id,
+      handoffPath,
+      nextAction: handoffNextAction(handoff),
+      references: handoffWorkReferences(handoff),
+      updatedAt: handoffUpdatedAt(handoff, handoffPath, parsed),
+      updateNumber: parsed.updateNumber,
+      reviewRevision: parsed.reviewRevision,
+    };
+  });
+  const repositoryPath = attempts.find((attempt) => attempt.responsibility_path)?.responsibility_path
+    || project?.main_path
+    || process.cwd();
+  return { entries, repositoryPath };
+}
+
+export function attemptContextStates(slug) {
+  const { entries, repositoryPath } = attemptContextEntries(slug);
+  const referenceCounts = new Map();
+  for (const entry of entries) {
+    for (const reference of entry.references) referenceCounts.set(reference, (referenceCounts.get(reference) || 0) + 1);
+  }
+  const revisions = [...new Set(entries
+    .filter((entry) => [...entry.references].some((reference) => referenceCounts.get(reference) > 1))
+    .map((entry) => entry.reviewRevision?.toLowerCase())
+    .filter((revision) => /^[0-9a-f]{40}$/.test(revision || "")))];
+  const existingRevisions = existingCommitRevisions(repositoryPath, revisions);
+  const graph = buildRevisionGraph(repositoryPath, revisions.filter((revision) => existingRevisions.has(revision)));
+  const relations = new Map();
+  const relationFor = (_target, current, candidate) => {
+    const key = `${current || ""}:${candidate || ""}`;
+    if (!relations.has(key)) {
+      let relation = "unknown";
+      if (existingRevisions.has(current?.toLowerCase()) && existingRevisions.has(candidate?.toLowerCase())) {
+        if (current.toLowerCase() === candidate.toLowerCase()) relation = "same";
+        else if (graphContainsAncestor(graph, current, candidate)) relation = "candidate_newer";
+        else if (graphContainsAncestor(graph, candidate, current)) relation = "current_newer";
+        else if (graph) relation = "conflict";
+      }
+      relations.set(key, relation);
+    }
+    return relations.get(key);
+  };
+  return new Map(entries.map((entry) => [entry.id, contextForAttempt(entry, entries, repositoryPath, relationFor)]));
+}
+
+// Canonical project guidance is a fallback. If an attempt contains newer or
+// conflicting guidance for the same work item, withhold the fallback instead
+// of exposing an obsolete next step.
+export function projectHandoffContextState(slug) {
+  const handoff = readHandoff(slug);
+  if (handoff === null) return {
+    handoff: null,
+    needs_refresh: false,
+    related_task_relation: null,
+    related_task_requires_reconciliation: false,
+    related_attempt_id: null,
+    related_handoff_path: null,
+    newer_attempt_id: null,
+    newer_handoff_path: null,
+    attention: null,
+  };
+  const path = join(storeProjectDir(slug), "HANDOFF.md");
+  const parsed = parseCurrentHandoff(handoff);
+  const { entries, repositoryPath } = attemptContextEntries(slug);
+  const entry = {
+    id: "project-handoff",
+    handoffPath: path,
+    nextAction: handoffNextAction(handoff),
+    references: handoffWorkReferences(handoff),
+    updatedAt: handoffUpdatedAt(handoff, path, parsed),
+    updateNumber: parsed.updateNumber,
+    reviewRevision: parsed.reviewRevision,
+  };
+  const context = contextForAttempt(entry, entries, repositoryPath);
+  return { ...context, handoff: context.needs_refresh ? null : handoff };
 }
 
 export function attemptResponsibility(slug, worktreePath) {
@@ -1148,26 +1440,70 @@ function withProgressLock(slug, action) {
   }
 }
 
+function nextProgressUpdateNumber(slug) {
+  const path = join(storeProjectDir(slug), ".progress-sequence");
+  let current = 0;
+  try {
+    const stored = readFileSync(path, "utf8").trim();
+    if (/^\d+$/.test(stored)) {
+      current = Number(stored);
+      if (!Number.isSafeInteger(current) || current < 0) current = 0;
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  const handoffs = [readHandoff(slug), ...listAttempts(slug).map((attempt) => readAttemptHandoffFile(slug, attempt.id))];
+  for (const handoff of handoffs) {
+    const recorded = parseCurrentHandoff(handoff || "").updateNumber;
+    if (Number.isSafeInteger(recorded) && recorded > current) current = recorded;
+  }
+  const next = current + 1;
+  if (!Number.isSafeInteger(next)) {
+    throw new Error("DIRF cannot safely save this update because the project update counter is too large.");
+  }
+  atomicWrite(path, `${next}\n`);
+  return next;
+}
+
+function canonicalAcceptsProgress(slug, canonicalBase, { workItem, reviewRevision }) {
+  const current = parseCurrentHandoff(canonicalBase);
+  const currentHasIdentity = Boolean(current.workItem?.trim());
+  if (currentHasIdentity && (!workItem || !/^[0-9a-f]{40}$/i.test(reviewRevision || ""))) return false;
+  if (!workItem || !/^[0-9a-f]{40}$/i.test(reviewRevision || "")) return true;
+  if (current.workItem?.trim().toLowerCase() !== workItem.trim().toLowerCase()) return true;
+  if (!/^[0-9a-f]{40}$/i.test(current.reviewRevision || "")) return true;
+  const project = getProject(slug);
+  const relation = revisionRelation(project?.main_path || process.cwd(), current.reviewRevision, reviewRevision);
+  return relation !== "current_newer" && relation !== "conflict";
+}
+
 // Record one progress checkpoint through the canonical core so CLI and MCP
 // cannot drift. Canonical and attempt handoffs are updated from their own
 // bases; the attempt write happens first and the authoritative canonical write
 // happens last. Concurrent attempts therefore keep scoped history while the
 // project handoff remains a last-writer-wins snapshot.
-export function recordProgress(slug, { message, timestamp, phase, next, files, attemptId }) {
+export function recordProgress(slug, { message, timestamp, phase, next, files, attemptId, workItem, reviewRevision }) {
   if (!getProject(slug)) throw new Error(`Unknown DIRF project ${slug}`);
   return withProgressLock(slug, () => {
     const attempt = progressAttempt(slug, attemptId);
     const attemptHandoff = attempt ? readAttemptHandoffFile(slug, attempt.id) : null;
     const fallback = "# DIRF Handoff\n\n## Objective\n\n(Work in progress)\n";
     const canonicalBase = readHandoff(slug) || fallback;
+    const recordedAttemptContext = parseCurrentHandoff(attemptHandoff || "");
     const update = {
       message,
       timestamp: timestamp || new Date().toISOString(),
+      updateNumber: nextProgressUpdateNumber(slug),
       phase: phase || null,
       next,
       files: files || [],
+      workItem: workItem || recordedAttemptContext.workItem || null,
+      reviewRevision: reviewRevision || recordedAttemptContext.reviewRevision || null,
+      attemptId: attempt?.id || null,
     };
-    const updatedHandoff = updateProgressSection(canonicalBase, update);
+    const updatedHandoff = canonicalAcceptsProgress(slug, canonicalBase, update)
+      ? updateProgressSection(canonicalBase, update)
+      : canonicalBase;
     const updatedAttemptHandoff = attempt
       ? updateProgressSection(attemptHandoff || canonicalBase, update)
       : null;
@@ -1466,7 +1802,7 @@ export function portfolioSnapshot(now = new Date()) {
         status_source: effective.get(latest.id).status_source,
         current_phase: latest.current_phase || null,
         updated_at: latest.updated_at || latest.created_at,
-        next_action: attemptNextAction(project.slug, latest.id),
+        ...attemptContextState(project.slug, latest.id),
       } : null,
     };
   });

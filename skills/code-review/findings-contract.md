@@ -4,9 +4,10 @@ Create `review.json` with this shape:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "target": {
-    "repository": "owner/repository",
+    "repository": "https://github.com/owner/repository.git",
+    "pr_number": 123,
     "base_sha": "40-character SHA",
     "head_sha": "40-character SHA",
     "mode": "full"
@@ -39,9 +40,14 @@ Create `review.json` with this shape:
     }
   ],
   "verification": [
-    { "command": "node --test tests/store.test.js", "result": "passed" }
+    { "command": "node --test tests/store.test.js", "status": "passed", "result": "12 tests passed" }
   ],
-  "limitations": []
+  "limitations": [],
+  "completion": {
+    "review_complete": true,
+    "required_checks": "passed",
+    "unresolved_threads": 0
+  }
 }
 ```
 
@@ -70,4 +76,12 @@ Confidence measures whether the specific finding is true, not how severe it woul
 
 The renderer derives the verdict; do not place a hand-authored verdict in the artifact.
 
-The renderer also derives an A-F readiness grade and explicit P0-P3 counts. A grade is not a substitute for the gate: definition of done requires `PASS`, zero findings in every priority bucket, and a review bound to the latest head.
+The renderer also derives an A-F readiness grade and explicit P0-P3 counts for
+the detailed report. Normal user updates should use ordinary language.
+
+Before asking to merge, run `dirf review ready review.json`. Readiness requires
+the live GitHub PR commit, the repository and review base to match the checkout, zero
+findings, a completed review, every recorded verification and required check to
+have passed, and zero unresolved review conversations. Final merge readiness
+requires a full review. Historical schema-v1 reports remain valid for reading
+and rendering, but cannot authorize a merge.

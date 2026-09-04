@@ -77,7 +77,8 @@ test("kickoff prompt is embedded in both renders and stays host-agnostic", () =>
   assert.ok(prompt.includes("did not invoke a model"));
   assert.ok(prompt.includes("derive every screen x state x viewport row"));
   assert.ok(prompt.includes("For status updates, validation summaries, and handoffs"));
-  assert.ok(prompt.includes("For PR review updates, use `Fixed`, `Proof`, `Status`, and `Next`"));
+  assert.ok(prompt.includes("Say how many confirmed issues remain"));
+  assert.ok(prompt.includes("Keep grades, confidence scores, and P-codes in the detailed review report"));
   assert.ok(prompt.includes("End with exactly one next action, or `Complete`"));
   assert.ok(!/codex|claude/i.test(prompt));
   assert.ok(!prompt.includes("```"), "prompt must be safe inside a fenced block");
@@ -133,7 +134,7 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.match(readme, /Keep 5% of the model context available for handoff/);
   assert.match(readme, /## Focused output/);
   assert.match(readme, /Keep lists to five relevant items or fewer/);
-  assert.match(readme, /For PR review updates, use `Fixed`, `Proof`, `Status`, and `Next`/);
+  assert.match(readme, /Say how many confirmed issues remain/);
   assert.match(readme, /uses: \["playbook"\]/);
   assert.match(policy, /The user's task defines what the workflow delivers/);
   assert.match(policy, /they do not add deliverables/);
@@ -147,9 +148,9 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.match(policy, /Do not infer readiness from GitHub's mechanical mergeable or ready status, a green build, or a prior review/);
   assert.match(policy, /After every final push, refresh the exact PR head/);
   assert.match(policy, /reconcile every P0, P1, P2, and P3 finding/);
-  assert.match(policy, /A-F grade, quality\/evidence confidence/);
-  assert.match(policy, /latest-[\s\S]*head PASS with all four counts at zero/);
-  assert.match(policy, /visibly include its P0-P3 priority and confidence score/);
+  assert.match(policy, /Keep grades, confidence scores, P-codes, and the detailed findings ledger in[\s\S]*review artifact/);
+  assert.match(policy, /current commit with no remaining issues/);
+  assert.match(policy, /all required checks passed, all review conversations resolved/);
   assert.match(policy, /Re-fetch that exact head's reviews, unresolved threads, checks, mergeability, and diff/);
   assert.match(policy, /Dismiss a finding only when evidence shows it is invalid or a duplicate/);
   assert.match(policy, /A retained P0, P1, P2, or P3 finding cannot be waived for completion/);
@@ -163,9 +164,8 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.match(agentDetail, /## Done when/);
   assert.match(agentDetail, /assigned contribution is complete and handed back/);
   assert.match(buildHtml(workflow), /Done when[\s\S]*assigned contribution is complete and handed back/);
-  assert.match(buildHtml(workflow), /For PR review updates, use <code>Fixed<\/code>, <code>Proof<\/code>, <code>Status<\/code>, and <code>Next<\/code>/);
-  assert.match(buildHtml(workflow), /A-F grade/);
-  assert.match(buildHtml(workflow), /P0\/P1\/P2\/P3 counts/);
+  assert.match(buildHtml(workflow), /Say how many confirmed issues remain/);
+  assert.match(buildHtml(workflow), /Keep grades, confidence scores, and P-codes in the detailed review report/);
   const detail = readFileSync(join(outDir, "agents", "frontend-developer.md"), "utf-8");
   assert.ok(detail.includes("# frontend-developer"));
   assert.ok(detail.includes("## Skills"));

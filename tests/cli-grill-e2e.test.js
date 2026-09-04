@@ -232,7 +232,7 @@ test("a mixed Grill Me request continues into the requested PR review", () => {
   const workflow = JSON.parse(readFileSync(built.workflow, "utf8"));
   assert.equal(workflow.playbook, "improve-plan");
   assert.equal(workflow.continuation.playbook, "pr-review");
-  assert.ok(workflow.workflow.phases.indexOf("freeze exact base and head") >
+  assert.ok(workflow.workflow.phases.indexOf("get the latest PR version") >
     workflow.workflow.phases.indexOf("confirm shared understanding"));
   assert.ok(workflow.skill_flow.steps.some((step) => step.skill === "code-review"));
   assert.match(readFileSync(join(attemptFolder, "README.md"), "utf8"), /Continued task[\s\S]*pr-review/);
@@ -246,7 +246,7 @@ test("a mixed Grill Me request continues into the requested PR review", () => {
     "--comment", "review scope confirmed", "--path", target, "--json",
   ], env, target);
   const continued = JSON.parse(run(["attempt", "advance", built.attempt.id, "--auto", "--path", target, "--json"], env, target));
-  assert.equal(continued.current_phase, "recheck head and deduplicate before posting");
+  assert.equal(continued.current_phase, "confirm no issues or checks remain");
   assert.equal(continued.gates.find((gate) => gate.phase === "define verification gates").status, "passed");
 });
 

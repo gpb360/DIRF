@@ -13,9 +13,9 @@ export const FOCUSED_OUTPUT_RULES = [
 ];
 
 const PR_REVIEW_OUTPUT_RULES = [
-  "For PR review updates, use `Fixed`, `Proof`, `Status`, and `Next`; omit a label only when it has nothing useful to say.",
-  "Show the A-F grade, quality and evidence confidence, P0/P1/P2/P3 counts, and whether the zero-finding definition of done is met.",
-  "Publish or link the rendered findings ledger so every retained finding shows its P0-P3 priority and confidence score.",
+  "Say how many confirmed issues remain, what checks passed, whether another review is running, and what happens next.",
+  "Keep grades, confidence scores, and P-codes in the detailed review report; do not put them in a normal user update unless the user asks.",
+  "Never ask to merge while an issue remains, a required check or review is still running, or the detailed review covers an older commit.",
 ];
 
 function focusedOutputRules(workflow) {
