@@ -795,12 +795,19 @@ function cmdMigrate(name, target) {
 function cmdSetup(args) {
   const target = args._[0] || args.path || ".";
   const result = setupProject(target, { tracker: args.tracker, context: args.context, reservePercent: args.reservePercent });
-  const authority = process.env.DIRF_ORCHESTRATOR_TOKEN
-    ? bindExecutionAuthority(result.slug, process.env.DIRF_ORCHESTRATOR_TOKEN)
-    : null;
+  let authority = null;
+  let authorityNote = "";
+  if (process.env.DIRF_ORCHESTRATOR_TOKEN) {
+    try {
+      authority = bindExecutionAuthority(result.slug, process.env.DIRF_ORCHESTRATOR_TOKEN);
+    } catch (error) {
+      authorityNote = `${error.message}. Live observations with this token stay rejected until the stored authority record is explicitly re-bound.`;
+    }
+  }
   console.log(`DIRF configured: ${result.root}`);
   console.log(result.created.length ? `Created: ${result.created.join(", ")}` : "Already configured; no files changed.");
   if (authority) console.log(authority.changed ? "Execution authority initialized." : "Execution authority already initialized.");
+  if (authorityNote) console.log(`Execution authority note: ${authorityNote}`);
   const discovered = enrichDiscovered(discover(result.root));
   const gaps = findCapabilityGaps(loadPlaybooks(), discovered);
   console.log(`Detected ${Object.keys(discovered).length} installed skills; no skills were installed.`);

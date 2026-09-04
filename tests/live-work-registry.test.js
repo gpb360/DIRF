@@ -581,3 +581,55 @@ test("concurrent advance and observation preserve both lifecycle and ownership",
   assert.equal(final.current_phase, "verify");
   assert.equal(final.execution.session_id, "owner");
 });
+
+test("setup stays idempotent when the orchestrator token rotates", () => {
+  const { root, slug } = fixture({ bindAuthority: false });
+  const env = {
+    ...process.env,
+    DIRF_HOME: process.env.DIRF_HOME,
+    DIRF_ORCHESTRATOR_TOKEN: AUTHORITY_TOKEN,
+  };
+  const first = execFileSync(process.execPath, [CLI, "setup", root], { cwd: root, env, encoding: "utf8" });
+  assert.match(first, /Execution authority initialized/);
+  const again = execFileSync(process.execPath, [CLI, "setup", root], { cwd: root, env, encoding: "utf8" });
+  assert.match(again, /Already configured/);
+  assert.match(again, /Execution authority already initialized/);
+
+  const rotated = execFileSync(process.execPath, [CLI, "setup", root], {
+    cwd: root,
+    env: { ...env, DIRF_ORCHESTRATOR_TOKEN: "rotated-orchestrator-token-0123456789abcdef" },
+    encoding: "utf8",
+  });
+  assert.match(rotated, /Execution authority note: execution authority is already initialized/);
+
+  const now = new Date();
+  const attempt = trackedAttempt(slug, "token guard task", now, "## Exact next action\n\nStay guarded.\n");
+  const kept = observeAttempt(slug, attempt.id, { harness: "codex", sessionId: "kept-thread", status: "active", worktreePath: root }, now);
+  assert.equal(kept.current_execution.session_id, "kept-thread");
+  assert.throws(
+    () => observeAttempt(slug, attempt.id, {
+      authorityToken: "rotated-orchestrator-token-0123456789abcdef",
+      harness: "codex",
+      sessionId: "rotated-thread",
+      status: "active",
+      worktreePath: root,
+    }, now),
+    /authority/,
+  );
+});
+
+test("observations with a future observed time are rejected", () => {
+  const now = new Date("2026-09-03T15:00:00.000Z");
+  const { root, slug } = fixture();
+  const attempt = trackedAttempt(slug, "future clock task", now, "## Exact next action\n\nContinue later.\n");
+  assert.throws(
+    () => observeAttempt(slug, attempt.id, {
+      harness: "codex",
+      sessionId: "future-thread",
+      status: "active",
+      worktreePath: root,
+      observedAt: new Date(now.getTime() + 60_000).toISOString(),
+    }, now),
+    /cannot be in the future/,
+  );
+});
