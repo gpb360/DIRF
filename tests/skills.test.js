@@ -1,7 +1,7 @@
 // Skill discovery tests via node:test. Run: npm run test:skills
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ROOT } from "../src/paths.js";
@@ -281,4 +281,34 @@ test("discoverAgents indexes project agent files but never the kit's bundled age
   const bundledRoot = join(ROOT, "agents").replace(/\\/g, "/");
   const kitIdx = skills.discoverAgents();
   assert.equal(Object.values(kitIdx).some((a) => String(a.path).startsWith(bundledRoot + "/")), false);
+});
+
+test("a required_files declaration the parser cannot read is flagged, never silent", () => {
+  const root = makeRoot();
+  write(join(root, "skills", "block-yaml-skill"), "SKILL.md",
+    "---\nname: block-yaml-skill\ndescription: declares required files in block YAML\nmetadata:\n  required_files:\n    - scripts/missing.md\n---\nbody");
+  const idx = skills.discover(root);
+  const entry = idx["block-yaml-skill"];
+  assert.equal(entry.required_files_unreadable, true, "unreadable declaration must be flagged on the index entry");
+  assert.equal(entry.readiness, undefined, "an unreadable declaration must not manufacture a readiness verdict");
+  const warnings = skills.lintSkillMetadata(entry);
+  assert.ok(
+    warnings.some((warning) => /required_files is declared but cannot be read/.test(warning)),
+    `lint must surface the unreadable declaration, got: ${JSON.stringify(warnings)}`,
+  );
+});
+
+test("an in-folder symlinked required file resolves through containment", () => {
+  const root = makeRoot();
+  const folder = join(root, "skills", "linked-skill");
+  write(folder, "SKILL.md",
+    "---\nname: linked-skill\ndescription: uses a symlink\nmetadata: {\"required_files\": [\"link.md\"]}\n---\nbody");
+  write(folder, "real.md", "real bytes");
+  try {
+    symlinkSync(join(folder, "real.md"), join(folder, "link.md"), "file");
+  } catch {
+    return; // symlink privileges unavailable in this environment
+  }
+  const idx = skills.discover(root);
+  assert.equal(idx["linked-skill"].readiness, "ready", "an in-folder symlink must not be reported missing");
 });

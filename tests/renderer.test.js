@@ -496,3 +496,23 @@ test("decision interviews render the human checkpoint and task-specific orchestr
   assert.match(html, /Done when/);
   assert.match(html, /concrete verification commands/);
 });
+
+test("an installed-but-incomplete resolved skill names its missing files", () => {
+  const workflow = {
+    name: "demo", task: "review a pull request", playbook: "pr-review",
+    workflow: { phases: ["a", "b"], output: "a page", validation: "v", recovery: "r" },
+    agents: [{ name: "frontend-developer", file: "agents/frontend-developer.md", tags: [], skills: [{ name: "half-built", status: "incomplete", missing_files: ["scripts/tool.md"] }] }],
+    baseline_skills: [],
+    skill_flow: { label: "persisted", branches: [], steps: [] },
+    policy: "policies/workflow-policy.md", schema_version: 2,
+  };
+  const outDir = mkdtempSync(join(tmpdir(), "dirf-incomplete-"));
+  buildInstructions(workflow, outDir);
+  const agentDetail = readFileSync(join(outDir, "agents", "frontend-developer.md"), "utf-8");
+  assert.ok(agentDetail.includes("`half-built`"), "incomplete skill stays listed");
+  assert.ok(agentDetail.includes("installed — missing: scripts/tool.md"), "the exact missing files must be named");
+  assert.doesNotMatch(agentDetail, /half-built.*not installed/, "an installed package must not be labelled not installed");
+
+  const html = buildHtml(workflow);
+  assert.ok(html.includes("missing: scripts/tool.md"), "HTML chip must name the missing files too");
+});

@@ -596,7 +596,10 @@ function writeAgentDetail(agentRef, agentsSub, workflow = {}) {
   if (resolved.length) {
     for (const s of resolved) {
       const mark = s.status === "installed" ? "✅" : "⚠️";
-      const note = s.status === "installed" ? "" : " (recommended — not installed)";
+      const missing = missingSkillFiles(s);
+      const note = s.status === "installed" ? ""
+        : s.status === "incomplete" ? ` (installed — missing: ${missing.join(", ") || "unknown"})`
+        : " (recommended — not installed)";
       const summ = s.summary ? ` — ${s.summary}` : "";
       lines.push(`- ${mark} \`${s.name}\`${summ}${note}`);
     }
@@ -675,7 +678,8 @@ function chip(skill) {
   const status = skill.status || "recommended";
   const cat = skill.category || "";
   const classes = ["chip", status, cat].filter(Boolean).join(" ");
-  const note = status === "installed" ? "" : " ⚠";
+  const note = status === "installed" ? ""
+    : status === "incomplete" ? ` ⚠ missing: ${escapeHtml(missingSkillFiles(skill).join(", ") || "unknown")}` : " ⚠";
   return `<span class="${classes}">${escapeHtml(skill.name)}${note}</span>`;
 }
 

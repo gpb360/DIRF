@@ -13,7 +13,7 @@
 //   - read SKILL.md first, fall back to skill.json then README.md frontmatter
 //     (catches skills like ui-ux-pro-max that ship no SKILL.md)
 //   - scan ~/.zcode/.../skills roots too (catches skills like superpowers)
-import { readFileSync, readdirSync, statSync, lstatSync, realpathSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, statSync, realpathSync, existsSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import { loadJson, SKILLS, ROOT } from "./paths.js";
@@ -142,6 +142,13 @@ function readSkillFile(path) {
     return ["", {}, 0, ""];
   }
   const fm = parseFrontmatter(text);
+  // A required_files declaration the tolerant parser cannot read (block YAML
+  // under metadata:, or an indented list) would silently bypass fail-closed
+  // readiness. Flag it so lint surfaces the unreadable declaration instead.
+  const fmEnd = text.startsWith("---") ? text.indexOf("\n---", 4) : -1;
+  if (fmEnd !== -1 && /(^|\n)\s*required_files\s*:/.test(text.slice(4, fmEnd)) && !requiredFilesMetadata(fm).length) {
+    fm.required_files_unreadable = true;
+  }
   const body = stripFrontmatter(text);
   return [fm.name || basenameDir(path), fm, body.split(/\r?\n/).length, body];
 }
@@ -217,7 +224,9 @@ function skillResourceReadiness(folder, metadata) {
     const fromFolder = relative(folder, candidate).replace(/\\/g, "/");
     if (fromFolder === ".." || fromFolder.startsWith("../") || isAbsolute(fromFolder)) return true;
     try {
-      if (lstatSync(candidate).isSymbolicLink()) return true;
+      // Symlinks are resolved through realpathSync like any intermediate
+      // directory: an in-folder link passes containment, an escaping one is
+      // caught by the same check — no special final-component rule.
       const realCandidate = realpathSync(candidate);
       const realRelative = relative(realFolder, realCandidate).replace(/\\/g, "/");
       if (realRelative === ".." || realRelative.startsWith("../") || isAbsolute(realRelative)) return true;
@@ -418,6 +427,7 @@ function indexOne(path, index) {
     body_chars: body.length,
     ...inspectSkillReadiness(path, fm),
     // Only emitted when present — plain skills keep their historical shape.
+    ...(fm.required_files_unreadable ? { required_files_unreadable: true } : {}),
     ...(capabilities.length ? { capabilities } : {}),
     ...(references.length ? { references } : {}),
   };
@@ -487,6 +497,9 @@ export function lintSkillMetadata(entry) {
   if (dir && dir !== name) warnings.push(`name "${name}" does not match parent directory "${dir}" (breaks installers' routing)`);
   if (entry?.body_lines && entry.body_lines > 500) warnings.push(`SKILL.md body is ${entry.body_lines} lines (keep under 500 — progressive disclosure)`);
   if (skillIsIncomplete(entry)) warnings.push(`missing required files: ${missingSkillFiles(entry).join(", ") || "unknown"}`);
+  if (entry?.required_files_unreadable) {
+    warnings.push("required_files is declared but cannot be read (block YAML is not parsed); use the single-line JSON form — metadata: {\"required_files\": [\"path\"]}");
+  }
   return warnings;
 }
 

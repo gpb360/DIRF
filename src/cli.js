@@ -662,7 +662,12 @@ function cmdResume(args) {
     writeAttemptSkillBindings(project.slug, attempt.id, bindings);
     if ([2, 3, 4, 5].includes(plan.schema_version)) renderPlan(planPath, target, false, true);
     const missing = bindings.filter((binding) => binding.status !== "installed");
-    if (missing.length) throw new Error(`Cannot resume: required skill${missing.length === 1 ? "" : "s"} not installed: ${missing.map((binding) => binding.skill).join(", ")}`);
+    if (missing.length) {
+      const detail = missing.map((binding) => skillIsIncomplete(binding)
+        ? `${binding.skill} (missing: ${missingSkillFiles(binding).join(", ") || "unknown"})`
+        : binding.skill).join(", ");
+      throw new Error(`Cannot resume: required skill${missing.length === 1 ? "" : "s"} not installed: ${detail}`);
+    }
   }
   // Resume is the "work is starting" signal: a planned attempt auto-starts so
   // the lifecycle can't drift (no phases in its workflow → stays planned).
@@ -855,7 +860,9 @@ function cmdSkillsScan(args) {
     console.log(`  ${ref.name.padEnd(24)} ${status}${loc}${invocation}${missing}`);
   }
   const discoveredList = Object.values(idx);
-  const userInvoked = discoveredList.filter((skill) => skill.invocation === "user").length;
+  // The three counts partition the discovered total: incomplete packages are
+  // excluded from both invocation counts, never double-counted.
+  const userInvoked = discoveredList.filter((skill) => skill.invocation === "user" && !skillIsIncomplete(skill)).length;
   const routable = discoveredList.filter((skill) => skill.invocation !== "user" && !skillIsIncomplete(skill)).length;
   console.log(`\nInvocation: ${routable} model-invoked (agent-routable), ${userInvoked} user-invoked (human-only), ${incompleteCount} incomplete (not routable).`);
   const referrers = discoveredList.filter((skill) => skill.references?.length);
