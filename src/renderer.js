@@ -2,6 +2,7 @@
 import { readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { AGENTS_DIR, ROOT } from "./paths.js";
+import { SKILL_STATUS, missingSkillFiles, skillIsIncomplete } from "./skills.js";
 
 const GOVERNANCE_MARKER = "<!-- governance:v1 -->";
 const FM_RE = /^([A-Za-z0-9_-]+):\s*(.*)$/;
@@ -503,7 +504,9 @@ export function buildInstructions(workflow, outDir, skillBindings = []) {
     const binding = skillBindings[index];
     const location = binding?.status === "installed" && binding.entry
       ? `Open the installed skill at \`${binding.entry}\`.`
-      : "This skill is not installed now. Stop before this step and ask the user what to use.";
+      : skillIsIncomplete(binding) && binding.entry
+        ? `This skill package is incomplete at \`${dirname(binding.entry)}\`. Missing required files: ${missingSkillFiles(binding).join(", ") || "unknown"}. Stop before this step and repair or reinstall it.`
+        : "This skill is not installed now. Stop before this step and ask the user what to use.";
     writeFileSync(skillReadme, [
       "---", `name: ${JSON.stringify(step.skill)}`, "kind: skill", `description: ${JSON.stringify(step.reason)}`,
       "uses: []", "details: []", `inputs: ${JSON.stringify([step.stage])}`,
@@ -593,7 +596,10 @@ function writeAgentDetail(agentRef, agentsSub, workflow = {}) {
   if (resolved.length) {
     for (const s of resolved) {
       const mark = s.status === "installed" ? "✅" : "⚠️";
-      const note = s.status === "installed" ? "" : " (recommended — not installed)";
+      const missing = missingSkillFiles(s);
+      const note = s.status === "installed" ? ""
+        : s.status === "incomplete" ? ` (installed — missing: ${missing.join(", ") || "unknown"})`
+        : " (recommended — not installed)";
       const summ = s.summary ? ` — ${s.summary}` : "";
       lines.push(`- ${mark} \`${s.name}\`${summ}${note}`);
     }
@@ -660,7 +666,7 @@ pre{background:#0b0d12;border:1px solid var(--line);border-radius:6px;padding:12
 pre code{background:none;border:0;padding:0}.mute{color:var(--mute)}
 .gate{border-left:3px solid var(--warn);background:rgba(210,153,34,.08);padding:8px 12px;margin:10px 0;border-radius:0 4px 4px 0}
 .chip{display:inline-block;font-size:12px;padding:2px 8px;border-radius:10px;margin:0 4px 4px 0;border:1px solid var(--line)}
-.chip.installed{color:var(--ok);border-color:rgba(63,185,80,.4)}.chip.recommended{color:var(--warn);border-color:rgba(210,153,34,.4)}
+.chip.installed{color:var(--ok);border-color:rgba(63,185,80,.4)}.chip.incomplete,.chip.recommended{color:var(--warn);border-color:rgba(210,153,34,.4)}
 .chip.design{color:#a371f7}.chip.quality{color:#3fb950}.chip.security{color:#f85149}.chip.minimalism{color:#58a6ff}
 details{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:12px 16px;margin:8px 0}
 summary{cursor:pointer;font-weight:600;font-size:16px}summary h3{display:inline;margin:0;color:var(--ink)}
@@ -672,7 +678,8 @@ function chip(skill) {
   const status = skill.status || "recommended";
   const cat = skill.category || "";
   const classes = ["chip", status, cat].filter(Boolean).join(" ");
-  const note = status === "installed" ? "" : " ⚠";
+  const note = status === "installed" ? ""
+    : status === "incomplete" ? ` ⚠ missing: ${escapeHtml(missingSkillFiles(skill).join(", ") || "unknown")}` : " ⚠";
   return `<span class="${classes}">${escapeHtml(skill.name)}${note}</span>`;
 }
 
@@ -782,12 +789,18 @@ export function buildHtml(workflow, skillBindings = []) {
   parts.push("<h2>Skill flow</h2>");
   parts.push("<p class='mute'>Each step points to the installed skill selected on this machine.</p><ol>");
   for (const [index, step] of workflow.skill_flow.steps.entries()) {
-    const status = (skillBindings[index]?.status || step.status) === "installed" ? "installed" : "recommended";
+    const bindingStatus = skillBindings[index]?.status || step.status;
+    const status = bindingStatus === SKILL_STATUS.installed
+      ? SKILL_STATUS.installed
+      : skillIsIncomplete(bindingStatus) ? SKILL_STATUS.incomplete : SKILL_STATUS.recommended;
     const label = step.invocation === "user" ? `user checkpoint: ${step.skill}` : step.skill;
     parts.push(`<li><span class='chip ${status}'>${escapeHtml(label)}</span> ${escapeHtml(step.reason)}`);
     const binding = skillBindings[index];
     if (binding?.status === "installed" && binding.entry) parts.push(`<br><code>${escapeHtml(binding.entry)}</code>`);
-    else parts.push("<br><span class='mute'>not installed now</span>");
+    else if (skillIsIncomplete(binding) && binding.entry) {
+      parts.push(`<br><code>${escapeHtml(dirname(binding.entry))}</code>`);
+      parts.push(`<br><span class='mute'>incomplete — missing: ${escapeHtml(missingSkillFiles(binding).join(", ") || "unknown")}</span>`);
+    } else parts.push("<br><span class='mute'>not installed now</span>");
     if (step.output) parts.push(`<br><span class='mute'><strong>Done at this step when:</strong> ${escapeHtml(step.output)}</span>`);
     parts.push("</li>");
   }

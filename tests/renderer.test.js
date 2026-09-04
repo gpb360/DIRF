@@ -204,6 +204,18 @@ test("skill steps point to installed files without copying them", () => {
   assert.match(missingLine, /⚠️/);
   assert.doesNotMatch(missingLine, /✅/);
   assert.match(buildHtml(workflow, missingBinding), /chip recommended'>tdd/);
+
+  const incompleteDir = mkdtempSync(join(tmpdir(), "dirf-instr-incomplete-"));
+  const incompleteBinding = [{
+    skill: "tdd", provider: "codex", status: "incomplete", entry: installed.replaceAll("\\", "/"),
+    required_files: ["scripts/run.cjs"], missing_files: ["scripts/run.cjs"],
+  }];
+  buildInstructions(workflow, incompleteDir, incompleteBinding);
+  const incompleteWrapper = readFileSync(join(incompleteDir, "skills", "01-tdd", "README.md"), "utf8");
+  assert.match(incompleteWrapper, /skill package is incomplete/);
+  assert.match(incompleteWrapper, /scripts\/run\.cjs/);
+  assert.match(buildHtml(workflow, incompleteBinding), /chip incomplete'>tdd/);
+  assert.match(buildHtml(workflow, incompleteBinding), /missing: scripts\/run\.cjs/);
 });
 
 test("focused output can be disabled without changing task instructions", () => {
@@ -483,4 +495,24 @@ test("decision interviews render the human checkpoint and task-specific orchestr
   assert.match(html, /recording decisions and contradictions/);
   assert.match(html, /Done when/);
   assert.match(html, /concrete verification commands/);
+});
+
+test("an installed-but-incomplete resolved skill names its missing files", () => {
+  const workflow = {
+    name: "demo", task: "review a pull request", playbook: "pr-review",
+    workflow: { phases: ["a", "b"], output: "a page", validation: "v", recovery: "r" },
+    agents: [{ name: "frontend-developer", file: "agents/frontend-developer.md", tags: [], skills: [{ name: "half-built", status: "incomplete", missing_files: ["scripts/tool.md"] }] }],
+    baseline_skills: [],
+    skill_flow: { label: "persisted", branches: [], steps: [] },
+    policy: "policies/workflow-policy.md", schema_version: 2,
+  };
+  const outDir = mkdtempSync(join(tmpdir(), "dirf-incomplete-"));
+  buildInstructions(workflow, outDir);
+  const agentDetail = readFileSync(join(outDir, "agents", "frontend-developer.md"), "utf-8");
+  assert.ok(agentDetail.includes("`half-built`"), "incomplete skill stays listed");
+  assert.ok(agentDetail.includes("installed — missing: scripts/tool.md"), "the exact missing files must be named");
+  assert.doesNotMatch(agentDetail, /half-built.*not installed/, "an installed package must not be labelled not installed");
+
+  const html = buildHtml(workflow);
+  assert.ok(html.includes("missing: scripts/tool.md"), "HTML chip must name the missing files too");
 });

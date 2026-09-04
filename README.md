@@ -143,6 +143,9 @@ project and common host locations, then maps those capabilities to what is
 actually installed. Missing optional capabilities are reported as gaps instead
 of causing the build to fail.
 
+Skills with required package resources follow the
+[readiness contract](docs/writing-great-playbooks.md#declare-required-skill-resources).
+
 Generated attempts contain portable capability names and provider hints, not
 hardcoded installation paths. The Markdown can therefore be executed by Codex,
 Claude, Cursor, another host, or a person. Existing project instructions still

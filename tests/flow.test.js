@@ -194,6 +194,69 @@ test("single-word capabilities resolve against local install descriptions", () =
   assert.deepEqual(flow.gaps, []);
 });
 
+test("automatic routing skips incomplete skill packages", () => {
+  const selection = {
+    playbook: "demo", agents: [],
+    skill_flow: { label: "demo", steps: [{ stage: "test", capability: "testing", reason: "Test the change" }] },
+  };
+  const flow = buildFlow(selection, { task: "test the change" }, {
+    testing: {
+      path: "/broken", provider: "codex", capabilities: ["testing"],
+      readiness: "incomplete", required_files: ["scripts/run.cjs"], missing_files: ["scripts/run.cjs"],
+    },
+    "test-runner": {
+      path: "/ready", provider: "codex", capabilities: ["testing"], readiness: "ready",
+    },
+  });
+
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["test-runner"]);
+  assert.deepEqual(flow.steps[0].rejected_candidates, []);
+  assert.deepEqual(flow.gaps, []);
+});
+
+test("an explicitly requested incomplete skill blocks with exact missing resources", () => {
+  const selection = {
+    playbook: "demo", agents: [],
+    skill_flow: { label: "demo", steps: [{ stage: "test", capability: "testing", reason: "Test the change" }] },
+  };
+  const flow = buildFlow(selection, { task: "use testing for the test change" }, {
+    testing: {
+      path: "/broken", provider: "codex", capabilities: ["testing"],
+      readiness: "incomplete", required_files: ["scripts/run.cjs"], missing_files: ["scripts/run.cjs"],
+    },
+    "test-runner": {
+      path: "/ready", provider: "codex", capabilities: ["testing"], readiness: "ready",
+    },
+  });
+
+  assert.deepEqual(flow.steps, []);
+  assert.equal(flow.gaps[0].code, "incomplete_skill");
+  assert.equal(flow.gaps[0].blocking, true);
+  assert.match(flow.gaps[0].question, /testing/);
+  assert.match(flow.gaps[0].question, /scripts\/run\.cjs/);
+});
+
+test("an explicitly requested incomplete skill cannot be bypassed by a capability mismatch", () => {
+  const selection = {
+    playbook: "demo", agents: [],
+    skill_flow: { label: "demo", steps: [{ stage: "test", capability: "testing", reason: "Test the change" }] },
+  };
+  const flow = buildFlow(selection, { task: "use broken-skill to test the change" }, {
+    "broken-skill": {
+      path: "/broken", provider: "codex", capabilities: ["deployment"],
+      readiness: "incomplete", missing_files: ["scripts/run.cjs"],
+    },
+    "test-runner": {
+      path: "/ready", provider: "codex", capabilities: ["testing"], readiness: "ready",
+    },
+  });
+
+  assert.deepEqual(flow.steps, []);
+  assert.equal(flow.gaps[0].code, "incomplete_skill");
+  assert.match(flow.gaps[0].question, /broken-skill/);
+  assert.match(flow.gaps[0].question, /scripts\/run\.cjs/);
+});
+
 test("user-invoked skills are not routing candidates when model-invoked ones exist", () => {
   const selection = {
     playbook: "demo", agents: [],
@@ -370,7 +433,7 @@ test("an explicit human router with no installed engine stops with a clear gap",
   assert.deepEqual(flow.steps.map(({ skill }) => skill), ["grill-me"]);
   assert.equal(flow.gaps[0].code, "invalid_router_reference");
   assert.equal(flow.gaps[0].blocking, true);
-  assert.match(flow.gaps[0].question, /none of its installed model-invoked references covers/);
+  assert.match(flow.gaps[0].question, /unavailable, human-only, or incomplete dependencies: missing-engine/);
 });
 
 test("an explicit human router binds its engine and every model dependency", () => {
@@ -417,7 +480,53 @@ test("an explicit human router fails when any referenced model dependency is mis
   assert.deepEqual(flow.steps.map(({ skill }) => skill), ["grill-with-docs"]);
   assert.equal(flow.gaps[0].code, "invalid_router_reference");
   assert.equal(flow.gaps[0].blocking, true);
-  assert.match(flow.gaps[0].question, /unavailable or human-only dependencies: domain-modeling/);
+  assert.match(flow.gaps[0].question, /unavailable, human-only, or incomplete dependencies: domain-modeling/);
+});
+
+test("an explicit human router fails with exact incomplete dependency resources", () => {
+  const selection = {
+    playbook: "improve-plan", agents: [],
+    skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
+  };
+  const flow = buildFlow(selection, { task: "grill with docs before implementation" }, {
+    "grill-with-docs": {
+      path: "/user/grill-with-docs", provider: "codex", invocation: "user",
+      capabilities: ["plan interview"], references: ["domain-modeling", "grilling"],
+    },
+    "domain-modeling": {
+      path: "/model/domain-modeling", provider: "codex", invocation: "model",
+      readiness: "incomplete", missing_files: ["scripts/model.cjs"],
+    },
+    grilling: {
+      path: "/model/grilling", provider: "codex", invocation: "model",
+      description: "Relentless interview that sharpens a plan or design",
+    },
+  });
+
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["grill-with-docs"]);
+  assert.equal(flow.gaps[0].code, "invalid_router_reference");
+  assert.match(flow.gaps[0].question, /domain-modeling \(missing: scripts\/model\.cjs\)/);
+});
+
+test("an explicit human router reports exact resources when every dependency is incomplete", () => {
+  const selection = {
+    playbook: "improve-plan", agents: [],
+    skill_flow: { label: "decide", steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }] },
+  };
+  const flow = buildFlow(selection, { task: "grill with docs before implementation" }, {
+    "grill-with-docs": {
+      path: "/user/grill-with-docs", provider: "codex", invocation: "user",
+      capabilities: ["plan interview"], references: ["domain-modeling"],
+    },
+    "domain-modeling": {
+      path: "/model/domain-modeling", provider: "codex", invocation: "model",
+      readiness: "incomplete", missing_files: ["scripts/model.cjs"],
+    },
+  });
+
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["grill-with-docs"]);
+  assert.equal(flow.gaps[0].code, "invalid_router_reference");
+  assert.match(flow.gaps[0].question, /domain-modeling \(missing: scripts\/model\.cjs\)/);
 });
 
 test("multi-session feature activates spec, ticket, and handoff branches", () => {
@@ -648,8 +757,21 @@ test("schema v2 requires resolved skill snapshots", () => {
   assert.deepEqual(validateSnapshot(snapshot, "demo.json"), [
     "demo.json: baseline skill 1 must be a resolved skill object",
     "demo.json: agent 1 skill 1 must be a resolved skill object",
-    "demo.json: skill_flow step 1 status must be installed, recommended, or fallback",
+    "demo.json: skill_flow step 1 status must be installed, incomplete, recommended, or fallback",
   ]);
+});
+
+test("schema v5 preserves incomplete skill diagnostics", () => {
+  const snapshot = {
+    schema_version: 5, name: "demo", task: "build", playbook: "fullstack-feature", playbook_description: "Build",
+    agents: [], questions: [], capability_gaps: [], policy: "policies/workflow-policy.md",
+    baseline_skills: [{ name: "testing", status: "incomplete", provider: "codex", missing_files: ["scripts/run.cjs"] }],
+    skill_flow: { label: "build", steps: [] },
+    attempt: { id: "demo", path: "attempts/demo" },
+    lifecycle: { clarify: "c", prototype: "p", split: "s", implement: "i", review: "r" },
+  };
+
+  assert.deepEqual(validateSnapshot(snapshot, "demo"), []);
 });
 
 test("schema v2 reports malformed collections instead of throwing", () => {

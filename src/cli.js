@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { ROOT, REGISTRY, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, fileHash, folderHash, loadJson } from "./paths.js";
 import { collectRoutingFacts, loadPlaybooks, recommend } from "./router.js";
-import { bundledSkills, discover, discoverAgents, enrichDiscovered, lintSkillMetadata, loadRegistry, loadTrustedSources, providerForPath, resolveAgentSkills, tokenBudget } from "./skills.js";
+import { bundledSkills, discover, discoverAgents, enrichDiscovered, lintSkillMetadata, loadRegistry, loadTrustedSources, missingSkillFiles, providerForPath, resolveAgentSkills, skillIsIncomplete, tokenBudget } from "./skills.js";
 import { FOCUSED_OUTPUT_RULES, buildInstructions, buildHtml } from "./renderer.js";
 import { main as validateMain, validateSnapshot } from "./validate.js";
 import { inspect, detectStackProfile } from "./inspect.js";
@@ -673,7 +673,12 @@ function cmdResume(args) {
     writeAttemptSkillBindings(project.slug, attempt.id, bindings);
     if ([2, 3, 4, 5].includes(plan.schema_version)) renderPlan(planPath, target, false, true);
     const missing = bindings.filter((binding) => binding.status !== "installed");
-    if (missing.length) throw new Error(`Cannot resume: required skill${missing.length === 1 ? "" : "s"} not installed: ${missing.map((binding) => binding.skill).join(", ")}`);
+    if (missing.length) {
+      const detail = missing.map((binding) => skillIsIncomplete(binding)
+        ? `${binding.skill} (missing: ${missingSkillFiles(binding).join(", ") || "unknown"})`
+        : binding.skill).join(", ");
+      throw new Error(`Cannot resume: required skill${missing.length === 1 ? "" : "s"} not installed: ${detail}`);
+    }
   }
   // Resume is the "work is starting" signal: a planned attempt auto-starts so
   // the lifecycle can't drift (no phases in its workflow → stays planned).
@@ -851,26 +856,31 @@ function cmdFolderRender(target) {
 function cmdSkillsScan(args) {
   const scanRoot = args.path ? (isAbsolute(args.path) ? args.path : resolve(process.cwd(), args.path)) : null;
   const idx = discover(scanRoot);
-  console.log(`Discovered ${Object.keys(idx).length} installed skills across scanned roots.`);
+  const incompleteCount = Object.values(idx).filter(skillIsIncomplete).length;
+  console.log(`Discovered ${Object.keys(idx).length} skill packages across scanned roots${incompleteCount ? ` (${incompleteCount} incomplete)` : ""}.`);
   const agentIdx = discoverAgents(scanRoot);
   const agentNames = Object.keys(agentIdx);
   console.log(`Discovered ${agentNames.length} installed agents${agentNames.length ? `: ${agentNames.slice(0, 12).join(", ")}${agentNames.length > 12 ? ", …" : ""}` : " — DIRF will offer its bundled defaults as a backup."}`);
   console.log("\nRegistry references resolved:");
   for (const ref of loadRegistry().skills || []) {
     const hit = idx[ref.name];
-    const status = hit ? "installed" : "recommended (not installed)";
+    const status = !hit ? "recommended (not installed)" : skillIsIncomplete(hit) ? "incomplete (not routable)" : "installed";
     const loc = hit ? ` -> ${hit.path}` : "";
     const invocation = hit ? (hit.invocation === "user" ? " [user-invoked — human-only]" : " [model-invoked]") : "";
-    console.log(`  ${ref.name.padEnd(24)} ${status}${loc}${invocation}`);
+    const missing = skillIsIncomplete(hit) ? ` [missing: ${missingSkillFiles(hit).join(", ") || "unknown"}]` : "";
+    console.log(`  ${ref.name.padEnd(24)} ${status}${loc}${invocation}${missing}`);
   }
   const discoveredList = Object.values(idx);
-  const userInvoked = discoveredList.filter((skill) => skill.invocation === "user").length;
-  console.log(`\nInvocation: ${discoveredList.length - userInvoked} model-invoked (agent-routable), ${userInvoked} user-invoked (human-only).`);
+  // The three counts partition the discovered total: incomplete packages are
+  // excluded from both invocation counts, never double-counted.
+  const userInvoked = discoveredList.filter((skill) => skill.invocation === "user" && !skillIsIncomplete(skill)).length;
+  const routable = discoveredList.filter((skill) => skill.invocation !== "user" && !skillIsIncomplete(skill)).length;
+  console.log(`\nInvocation: ${routable} model-invoked (agent-routable), ${userInvoked} user-invoked (human-only), ${incompleteCount} incomplete (not routable).`);
   const referrers = discoveredList.filter((skill) => skill.references?.length);
   if (referrers.length) {
     console.log("\nSkill-to-skill references (backticked /commands in bodies):");
     for (const skill of referrers) {
-      const resolved = skill.references.map((ref) => `${ref} (${idx[ref] ? "installed" : "referenced, not installed"})`).join(", ");
+      const resolved = skill.references.map((ref) => `${ref} (${!idx[ref] ? "referenced, not installed" : skillIsIncomplete(idx[ref]) ? "incomplete" : "installed"})`).join(", ");
       console.log(`  ${skill.name} → ${resolved}`);
     }
   }

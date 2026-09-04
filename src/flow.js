@@ -1,6 +1,6 @@
 // Assemble an already-selected Playbook's ordered skill flow.
 // Selection happens in router.js; this module never classifies a task.
-import { bundledSkills } from "./skills.js";
+import { bundledSkills, missingSkillFiles, skillIsIncomplete } from "./skills.js";
 import { ARTIFACT_TYPES } from "./artifacts.js";
 import { affirmativeRoutingText, negatesInterviewCapability } from "./router.js";
 
@@ -301,7 +301,7 @@ function selectCapability(requirement, selection, context, skillIndex) {
   // misroutes. They stay indexed and visible in `skills scan`, but are not
   // candidates for autonomous selection.
   const entries = Object.entries(skillIndex);
-  const pool = entries.filter(([, item]) => item.invocation !== "user");
+  const pool = entries.filter(([, item]) => item.invocation !== "user" && !skillIsIncomplete(item));
   const ranked = pool.map(([name, item]) => {
     const candidate = words([name, item.description, item.summary, item.category, ...(item.applies_to || []), ...(item.tags || [])].join(" "));
     const declared = declaredCapabilities(item);
@@ -394,6 +394,28 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
   const gaps = [];
   const scoped = scopedSkillIndex(skillIndex, context.allowedSkills);
   const installed = withRouterCapabilities(withoutNegatedHumanRouters(context.task, scoped));
+  const explicitlyIncomplete = Object.entries(installed)
+    .filter(([name, item]) => skillIsIncomplete(item) && explicitlyRequests(affirmativeTask, name))
+    .sort(([a], [b]) => a.localeCompare(b));
+  if (explicitlyIncomplete.length) {
+    const firstRequirement = requirements[0] || { stage: "route", capability: "skill readiness", reason: "Use the explicitly requested skill." };
+    return {
+      playbook: selection.playbook,
+      label: flow.label,
+      steps: [],
+      gaps: explicitlyIncomplete.map(([name, incomplete]) => ({
+        stage: firstRequirement.stage,
+        capability: firstRequirement.capability,
+        code: "incomplete_skill",
+        blocking: true,
+        question: `${name} was explicitly requested but is incomplete. Missing required files: ${missingSkillFiles(incomplete).join(", ") || "undeclared required resources"}. Repair or reinstall the skill before continuing.`,
+        reason: firstRequirement.reason,
+        requires_approval: true,
+        trusted_candidates: [],
+      })),
+      branches: [...branches],
+    };
+  }
   // The kit ships zero installed skills; its bundled skills/ folder is a
   // fallback consulted ONLY when the local install has nothing for a
   // capability, and the step is labeled so — never passed off as installed.
@@ -415,8 +437,8 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
     if (explicit) {
       const [routerName, router] = explicit;
       const declaredReferences = router.references || [];
-      const references = declaredReferences.filter((name) => installed[name] && installed[name].invocation !== "user");
-      const invalidReferences = declaredReferences.filter((name) => !installed[name] || installed[name].invocation === "user");
+      const references = declaredReferences.filter((name) => installed[name] && installed[name].invocation !== "user" && !skillIsIncomplete(installed[name]));
+      const invalidReferences = declaredReferences.filter((name) => !installed[name] || installed[name].invocation === "user" || skillIsIncomplete(installed[name]));
       steps.push({
         stage: requirement.stage,
         capability: requirement.capability || requirement.stage,
@@ -433,13 +455,18 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
         selection_reason: `explicitly requested human-invoked skill for ${requirement.capability || requirement.stage}`,
         rejected_candidates: [],
       });
-      if (references.length && invalidReferences.length) {
+      if (invalidReferences.length) {
         gaps.push({
           stage: requirement.stage,
           capability: requirement.capability,
           code: "invalid_router_reference",
           blocking: true,
-          question: `${routerName} references unavailable or human-only dependencies: ${invalidReferences.join(", ")}. Install or repair every referenced model-invoked dependency before continuing.`,
+          question: `${routerName} references unavailable, human-only, or incomplete dependencies: ${invalidReferences.map((name) => {
+            const dependency = installed[name];
+            return skillIsIncomplete(dependency)
+              ? `${name} (missing: ${missingSkillFiles(dependency).join(", ") || "unknown"})`
+              : name;
+          }).join("; ")}. Install or repair every referenced model-invoked dependency before continuing.`,
           reason: requirement.reason,
           requires_approval: true,
           trusted_candidates: [],
