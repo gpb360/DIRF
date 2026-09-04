@@ -118,7 +118,7 @@ test("readiness verifies an already-merged PR against GitHub and the live base b
     ["ls-remote --exit-code origin refs/pull/42/head", `${SHA_B}\trefs/pull/42/head`],
     ["ls-remote origin refs/pull/42/merge", ""],
     ["rev-parse HEAD", SHA_B],
-    ["ls-remote --exit-code origin refs/heads/main", `${SHA_D}\trefs/heads/main`],
+    ["ls-remote origin refs/heads/main", `${SHA_C}\trefs/tags/refs/heads/main\n${SHA_D}\trefs/heads/main`],
     [`rev-list --parents -n 1 ${SHA_C}`, `${SHA_C} ${SHA_A} ${SHA_B}`],
     [`merge-base ${SHA_A} ${SHA_B}`, SHA_A],
     ["remote get-url origin", "https://example.test/owner/repo.git"],
@@ -139,6 +139,7 @@ test("readiness verifies an already-merged PR against GitHub and the live base b
     baseRefName: "main",
     mergeCommit: { oid: SHA_C },
   };
+  let liveStateCalls = 0;
   const io = {
     gitOutput: (args) => {
       const command = args.join(" ");
@@ -150,11 +151,16 @@ test("readiness verifies an already-merged PR against GitHub and the live base b
       throw new Error("all required commits should already exist in this fixture");
     },
     pullRequest: () => mergedPr,
+    liveGithubState: () => {
+      liveStateCalls += 1;
+      throw new Error("live checks must not run on the merged path");
+    },
   };
   assert.match(
     run(["ready", reviewPath], io),
     new RegExp(`Verified: the review matches merged PR #42 at ${SHA_B.slice(0, 12)} with merge commit ${SHA_C.slice(0, 12)}`),
   );
+  assert.equal(liveStateCalls, 0, "merged-PR verification must not consult live check runs");
 
   assert.throws(
     () => run(["ready", reviewPath], {
@@ -162,6 +168,38 @@ test("readiness verifies an already-merged PR against GitHub and the live base b
       pullRequest: () => ({ ...mergedPr, state: "CLOSED", mergedAt: null }),
     }),
     /does not report it as merged/i,
+  );
+
+  assert.throws(
+    () => run(["ready", reviewPath], {
+      ...io,
+      gitOutput: (args) => {
+        const command = args.join(" ");
+        if (command === "ls-remote origin refs/heads/main") return "";
+        return io.gitOutput(args);
+      },
+    }),
+    /could not read the merged pull request's live base branch/i,
+  );
+
+  assert.throws(
+    () => run(["ready", reviewPath], {
+      ...io,
+      pullRequest: () => ({ ...mergedPr, headRefOid: SHA_D }),
+    }),
+    /could not validate GitHub's merged pull-request metadata/i,
+  );
+
+  assert.throws(
+    () => run(["ready", reviewPath], {
+      ...io,
+      gitOutput: (args) => {
+        const command = args.join(" ");
+        if (command === `rev-list --parents -n 1 ${SHA_C}`) return `${SHA_C} ${SHA_A}`;
+        return io.gitOutput(args);
+      },
+    }),
+    /against its reported base and head/i,
   );
 
   const wrongParents = new Map(outputByCommand);

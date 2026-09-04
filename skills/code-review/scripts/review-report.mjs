@@ -509,7 +509,15 @@ function currentGitContext(review, io = {}) {
     const baseRef = `refs/heads/${baseRefName}`;
     let liveBaseHead = "";
     try {
-      liveBaseHead = remoteSha(output(["ls-remote", "--exit-code", "origin", baseRef]));
+      // ls-remote patterns match at slash boundaries, so a tag named
+      // `refs/heads/<base>` would shadow the real branch. Require one exact
+      // refname column match.
+      const exact = output(["ls-remote", "origin", baseRef])
+        .split(/\r?\n/)
+        .map((line) => line.trim().split(/\s+/))
+        .filter((columns) => columns.length >= 2 && columns[1] === baseRef);
+      if (exact.length !== 1) throw new Error("no unique base-branch ref");
+      liveBaseHead = remoteSha(exact[0][0]);
     } catch {
       throw new Error("DIRF could not read the merged pull request's live base branch from origin.");
     }
