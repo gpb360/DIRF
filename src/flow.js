@@ -29,7 +29,11 @@ export function validateWorkflowGates(workflow = {}, label = "workflow") {
       errors.push(`${label}: workflow.gates.${phase}.verify must be a non-empty string`);
     }
     if (spec.artifact_type !== undefined) {
-      if (spec.kind !== "decision") errors.push(`${label}: workflow.gates.${phase}.artifact_type is only valid for decision gates`);
+      if (spec.kind === "verify" && spec.artifact_type !== "implementation_evidence") {
+        errors.push(`${label}: workflow.gates.${phase}.artifact_type on verify gates may only require implementation_evidence`);
+      } else if (!["decision", "verify"].includes(spec.kind)) {
+        errors.push(`${label}: workflow.gates.${phase}.artifact_type is only valid for decision gates or implementation_evidence verify gates`);
+      }
       if (!ARTIFACT_TYPES.includes(spec.artifact_type)) {
         errors.push(`${label}: workflow.gates.${phase}.artifact_type must be one of ${ARTIFACT_TYPES.join(", ")}`);
       }

@@ -448,7 +448,8 @@ export function attemptPhases(slug, idOrName) {
 // Playbooks declare per-phase gates (config.workflow.gates), flattened into the
 // persisted workflow.json at selection time (same precedent as
 // conditional_contract). Gate kinds:
-//   verify   — the phase must be advanced past WITH a recorded evidence record
+//   verify   — the phase must be advanced past WITH a recorded evidence record;
+//              it may also require an accepted implementation_evidence artifact
 //   decision — the phase must be advanced past WITH an accepted gate record
 //              (user-owned decision — see the Decision Ownership policy)
 //   soft     — tracked only; advance allowed without a record unless --strict
@@ -471,8 +472,12 @@ function gateRequirement(gates, records, evidence, attempt, phase, strict = fals
     if (records[phase]?.status !== "accepted") {
       return { kind, reason: `Phase "${phase}" is a decision gate — record the decision first (dirf attempt gate ... accept|deny --comment "...")` };
     }
-    if (gate.artifact_type && !governingAttemptArtifact(attempt, gate.artifact_type)) {
+    const governing = gate.artifact_type ? governingAttemptArtifact(attempt, gate.artifact_type) : null;
+    if (gate.artifact_type && !governing) {
       return { kind, reason: `Phase "${phase}" requires an accepted governing artifact of type "${gate.artifact_type}"` };
+    }
+    if (gate.artifact_type === "implementation_evidence" && !governing.accepted_sha256) {
+      return { kind, reason: `Phase "${phase}" requires a SHA-bound accepted implementation_evidence artifact` };
     }
     const declared = String(gate.verify || "").trim();
     if (declared && !evidence[phase]) {
@@ -487,6 +492,13 @@ function gateRequirement(gates, records, evidence, attempt, phase, strict = fals
     const declared = String(gate.verify || "").trim();
     if (declared && evidence[phase].command !== declared) {
       return { kind, reason: `Phase "${phase}" evidence command must match its declared verify command: ${JSON.stringify(declared)}` };
+    }
+    const governing = gate.artifact_type ? governingAttemptArtifact(attempt, gate.artifact_type) : null;
+    if (gate.artifact_type && !governing) {
+      return { kind, reason: `Phase "${phase}" requires an accepted governing artifact of type "${gate.artifact_type}"` };
+    }
+    if (gate.artifact_type === "implementation_evidence" && !governing.accepted_sha256) {
+      return { kind, reason: `Phase "${phase}" requires a SHA-bound accepted implementation_evidence artifact` };
     }
     return null;
   }
@@ -523,7 +535,11 @@ export function attemptGateState(slug, attempt) {
       );
       const artifactType = gates[phase].artifact_type || null;
       const governingArtifact = artifactType ? governingAttemptArtifact(attempt, artifactType) : null;
-      const artifactPending = kind === "decision" && record?.status === "accepted" && artifactType && !governingArtifact;
+      // Existence alone is not enough for implementation_evidence: a historical
+      // accepted artifact without a digest cannot satisfy the binding contract,
+      // so the gate must project as pending exactly when enforcement would block.
+      const artifactPending = artifactType && record?.status !== "denied" &&
+        (!governingArtifact || (artifactType === "implementation_evidence" && !governingArtifact.accepted_sha256));
       const decisionEvidencePending = kind === "decision" && record?.status === "accepted" && declaredVerify && !evidenceMatches;
       let status = "pending";
       if (kind === "decision" && record) status = record.status;
@@ -597,8 +613,16 @@ export function effectiveAttemptStatus(slug, attempt) {
   if (attempt.status === "done" || attempt.status === "in_progress" || attempt.status === "blocked") {
     return { status: attempt.status, status_source: "lifecycle" };
   }
-  if (handoffHasCompletionEvidence(readAttemptHandoffFile(slug, attempt.id)) &&
-      !attemptGateState(slug, attempt).gates.some(gateIsPending)) {
+  // An unreadable gate (for example an accepted artifact edited or deleted
+  // after acceptance) must never upgrade the attempt to done — degrade to the
+  // lifecycle status instead of crashing read-only projections.
+  let gatesCleared = true;
+  try {
+    gatesCleared = !attemptGateState(slug, attempt).gates.some(gateIsPending);
+  } catch {
+    gatesCleared = false;
+  }
+  if (handoffHasCompletionEvidence(readAttemptHandoffFile(slug, attempt.id)) && gatesCleared) {
     return { status: "done", status_source: "handoff" };
   }
   return { status: attempt.status, status_source: "lifecycle" };

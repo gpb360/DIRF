@@ -568,7 +568,17 @@ function cmdRender(args) {
 function publicAttemptForSlug(slug, attempt, context = null) {
   // One composed read: attemptGateState does a single workflow.json read for
   // the already-loaded attempt (avoid re-looking-up per gate — see M2).
-  const { phases, gates } = attemptGateState(slug, attempt);
+  // A gate whose accepted artifact was mutated or deleted after acceptance
+  // throws on read; degrade that single attempt instead of crashing the whole
+  // listing, and surface the reason.
+  let phases = [];
+  let gates = [];
+  let gateError = null;
+  try {
+    ({ phases, gates } = attemptGateState(slug, attempt));
+  } catch (error) {
+    gateError = error.message;
+  }
   return {
     id: attempt.id,
     name: attempt.name,
@@ -583,6 +593,7 @@ function publicAttemptForSlug(slug, attempt, context = null) {
     wait: attempt.wait || null,
     worktree_path: attempt.worktree_path || null,
     gates,
+    ...(gateError ? { gate_error: gateError } : {}),
     pending_gates: gates.filter(gateIsPending).map((gate) => gate.phase),
     evidence: attempt.evidence || {},
     ...(context || attemptContextState(slug, attempt.id)),

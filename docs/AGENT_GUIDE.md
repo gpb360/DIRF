@@ -146,9 +146,18 @@ Metadata requires a stable `id`, a supported `type`, and an attempt-relative
 types are `source`, `research_questions`, `research`, `lesson`, `design`,
 `structure`, `plan`, `implementation_evidence`, and `plan_delta`. Recording
 never implies acceptance. New acceptances bind the exact artifact bytes with
-`accepted_sha256`; historical accepted artifacts without a digest remain valid.
+`accepted_sha256`; historical accepted artifacts without a digest remain valid
+for gates that only require acceptance. Any gate declaring
+`artifact_type: "implementation_evidence"` requires the digest: a historical
+accepted evidence artifact without one reports as pending until a SHA-bound
+superseding artifact is accepted.
 When a decision gate declares `artifact_type`, both its accepted
 decision record and the governing accepted artifact are required to advance.
+A verify gate may opt into `artifact_type: "implementation_evidence"`; that
+gate requires both its exact command-match evidence record and the governing
+accepted, SHA-bound implementation-evidence artifact. Other artifact types
+remain decision-only, soft gates remain artifact-free, and verify gates without
+`artifact_type` keep their existing command-evidence behavior.
 For `plan_delta`, the referenced JSON must name the governing accepted plan and
 contain all four evidence buckets: `implemented_as_planned`, `additions`,
 `omissions`, and `unverifiable`.
