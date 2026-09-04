@@ -763,3 +763,58 @@ test("source playbooks and snapshots share agent contract validation", () => {
   assert.ok(snapshotErrors.some((error) => /references unknown phase missing/.test(error)));
   assert.ok(snapshotErrors.some((error) => /verification must be a non-empty string/.test(error)));
 });
+
+test("historical accepted evidence without a digest keeps the gate pending and blocked", () => {
+  const { slug, attempt } = implementationEvidenceGateFixture();
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+  recordAttemptArtifact(slug, attempt.id, {
+    id: "implementation-evidence-v1",
+    type: "implementation_evidence",
+    path: "implementation-evidence.md",
+  });
+  acceptAttemptArtifact(slug, attempt.id, "implementation-evidence-v1");
+  // Simulate a historical record accepted before digests existed.
+  const attemptFile = join(attempt.folder, "attempt.json");
+  const record = JSON.parse(readFileSync(attemptFile, "utf8"));
+  const artifact = record.artifacts.find((entry) => entry.id === "implementation-evidence-v1");
+  delete artifact.accepted_sha256;
+  writeFileSync(attemptFile, JSON.stringify(record, null, 2) + "\n");
+
+  assert.deepEqual(
+    attemptGates(slug, attempt.id).map(({ phase, status, artifact_id }) => ({ phase, status, artifact_id })),
+    [{ phase: "verify", status: "pending", artifact_id: "implementation-evidence-v1" }],
+  );
+  assert.throws(
+    () => updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "node --test", output: "all pass" } }),
+    /SHA-bound/,
+  );
+});
+
+test("an unreadable accepted artifact degrades projections instead of crashing them", () => {
+  const { home, root, slug, attempt } = implementationEvidenceGateFixture();
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  recordAttemptArtifact(slug, attempt.id, {
+    id: "implementation-evidence-v1",
+    type: "implementation_evidence",
+    path: "implementation-evidence.md",
+  });
+  acceptAttemptArtifact(slug, attempt.id, "implementation-evidence-v1");
+  rmSync(join(attempt.folder, "implementation-evidence.md"));
+
+  // Enforcement still fails closed...
+  assert.throws(() => getAttempt(slug, attempt.id) && attemptGates(slug, attempt.id), /does not exist/);
+  // ...while read-only projections stay usable and never claim done.
+  const loaded = getAttempt(slug, attempt.id);
+  const status = effectiveAttemptStatus(slug, loaded);
+  assert.notEqual(status.status, "done");
+  const listing = execFileSync(process.execPath, [new URL("../src/cli.js", import.meta.url).pathname.replace(/^\/(.:\/)/, "$1"), "list", "--json"], {
+    cwd: root,
+    env: { ...process.env, DIRF_HOME: home },
+    encoding: "utf8",
+  });
+  const parsed = JSON.parse(listing);
+  const degraded = parsed.find((entry) => entry.id === attempt.id);
+  assert.match(degraded.gate_error, /does not exist/);
+  assert.deepEqual(degraded.gates, []);
+});

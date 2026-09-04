@@ -535,7 +535,11 @@ export function attemptGateState(slug, attempt) {
       );
       const artifactType = gates[phase].artifact_type || null;
       const governingArtifact = artifactType ? governingAttemptArtifact(attempt, artifactType) : null;
-      const artifactPending = artifactType && !governingArtifact && record?.status !== "denied";
+      // Existence alone is not enough for implementation_evidence: a historical
+      // accepted artifact without a digest cannot satisfy the binding contract,
+      // so the gate must project as pending exactly when enforcement would block.
+      const artifactPending = artifactType && record?.status !== "denied" &&
+        (!governingArtifact || (artifactType === "implementation_evidence" && !governingArtifact.accepted_sha256));
       const decisionEvidencePending = kind === "decision" && record?.status === "accepted" && declaredVerify && !evidenceMatches;
       let status = "pending";
       if (kind === "decision" && record) status = record.status;
@@ -609,8 +613,16 @@ export function effectiveAttemptStatus(slug, attempt) {
   if (attempt.status === "done" || attempt.status === "in_progress" || attempt.status === "blocked") {
     return { status: attempt.status, status_source: "lifecycle" };
   }
-  if (handoffHasCompletionEvidence(readAttemptHandoffFile(slug, attempt.id)) &&
-      !attemptGateState(slug, attempt).gates.some(gateIsPending)) {
+  // An unreadable gate (for example an accepted artifact edited or deleted
+  // after acceptance) must never upgrade the attempt to done — degrade to the
+  // lifecycle status instead of crashing read-only projections.
+  let gatesCleared = true;
+  try {
+    gatesCleared = !attemptGateState(slug, attempt).gates.some(gateIsPending);
+  } catch {
+    gatesCleared = false;
+  }
+  if (handoffHasCompletionEvidence(readAttemptHandoffFile(slug, attempt.id)) && gatesCleared) {
     return { status: "done", status_source: "handoff" };
   }
   return { status: attempt.status, status_source: "lifecycle" };
