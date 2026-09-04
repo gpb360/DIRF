@@ -42,6 +42,7 @@ test('findings or unresolved threads always continue remediation', () => {
     'latest_review_has_findings',
     'unresolved_review_threads'
   ]);
+  assert.equal(result.nextAction, 'trigger_review_ledger_code_fix_on_same_pr_then_rereview');
 });
 
 test('approval opens only at a complete exact-head fixed point', () => {

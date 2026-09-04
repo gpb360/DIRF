@@ -21,13 +21,16 @@ function evaluateFixedPoint(state) {
   if (state?.worktreeClean !== true) reasons.push('worktree_not_clean');
 
   const uniqueReasons = [...new Set(reasons)];
+  const needsCodeFix = uniqueReasons.includes('latest_review_has_findings');
   return {
     state: uniqueReasons.length === 0 ? READY : CONTINUE,
     mergeApprovalAllowed: uniqueReasons.length === 0,
     reasons: uniqueReasons,
     nextAction: uniqueReasons.length === 0
       ? 'present_exact_head_merge_approval_boundary'
-      : 'wait_ingest_fix_reply_resolve_rereview'
+      : needsCodeFix
+        ? 'trigger_review_ledger_code_fix_on_same_pr_then_rereview'
+        : 'wait_ingest_reply_resolve_rereview'
   };
 }
 

@@ -205,6 +205,8 @@ Reference existing specs/tickets/decisions rather than restating them.
 | `dirf review validate <review.json>` | validate a review artifact |
 | `dirf review render <review.json>` | render a review artifact as Markdown |
 | `dirf review ready <review.json>` | fail closed unless the exact PR is merge-ready |
+| `dirf review trigger <review.json>` | emit the bounded code-fix or merge-approval next action |
+| `dirf review verify-update <request.json> <updated-review.json>` | verify the fixer updated the same PR and emit the next review-ledger trigger |
 | `dirf list` | list attempts (alias for state list-attempts scoped here) |
 | `dirf state list` | all registered projects (works from anywhere) |
 | `dirf portfolio` | cross-project status view: every project + attempt classified active/stale/completed/archived/empty |

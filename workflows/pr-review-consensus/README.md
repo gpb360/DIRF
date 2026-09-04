@@ -129,6 +129,14 @@ Review pull requests using multiple independent agents, grade PR quality, fix id
 - `pr-review/<pr-number>-fixes.md` documenting changes
 - New test coverage for fixes
 
+The structured DIRF review ledger is the trigger for this phase. Run
+`dirf review trigger review.json`; a `fix_and_update_same_pr` request is passed
+to the harness-owned fixer. The fixer updates the existing PR branch, not a
+second PR. Verify the returned artifact with `dirf review verify-update
+request.json updated-review.json` before Phase 5 re-review.
+That verification emits `trigger_review_ledger`; Phase 5 consumes that event
+and reviews the new head to produce the next ledger.
+
 **Validation**:
 - All blocking issues resolved
 - Fixes don't introduce new problems

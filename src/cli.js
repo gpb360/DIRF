@@ -13,6 +13,7 @@
 //   dirf state active [--path DIR] [--json|--hook]       report checkout-scoped responsibility
 //   dirf validate                                        validate registries + workflows
 //   dirf skills scan [--path DIR]                        scan host, print installed skills + resolved refs
+//   dirf review trigger|verify-update ...                 hand off findings to a same-PR fixer
 //   dirf validate|graph|run|render <folder>               operate an Eve-style folder DAG
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { basename, dirname, join, isAbsolute, resolve } from "node:path";
@@ -44,6 +45,7 @@ import {
 import { DEFAULT_ISSUE_POLICY } from "./issue-governance.js";
 import { buildModelAdvice, normalizeModelCatalog } from "./model-advice.js";
 import { run as runReviewReport } from "../skills/code-review/scripts/review-report.mjs";
+import { run as runReviewLedger } from "../skills/code-review/scripts/review-ledger.mjs";
 import { bindingsFromPlan, refreshSkillBindings } from "./skill-bindings.js";
 
 const LIFECYCLE = {
@@ -1501,6 +1503,8 @@ Usage:
                                                       show the ordered skill flow and optional diagnostic model advice
   dirf govern <digest|evaluate|append|verify> [...]    decide actions and maintain a hash-linked evidence ledger
   dirf review <validate|render|ready> review.json     validate, render, or prove a PR review is ready
+  dirf review trigger review.json                    emit a bounded same-PR fix request
+  dirf review verify-update request.json updated-review.json  verify the new PR head
   dirf state which [--path DIR]                       what project am I in? (slug + store path)
   dirf state list                                      list all registered projects
   dirf state register [--path DIR]                    register a project explicitly
@@ -1657,13 +1661,24 @@ function cmdGovern(args) {
 
 function cmdReview(args) {
   const subcommand = args._[0];
-  const file = args._[1];
-  if (!subcommand || !file) {
+  const files = args._.slice(1);
+  if (!subcommand || !files.length) {
+    console.error("usage: dirf review <validate|render|ready> review.json");
+    console.error("       dirf review trigger review.json");
+    console.error("       dirf review verify-update request.json updated-review.json");
+    process.exitCode = 2;
+    return;
+  }
+  if (subcommand === "trigger" || subcommand === "verify-update") {
+    console.log(JSON.stringify(runReviewLedger([subcommand, ...files]), null, 2));
+    return;
+  }
+  if (files.length !== 1) {
     console.error("usage: dirf review <validate|render|ready> review.json");
     process.exitCode = 2;
     return;
   }
-  console.log(runReviewReport([subcommand, file]));
+  console.log(runReviewReport([subcommand, files[0]]));
 }
 
 function plainName(task) {
