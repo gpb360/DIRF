@@ -24,7 +24,7 @@ Produce a review another maintainer can act on without reconstructing your reaso
    - `dirf review validate review.json`
    - `dirf review render review.json`
    Completion: validation exits zero and the rendered verdict agrees with the findings and confidence gates.
-7. Before posting, confirm the PR head still equals `head_sha` and search existing review markers for the same head. Completion: stale-head and duplicate reviews are not posted.
+7. Before posting, confirm the PR head still equals `head_sha` and search existing review markers for the same head. After a merge-commit merge, `ready` requires GitHub CLI confirmation of the exact merged head, base, and merge commit plus Git proof that the commit is present on the live base branch. Completion: stale-head and duplicate reviews are not posted, and a merged PR is verified without relying on its removed temporary merge ref.
 8. When any P0, P1, P2, or P3 finding exists, fix it, verify the affected behavior, and perform a fresh review of the updated PR. Record whether the review is complete, required checks passed, and review conversations remain. Completion: `dirf review ready review.json` exits successfully.
 
 ## Decision rules
