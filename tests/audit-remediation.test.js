@@ -48,6 +48,13 @@ test("requested prose passes survive routing in user order without implicit huma
   assert.equal(excluded.gaps.filter(g => g.blocking).length, 2);
   const negated = buildFlow(selection, { task: "read-only audit without unslop" }, {});
   assert.ok(!negated.steps.some(s => s.skill === "unslop"));
+  for (const exclusion of ["do not use wait-what or unslop", "without wait-what and unslop",
+    "skip wait-what, unslop", "neither wait-what nor unslop"]) {
+    const excludedList = buildFlow(selection, { task: `read-only audit; ${exclusion}` }, {});
+    assert.ok(!excludedList.steps.some(s => ["wait-what", "unslop"].includes(s.skill)), exclusion);
+  }
+  const laterRequest = buildFlow(selection, { task: "read-only audit; skip wait-what and unslop, then use unslop" }, {});
+  assert.deepEqual(laterRequest.steps.filter(s => s.stage === "prose").map(s => s.skill), ["unslop"]);
   const installed = { unslop: { ...bundledSkills().unslop, path: "/custom/unslop", provider: "project" } };
   const preferred = buildFlow(selection, { task: "read-only audit; use unslop" }, installed);
   assert.equal(preferred.steps.find(s => s.skill === "unslop").path, "/custom/unslop");

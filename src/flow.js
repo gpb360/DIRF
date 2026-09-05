@@ -545,14 +545,18 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
       // the installed path, invocation policy, and readiness remain authoritative.
       capabilities: item.capabilities ?? getBundled()[name]?.capabilities,
     }]));
-  const requestedProse = Object.entries(proseIndex)
-    .filter(([name, item]) => explicitlyRequests(affirmativeTask, name) &&
-      declaredCapabilities(item).some((capability) => proseCapabilities.has(capability)))
-    .filter(([name]) => {
-      const cue = normalizedCue(name).replaceAll(" ", "\\s+");
-      return !new RegExp(`\\b(?:without|skip|avoid|no|not|don t|do not)\\s+(?:(?:use|run|invoke|apply)\\s+)?${cue}\\b`).test(normalizedCue(context.task));
-    })
-    .sort(([a], [b]) => normalizedCue(affirmativeTask).indexOf(normalizedCue(a)) - normalizedCue(affirmativeTask).indexOf(normalizedCue(b)));
+  const proseEntries = Object.entries(proseIndex).filter(([, item]) =>
+    declaredCapabilities(item).some((capability) => proseCapabilities.has(capability)));
+  const proseNames = proseEntries.map(([name]) => normalizedCue(name).replaceAll(" ", "\\s+"))
+    .filter(Boolean).sort((a, b) => b.length - a.length).join("|");
+  // Remove the whole excluded skill list, while retaining a later affirmative
+  // request such as "skip wait-what and unslop, then use unslop".
+  const proseTask = proseNames ? normalizedCue(affirmativeTask).replace(new RegExp(
+    `\\b(?:without|skip|avoid|no|not|don t|do not|neither)\\s+(?:(?:use|run|invoke|apply)\\s+)?(?:${proseNames})\\b(?:\\s+(?:(?:and|or|nor)\\s+)?(?:${proseNames})\\b)*`, "g"), " ")
+    : normalizedCue(affirmativeTask);
+  const requestedProse = proseEntries
+    .filter(([name]) => explicitlyRequests(proseTask, name))
+    .sort(([a], [b]) => proseTask.indexOf(normalizedCue(a)) - proseTask.indexOf(normalizedCue(b)));
   for (const [name, item] of requestedProse) {
     if (steps.some((step) => step.skill === name) && item.references?.length) continue;
     for (let i = steps.length - 1; i >= 0; i--) {
