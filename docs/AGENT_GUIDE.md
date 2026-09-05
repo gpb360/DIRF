@@ -220,6 +220,8 @@ Reference existing specs/tickets/decisions rather than restating them.
 | `dirf review validate <review.json>` | validate a review artifact |
 | `dirf review render <review.json>` | render a review artifact as Markdown |
 | `dirf review ready <review.json>` | fail closed unless the exact PR is merge-ready |
+| `dirf review trigger <review.json>` | emit a fix, continued review, or live-readiness check action |
+| `dirf review verify-update <request.json> <updated-review.json>` | compare artifact targets and emit a re-review trigger; the harness must verify the live PR head |
 | `dirf list` | list attempts (alias for state list-attempts scoped here) |
 | `dirf state list` | all registered projects (works from anywhere) |
 | `dirf portfolio` | cross-project status view: every project + attempt classified active/idle/stale/completed/archived/empty |

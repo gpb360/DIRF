@@ -35,6 +35,21 @@ Verification is complete when each published comment has a reproducible failure 
 
 If the validated artifact contains any P0-P3 finding, fix every finding, run the narrowest checks that prove the corrected behavior, refresh the exact head, and start a new full or justified incremental review. Do not mark the workflow done because comments were resolved or a build is green.
 
+The review ledger is the trigger for this handoff. Run `dirf review trigger
+review.json` after validation. When it returns `fix_and_update_same_pr`, pass the
+request to the harness-owned fixer. The fixer must update the same PR and base;
+DIRF compares the report targets with `dirf review verify-update
+request.json updated-review.json`. This checks artifact consistency only; the
+harness must verify the live repository, PR, base and head before re-review.
+A complete full review with passing evidence returns `verify_merge_readiness`;
+run `dirf review ready review.json` before requesting merge approval. An
+incomplete or conditional review returns `continue_review`. Neither action
+authorizes a merge or a new PR.
+
+`verify-update` is not the end of the loop. On success it emits
+`trigger_review_ledger` and the new exact head; the harness must run the review
+again and publish a fresh ledger before another fix or merge decision.
+
 The loop is complete only when the current review has no findings and the
 corrected behavior works under the applicable checks.
 

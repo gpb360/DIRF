@@ -48,7 +48,7 @@ capabilities: ["code review", "security review", "confidence scoring", "iterativ
          ▼                   ▼
 ┌──────────────────┐   ┌─────────────────────┐
 │  4. MERGE TO     │   │  5. FIX ISSUES       │
-│     STAGING      │   │     Create new PR    │
+│     STAGING      │   │     Update same PR   │
 └──────────────────┘   │     → Back to step 2 │
                        └─────────────────────┘
 
@@ -138,7 +138,7 @@ Overall Confidence: 72/100 ⚠️
   2. Extract magic numbers to constants
 
 ❌ Review Result: FAIL - Below confidence threshold (80/100)
-🔄 Next Action: Fix issues and create follow-up PR
+🔄 Next Action: Fix issues and update the same PR, then re-review its new head
 ```
 
 ### PR Comments
@@ -164,8 +164,8 @@ Otherwise, the PR is **FAIL** and needs fixes.
 When review fails:
 1. Workflow creates detailed issue report
 2. Developers fix issues
-3. Create follow-up PR with fixes
-4. Run review again
+3. Harness-owned fixer updates the same PR branch
+4. Verify the new exact head and run review again
 5. Repeat until PASS
 
 ## Integration with CI/CD
