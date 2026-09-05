@@ -65,10 +65,10 @@ function gitCommonDir(targetPath) {
 }
 
 // The normalization contract (spec §4). MUST be deterministic and byte-stable.
-// Order: absolute -> forward slashes -> strip trailing slash -> resolve symlinks
+// Order: normalize separators -> absolute -> strip trailing slash -> resolve symlinks
 //        -> case-fold to lower case.
 export function normalizeIdentityKey(rawKey) {
-  let key = resolve(rawKey);                    // 1. absolute
+  let key = resolve(rawKey.replaceAll("\\", "/")); // 1. normalize separators before host path resolution
   key = key.replaceAll("\\", "/");              // 2. forward slashes
   key = key.replace(/\/+$/, "");                // 3. strip trailing slash(es)
   try { key = realpathSync(key).replaceAll("\\", "/"); } catch { /* not-yet-existing path: keep resolved form */ }
