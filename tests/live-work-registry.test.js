@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -58,6 +60,91 @@ function runCliAsync(args, { cwd, env }) {
     });
   });
 }
+
+test("releasing a progress lock preserves a successor acquired during cleanup", () => {
+  const { slug } = fixture();
+  const attempt = trackedAttempt(slug, "release race", new Date(), "");
+  const lockPath = join(process.env.DIRF_HOME, "projects", slug, ".record-progress.lock");
+  const originalRename = fs.renameSync;
+  const originalRm = fs.rmSync;
+  let successorAcquired = false;
+  fs.renameSync = (source, destination) => {
+    originalRename(source, destination);
+    if (source === lockPath) {
+      fs.mkdirSync(lockPath);
+      fs.writeFileSync(join(lockPath, "owner.json"), JSON.stringify({ token: "successor", pid: process.pid }));
+      successorAcquired = true;
+    }
+  };
+  fs.rmSync = (path, options) => {
+    assert.notEqual(path, lockPath, "never recursively delete the shared acquisition path");
+    return originalRm(path, options);
+  };
+  syncBuiltinESMExports();
+  try {
+    updateAttemptLifecycle(slug, attempt.id, "block", { reason: "test release" });
+    assert.equal(successorAcquired, true);
+    assert.equal(JSON.parse(readFileSync(join(lockPath, "owner.json"), "utf8")).token, "successor");
+  } finally {
+    fs.renameSync = originalRename;
+    fs.rmSync = originalRm;
+    syncBuiltinESMExports();
+    originalRm(lockPath, { recursive: true, force: true });
+  }
+});
+
+test("lock acquisition retries when a contended lock disappears before inspection", () => {
+  const { slug } = fixture();
+  const attempt = trackedAttempt(slug, "acquire race", new Date(), "");
+  const lockPath = join(process.env.DIRF_HOME, "projects", slug, ".record-progress.lock");
+  const originalRename = fs.renameSync;
+  let contended = false;
+  fs.renameSync = (source, destination) => {
+    if (destination === lockPath && !contended) {
+      contended = true;
+      throw Object.assign(new Error("lock existed during rename, then released"), { code: "ENOTEMPTY" });
+    }
+    return originalRename(source, destination);
+  };
+  syncBuiltinESMExports();
+  try {
+    const updated = updateAttemptLifecycle(slug, attempt.id, "block", { reason: "test retry" });
+    assert.equal(contended, true);
+    assert.equal(updated.status, "blocked");
+  } finally {
+    fs.renameSync = originalRename;
+    syncBuiltinESMExports();
+  }
+});
+
+test("persistent acquisition errors time out and remove their candidate", () => {
+  const { slug } = fixture();
+  const attempt = trackedAttempt(slug, "acquire timeout", new Date(), "");
+  const projectPath = join(process.env.DIRF_HOME, "projects", slug);
+  const lockPath = join(projectPath, ".record-progress.lock");
+  const originalRename = fs.renameSync;
+  const originalNow = Date.now;
+  let clock = originalNow();
+  let collisions = 0;
+  fs.renameSync = (source, destination) => {
+    if (destination === lockPath) {
+      collisions += 1;
+      throw Object.assign(new Error("permission denied"), { code: "EPERM" });
+    }
+    return originalRename(source, destination);
+  };
+  Date.now = () => (clock += 1_000);
+  syncBuiltinESMExports();
+  try {
+    assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "block", { reason: "test timeout" }), /retry this checkpoint/);
+    assert.ok(collisions > 0 && collisions < 6);
+    assert.equal(fs.readdirSync(projectPath).some(name => name.startsWith(".record-progress.lock")), false);
+  } finally {
+    fs.renameSync = originalRename;
+    Date.now = originalNow;
+    syncBuiltinESMExports();
+  }
+});
 
 test("project work snapshot shows every attempt and only fresh observed work as active", () => {
   const now = new Date("2026-09-03T14:00:00.000Z");
