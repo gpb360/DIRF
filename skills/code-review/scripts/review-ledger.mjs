@@ -2,7 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { validateReview, priorityCounts } from "./review-report.mjs";
+import { validateReview, priorityCounts, deriveVerdict } from "./review-report.mjs";
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 
@@ -58,18 +58,20 @@ export function ledgerAction(review) {
 
   return {
     schema_version: 1,
-    action: "request_merge_approval",
+    action: review.target.mode === "full" && deriveVerdict(review) === "PASS"
+      ? "verify_merge_readiness"
+      : "continue_review",
     target: targetOf(review),
     expected_head_sha: review.target.head_sha,
     findings: [],
     priority_counts: counts,
-    guardrails: { merge_is_not_authorized: true },
+    guardrails: { live_readiness_required: true, merge_is_not_authorized: true },
   };
 }
 
 /**
- * Verify that a fixer returned a review for the same PR and base, and that it
- * actually advanced the PR head. A changed artifact at the old head is stale.
+ * Check that the returned artifact names the same PR and base with a different
+ * head. The harness must verify that head against the live PR before re-review.
  */
 export function verifyUpdatedReview(request, updatedReview) {
   validateReview(updatedReview);
@@ -80,6 +82,13 @@ export function verifyUpdatedReview(request, updatedReview) {
     throw new Error("Invalid remediation request: expected a fix_and_update_same_pr request.");
   }
   const original = request.target;
+  if (!original || typeof original.repository !== "string" || !original.repository.trim()
+    || !Number.isInteger(original.pr_number) || original.pr_number < 1
+    || !SHA_PATTERN.test(original.base_sha || "") || !SHA_PATTERN.test(original.head_sha || "")
+    || !SHA_PATTERN.test(request.expected_head_sha || "")
+    || original.head_sha.toLowerCase() !== request.expected_head_sha.toLowerCase()) {
+    throw new Error("Invalid remediation request: the target and expected head must identify the same original PR commit.");
+  }
   const updated = updatedReview.target;
   if (updated.repository !== original.repository) throw new Error("The fix changed the review repository.");
   if (updated.pr_number !== original.pr_number) throw new Error("The fix changed the pull request number.");
@@ -90,6 +99,8 @@ export function verifyUpdatedReview(request, updatedReview) {
   if (!SHA_PATTERN.test(updated.head_sha)) throw new Error("The updated review head is not a valid Git SHA.");
   return {
     verified: true,
+    verification_scope: "artifact_targets_only",
+    live_head_verification_required: true,
     action: "trigger_review_ledger",
     repository: updated.repository,
     pr_number: updated.pr_number,

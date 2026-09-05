@@ -134,6 +134,8 @@ The structured DIRF review ledger is the trigger for this phase. Run
 to the harness-owned fixer. The fixer updates the existing PR branch, not a
 second PR. Verify the returned artifact with `dirf review verify-update
 request.json updated-review.json` before Phase 5 re-review.
+This compares artifact targets only. Verify the live repository, PR, base and
+head before consuming the trigger.
 That verification emits `trigger_review_ledger`; Phase 5 consumes that event
 and reviews the new head to produce the next ledger.
 

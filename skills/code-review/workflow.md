@@ -38,9 +38,13 @@ If the validated artifact contains any P0-P3 finding, fix every finding, run the
 The review ledger is the trigger for this handoff. Run `dirf review trigger
 review.json` after validation. When it returns `fix_and_update_same_pr`, pass the
 request to the harness-owned fixer. The fixer must update the same PR and base;
-DIRF verifies that the head advanced with `dirf review verify-update
-request.json updated-review.json` before any re-review. A ledger with no findings
-returns `request_merge_approval`; it never authorizes a merge or a new PR.
+DIRF compares the report targets with `dirf review verify-update
+request.json updated-review.json`. This checks artifact consistency only; the
+harness must verify the live repository, PR, base and head before re-review.
+A complete full review with passing evidence returns `verify_merge_readiness`;
+run `dirf review ready review.json` before requesting merge approval. An
+incomplete or conditional review returns `continue_review`. Neither action
+authorizes a merge or a new PR.
 
 `verify-update` is not the end of the loop. On success it emits
 `trigger_review_ledger` and the new exact head; the harness must run the review

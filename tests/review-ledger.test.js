@@ -46,11 +46,24 @@ test("a finding creates one same-PR code-fix trigger with exact-head guards", ()
   assert.equal(result.next_review.previous_head_sha, SHA_B);
 });
 
-test("a clean ledger asks for merge approval but never authorizes merge", () => {
+test("a clean ledger requires live readiness before merge approval", () => {
   const result = ledgerAction(review());
-  assert.equal(result.action, "request_merge_approval");
+  assert.equal(result.action, "verify_merge_readiness");
   assert.deepEqual(result.findings, []);
   assert.equal(result.guardrails.merge_is_not_authorized, true);
+});
+
+test("zero findings cannot bypass incomplete review evidence", () => {
+  for (const changes of [
+    { completion: { review_complete: false, required_checks: "passed", unresolved_threads: 0 } },
+    { completion: { review_complete: true, required_checks: "failed", unresolved_threads: 0 } },
+    { completion: { review_complete: true, required_checks: "pending", unresolved_threads: 0 } },
+    { completion: { review_complete: true, required_checks: "passed", unresolved_threads: 1 } },
+    { confidence: { quality: 70, evidence: 90 } },
+    { limitations: ["Live evidence unavailable"] },
+    { target: { ...review().target, mode: "incremental", previous_head_sha: SHA_C } },
+    { verification: [{ command: "node --test", status: "failed", result: "Failure" }] },
+  ]) assert.equal(ledgerAction(review(changes)).action, "continue_review");
 });
 
 test("historical ledgers cannot trigger a fixer", () => {
@@ -66,6 +79,8 @@ test("updated review must keep PR identity and advance the head", () => {
   });
   assert.deepEqual(verifyUpdatedReview(request, review({ target: { ...review().target, head_sha: SHA_C } })), {
     verified: true,
+    verification_scope: "artifact_targets_only",
+    live_head_verification_required: true,
     action: "trigger_review_ledger",
     repository: request.target.repository,
     pr_number: 7,
@@ -79,6 +94,12 @@ test("updated review must keep PR identity and advance the head", () => {
     },
   });
   assert.throws(() => verifyUpdatedReview(request, review()), /did not advance/i);
+  for (const invalid of [
+    { ...request, expected_head_sha: SHA_C },
+    { ...request, expected_head_sha: "invalid" },
+    { ...request, target: undefined },
+    { ...request, target: { ...request.target, pr_number: 0 } },
+  ]) assert.throws(() => verifyUpdatedReview(invalid, review()), /Invalid remediation request/i);
   assert.throws(
     () => verifyUpdatedReview(request, review({ target: { ...review().target, head_sha: SHA_C, pr_number: 8 } })),
     /pull request number/i,

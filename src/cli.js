@@ -1504,7 +1504,7 @@ Usage:
   dirf govern <digest|evaluate|append|verify> [...]    decide actions and maintain a hash-linked evidence ledger
   dirf review <validate|render|ready> review.json     validate, render, or prove a PR review is ready
   dirf review trigger review.json                    emit a bounded same-PR fix request
-  dirf review verify-update request.json updated-review.json  verify the new PR head
+  dirf review verify-update request.json updated-review.json  compare the report targets
   dirf state which [--path DIR]                       what project am I in? (slug + store path)
   dirf state list                                      list all registered projects
   dirf state register [--path DIR]                    register a project explicitly
