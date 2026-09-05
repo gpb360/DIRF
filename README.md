@@ -86,6 +86,26 @@ The last command prints the help screen. There is no runtime package install
 step. Contributors who want to run the TypeScript check should run `npm install`
 once to install the development-only tooling.
 
+Run `dirf doctor` (or `node src/cli.js doctor --json`) to check the executing
+installation, Git revision, uncommitted changes, and project store. A global
+installation made with `npm install -g <tested-checkout>` may link directly to
+that checkout. Keep it at an intentional tested revision; moving or changing
+that checkout changes the command you run. Package versions alone do not
+distinguish development revisions.
+
+For a report without repairs, say so explicitly:
+
+```bash
+dirf build architecture-audit "Read-only audit of architecture and performance; use wait-what and unslop"
+```
+
+Read-only audits can finish with unresolved findings and recommendations.
+They do not request merge approval. Explicit prose passes are included in the
+order named; conflicting capability profiles produce a visible gap.
+
+`dirf notice` follows the active checkout owner. With no unique active owner,
+specify `--attempt <id>` or `--project` instead of relying on task recency.
+
 ## Learn from an article, document, or video
 
 `dirf learn` turns one explicitly supplied source into a provenance-bound
@@ -393,7 +413,7 @@ can execute the same README. Repository and installation paths are discovered
 for the current run only; snapshots retain capability names and provider hints.
 DIRF coordination state is canonical and central (`~/.dirf/projects/<slug>/`).
 Worktrees resolve to the same store entry automatically via `git-common-dir`,
-so no per-worktree setup is needed and state cannot drift between checkouts. If
+so no per-worktree setup is needed and worktrees share the same coordination store. If
 a task needs scratch isolation, keep it inside the worktree workspace.
 
 ## How skill mapping works (the heart of "right")
@@ -497,7 +517,7 @@ workflows/       authored reusable workflow folders
 DIRF coordination state — config, attempts, and the handoff — lives in a
 central store at `~/.dirf/projects/<slug>/`, keyed by a slug derived from
 `git rev-parse --git-common-dir`. Every worktree of a repo resolves to the
-**same** store entry, so state cannot drift between checkouts.
+**same** store entry, so worktrees share the same coordination store.
 
 Quick commands:
 
@@ -624,7 +644,7 @@ no SDK:
 Tools: `dirf_resolve_project`, `dirf_list_projects`, `dirf_read_handoff`,
 `dirf_write_handoff`, `dirf_record_progress`, `dirf_list_attempts`, and
 `dirf_get_attempt`. Every tool is a thin call into the same `src/state.js` core
-as the CLI, so the two surfaces return byte-identical results.
+as the CLI. Each surface formats its response for its caller; MCP currently exposes a subset of CLI operations.
 
 ## Conventions
 
@@ -643,7 +663,8 @@ npm test                                   # all unit tests (node:test)
 npm run test:router                        # router matching
 npm run test:skills                        # discovery + resolver
 npm run test:renderer                      # markdown + HTML rendering
-npm run smoke                              # full pipeline integration
+npm run smoke                              # CLI integration only; does not repeat unit tests
+npm run check:release                      # all release checks, each suite once
 npm run validate                           # registry consistency
 ```
 

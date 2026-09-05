@@ -13,6 +13,13 @@ capabilities: ["code review"]
 
 Produce a review another maintainer can act on without reconstructing your reasoning.
 
+For an explicitly read-only audit, record the repository revision and requested
+scope, inspect behavior, prove findings, and deliver a report with limitations
+and suggested corrections. Do not implement repairs. A system audit does not
+need a PR number, a PR-shaped review artifact, or merge readiness. Unresolved
+findings do not prevent completion of that report. The contract below applies
+to PR work; its repair loop runs only when implementation is within scope.
+
 ## Contract
 
 1. Freeze the review target: record the canonical repository URL, GitHub PR number, base SHA, head SHA, review mode, and the applicable repository instructions. Completion: the artifact identifies one immutable head and the current base used for its three-dot diff.

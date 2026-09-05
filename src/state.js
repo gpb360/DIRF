@@ -1914,7 +1914,7 @@ export function migrateCleanup(targetPath) {
 // ─── Side observations (`dirf notice`) ─────────────────────────────────────
 // A non-derailing channel for anything NOT the current task: a side bug, a doc
 // staleness, a "fix later." Append-only markdown, one entry per line, numbered
-// and timestamped. Default target: the current (most-recent) attempt's
+// and timestamped. Default target: the checkout owner's attempt's
 // OBSERVATIONS.md. Promotable to the project-level OBSERVATIONS.md so an entry
 // survives across sessions. Never flows into workflow.json or HANDOFF.md.
 
@@ -1942,7 +1942,14 @@ function parseObservations(content) {
   return entries;
 }
 
-export function listObservations(slug, { attemptId, project = false } = {}) {
+function observationAttempt(slug, attemptId, checkoutPath = process.cwd()) {
+  if (attemptId) return getAttempt(slug, attemptId);
+  const responsibility = attemptResponsibility(slug, checkoutPath);
+  if (responsibility.state === "active") return responsibility.attempt;
+  throw new Error(`No unique active attempt owns this checkout (${responsibility.state}). Use --attempt <id> or --project.`);
+}
+
+export function listObservations(slug, { attemptId, project = false, checkoutPath } = {}) {
   // Default target: the current attempt (symmetric with appendObservation).
   // project:true short-circuits to the project-level file.
   let target = attemptId;
@@ -1951,8 +1958,7 @@ export function listObservations(slug, { attemptId, project = false } = {}) {
   } else if (target) {
     target = getAttempt(slug, target).id;
   } else if (!target) {
-    const cur = latestAttempt(slug);
-    target = cur ? cur.id : null;
+    target = observationAttempt(slug, null, checkoutPath).id;
   }
   const file = observationsFile(slug, target);
   if (!existsSync(file)) return [];
@@ -1962,7 +1968,7 @@ export function listObservations(slug, { attemptId, project = false } = {}) {
 // Append an observation. Default target: the current attempt (throws clearly if
 // none exists). Options: { attemptId, project } — attemptId wins over default,
 // project wins over both (writes the project-level file).
-export function appendObservation(slug, text, { attemptId, project = false } = {}) {
+export function appendObservation(slug, text, { attemptId, project = false, checkoutPath } = {}) {
   const trimmed = String(text || "").trim().replace(/\s*\r?\n+\s*/g, " ");
   if (!trimmed) throw new Error("observation text must not be empty");
   let target = attemptId;
@@ -1971,9 +1977,7 @@ export function appendObservation(slug, text, { attemptId, project = false } = {
   } else if (target) {
     target = getAttempt(slug, target).id;
   } else if (!target) {
-    const cur = latestAttempt(slug);
-    if (!cur) throw new Error("No attempt to attach the observation to — run `dirf build` first, or pass --attempt <id>.");
-    target = cur.id;
+    target = observationAttempt(slug, null, checkoutPath).id;
   }
   const file = observationsFile(slug, target);
   mkdirSync(dirname(file), { recursive: true });
@@ -1987,9 +1991,8 @@ export function appendObservation(slug, text, { attemptId, project = false } = {
 // Promote entry N from an attempt to the project-level file. Non-destructive:
 // the source attempt keeps its log; the promoted entry is copied (re-numbered)
 // into the project file.
-export function promoteObservation(slug, entryN, { attemptId } = {}) {
-  const cur = attemptId ? { id: attemptId } : latestAttempt(slug);
-  if (!cur) throw new Error("No attempt to promote from — run `dirf build` first, or pass --attempt <id>.");
+export function promoteObservation(slug, entryN, { attemptId, checkoutPath } = {}) {
+  const cur = observationAttempt(slug, attemptId, checkoutPath);
   const source = listObservations(slug, { attemptId: cur.id });
   const entry = source.find((e) => e.n === entryN);
   if (!entry) throw new Error(`No observation #${entryN} in attempt ${cur.id}. Run \`dirf notice list\` to see entries.`);
