@@ -14,8 +14,7 @@ spawnSync("git", ["init", TARGET], { stdio: "ignore" });
 // installed on the dev machine can't leak into the assertions.
 const FAKE_HOME = mkdtempSync(join(tmpdir(), "dirf-smoke-home-"));
 const ENV = { ...process.env, HOME: FAKE_HOME, USERPROFILE: FAKE_HOME };
-// The full suite runs inside this integration check. Leave enough headroom for
-// slower Windows process startup and loaded CI/dev machines.
+// Bound each CLI invocation. Unit tests run separately via check:release.
 const TIMEOUT_MS = 180_000;
 
 function run(args, expectFail = false) {
@@ -31,14 +30,6 @@ function assertContains(output, needle) {
 }
 
 try {
-  const testFiles = readdirSync(join(ROOT, "tests"))
-    .filter((name) => name.endsWith(".test.js"))
-    .sort()
-    .map((name) => join("tests", name));
-  const unit = spawnSync(process.execPath, ["--test", ...testFiles], { cwd: ROOT, encoding: "utf-8", timeout: TIMEOUT_MS });
-  if (unit.status !== 0) throw new Error(`unit tests failed\n${unit.error?.message || unit.stderr || unit.stdout}`);
-  assertContains(unit.stdout, "# fail 0");
-
   assertContains(run(["validate"]), "Validation passed");
   assertContains(run(["skills", "scan"]), "Discovered");
   const unconfigured = run(["build", "smoke", "build a landing page", "--path", TARGET], true);

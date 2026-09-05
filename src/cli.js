@@ -27,6 +27,7 @@ import { bundledSkills, discover, discoverAgents, enrichDiscovered, lintSkillMet
 import { FOCUSED_OUTPUT_RULES, buildInstructions, buildHtml } from "./renderer.js";
 import { main as validateMain, validateSnapshot } from "./validate.js";
 import { inspect, detectStackProfile } from "./inspect.js";
+import { installationDiagnostics } from "./doctor.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
@@ -1404,11 +1405,11 @@ function cmdExportGraphify(args) {
 
 // `dirf notice` — a non-derailing side-observation channel. Park anything NOT
 // the current task (a side bug, a doc staleness, a "fix later") without acting
-// on it or polluting HANDOFF.md. Default target: the latest attempt.
+// on it or polluting HANDOFF.md. Default target: the checkout owner.
 
 function cmdNoticeAppend(args, text) {
   const slug = resolveStateSlug(args);
-  const opts = {};
+  const opts = { checkoutPath: projectRoot(args.path) };
   if (args.project) opts.project = true;
   if (args.attempt) opts.attemptId = args.attempt;
   const { n, ts, file } = appendObservation(slug, text, opts);
@@ -1419,7 +1420,7 @@ function cmdNoticeAppend(args, text) {
 
 function cmdNoticeList(args) {
   const slug = resolveStateSlug(args);
-  const opts = {};
+  const opts = { checkoutPath: projectRoot(args.path) };
   if (args.project) opts.project = true;
   if (args.attempt) opts.attemptId = args.attempt;
   const entries = listObservations(slug, opts);
@@ -1431,7 +1432,7 @@ function cmdNoticeList(args) {
 
 function cmdNoticePromote(args, entryN) {
   const slug = resolveStateSlug(args);
-  const opts = {};
+  const opts = { checkoutPath: projectRoot(args.path) };
   if (args.attempt) opts.attemptId = args.attempt;
   const n = Number(entryN);
   if (!Number.isInteger(n) || n < 1) { console.error("usage: dirf notice promote <N> [--attempt ID]"); process.exitCode = 2; return; }
@@ -1584,6 +1585,7 @@ Usage:
   dirf export playbooks                                regenerate legacy playbooks JSON
   dirf export obsidian [--out DIR]                     export portfolio into an Obsidian vault (notes + canvas)
   dirf export graphify [--out DIR] [--skip-render]    export portfolio as a graphify graph (+ HTML render)
+  dirf doctor [--path DIR] [--json]                  show executable, revision, version, and store identity
   dirf inspect [<path>]                                detect a project's optimization stack + suggest gaps
   dirf flow "<task>" [--path DIR] [--profile FILE] [--models FILE]
                                                       show the ordered skill flow and optional diagnostic model advice
@@ -1679,6 +1681,17 @@ function cmdInspect(args) {
   } else {
     console.log("No gaps detected — the optimization stack looks complete.");
   }
+}
+
+function cmdDoctor(args) {
+  const info = installationDiagnostics(projectRoot(args.path));
+  if (args.json) { console.log(JSON.stringify(info, null, 2)); return; }
+  console.log(`DIRF ${info.version} · Node ${info.node}`);
+  console.log(`CLI: ${info.cli}`);
+  console.log(`Revision: ${info.revision || "unavailable (not a Git checkout)"}`);
+  console.log(`Uncommitted changes: ${info.dirty === null ? "unknown" : info.dirty ? "yes" : "no"}`);
+  console.log(`Target: ${info.target}`);
+  console.log(`Project store: ${info.project_store}`);
 }
 
 // Natural-language aliases — plain-English entry points that rewrite to the
@@ -1823,6 +1836,7 @@ async function main() {
   else if (cmd === "artifact") cmdArtifact(args);
   else if (cmd === "project") cmdProject(args);
   else if (cmd === "inspect") { args._ = args._.length ? args._ : [args.path]; cmdInspect(args); }
+  else if (cmd === "doctor") cmdDoctor(args);
   else if (cmd === "flow") { cmdFlow(args); }
   else if (cmd === "govern") { cmdGovern(args); }
   else if (cmd === "review") { cmdReview(args); }

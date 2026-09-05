@@ -420,6 +420,8 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
   // fallback consulted ONLY when the local install has nothing for a
   // capability, and the step is labeled so — never passed off as installed.
   let bundled;
+  let unscopedBundled;
+  const getBundled = () => (unscopedBundled ??= context.bundledIndex || bundledSkills());
   for (const requirement of requirements) {
     if (negatesInterviewCapability(context.task) && requirement.capability === "plan interview") {
       gaps.push({
@@ -515,7 +517,7 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
     }
     const selected = selectCapability(requirement, selection, context, installed);
     const fallback = selected ? null : selectCapability(
-      requirement, selection, context, (bundled ??= scopedSkillIndex(context.bundledIndex || bundledSkills(), context.allowedSkills)));
+      requirement, selection, context, (bundled ??= scopedSkillIndex(getBundled(), context.allowedSkills)));
     if (selected) steps.push(selected);
     else if (fallback) steps.push({
       ...fallback,
@@ -531,6 +533,52 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
       trusted_candidates: (context.trustedSources || []).filter((source) =>
         (source.capabilities || []).includes(requirement.capability)),
     });
+  }
+
+  // Explicit final prose work may not be part of the selected playbook.
+  // Resolve by declared capability, keeping installed definitions authoritative.
+  const proseCapabilities = new Set(["prose editing", "plain-language repair"]);
+  const proseIndex = Object.fromEntries(Object.entries({ ...getBundled(), ...skillIndex })
+    .map(([name, item]) => [name, {
+      ...item,
+      // Same-name bundled metadata supplies vocabulary for older host skills;
+      // the installed path, invocation policy, and readiness remain authoritative.
+      capabilities: item.capabilities ?? getBundled()[name]?.capabilities,
+    }]));
+  const requestedProse = Object.entries(proseIndex)
+    .filter(([name, item]) => explicitlyRequests(affirmativeTask, name) &&
+      declaredCapabilities(item).some((capability) => proseCapabilities.has(capability)))
+    .filter(([name]) => {
+      const cue = normalizedCue(name).replaceAll(" ", "\\s+");
+      return !new RegExp(`\\b(?:without|skip|avoid|no|not|don t|do not)\\s+(?:(?:use|run|invoke|apply)\\s+)?${cue}\\b`).test(normalizedCue(context.task));
+    })
+    .sort(([a], [b]) => normalizedCue(affirmativeTask).indexOf(normalizedCue(a)) - normalizedCue(affirmativeTask).indexOf(normalizedCue(b)));
+  for (const [name, item] of requestedProse) {
+    if (steps.some((step) => step.skill === name) && item.references?.length) continue;
+    for (let i = steps.length - 1; i >= 0; i--) {
+      if (steps[i].skill === name) steps.splice(i, 1);
+    }
+    const capability = declaredCapabilities(item).find((value) => proseCapabilities.has(value));
+    if ((Array.isArray(context.allowedSkills) && !context.allowedSkills.includes(name)) || skillIsIncomplete(item)) {
+      gaps.push({ stage: "prose", capability, code: "unavailable_requested_skill", blocking: true,
+        question: `${name} was requested but is excluded by the capability profile or has missing required files. Resolve that conflict before continuing.`,
+        reason: "Preserve explicitly requested prose work.", requires_approval: false, trusted_candidates: [] });
+      continue;
+    }
+    // Dependency-bearing human routers need the existing engine-resolution
+    // path, rather than being treated as standalone prose instructions.
+    if (item.references?.length) {
+      gaps.push({ stage: "prose", capability, code: "unresolved_requested_router", blocking: true,
+        question: `${name} declares dependencies outside this flow. Include its capability in the workflow before continuing.`,
+        reason: "Do not run only part of a requested router.", requires_approval: false, trusted_candidates: [] });
+      continue;
+    }
+    steps.push({ stage: "prose", capability, skill: name, type: item.type || "skill",
+      reason: "Apply the explicitly requested prose pass to the final human-facing output.",
+      output: "clear prose that preserves the evidence and intended meaning",
+      status: skillIndex[name] ? "installed" : "fallback", provider: item.provider || "bundled",
+      path: item.path, ...(item.invocation === "user" ? { invocation: "user", human_checkpoint: true } : {}),
+      selection_reason: "explicitly requested prose capability", rejected_candidates: [] });
   }
 
   return {

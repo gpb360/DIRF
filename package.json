@@ -14,6 +14,7 @@
     "check:publication": "node src/publication-boundary.js",
     "typecheck": "tsc --noEmit",
     "smoke": "node scripts/smoke.js",
+    "check:release": "npm run validate && npm run typecheck && npm test && npm run smoke && npm run check:publication",
     "validate": "node src/cli.js validate",
     "scan": "node src/cli.js skills scan"
   },

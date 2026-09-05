@@ -329,18 +329,19 @@ export function buildInstructions(workflow, outDir, skillBindings = []) {
     "## Objective",
     task,
     "",
+    `Repository: ${workflow.repository?.remote || workflow.repository?.name || "not recorded; confirm the target before starting"}.`,
+    "",
     "## Next step",
     executionHandoff(),
+    "Follow the phases in order, act as one role at a time, and load only that role's detail. Read policy.md before editing. State an access blocker instead of guessing about unavailable files.",
     "",
-    "## Kickoff prompt (copy into your model of choice)",
-    "",
-    "```text",
-    kickoffPrompt(workflow),
-    "```",
+    "For a copyable startup prompt, open [kickoff.md](kickoff.md). It repeats this workflow for hosts without file access; do not load both by default.",
     "",
     "## Context reserve",
     `Keep ${workflow.context_reserve_percent ?? 5}% of the model context available for handoff. When the host reports that reserve or less, update HANDOFF.md with completed work, decisions, changed files, validation, blockers, and the exact next action, then stop. If the host does not expose context usage, update HANDOFF.md after every completed phase.`,
   ];
+  writeFileSync(join(outDir, "kickoff.md"), kickoffPrompt(workflow) + "\n", "utf8");
+  written.push(join(outDir, "kickoff.md"));
   if (usesFocusedOutput(workflow)) {
     lines.push("", "## Focused output", "", "For status updates, validation summaries, and handoffs:");
     for (const rule of focusedOutputRules(workflow)) lines.push(`- ${rule}`);

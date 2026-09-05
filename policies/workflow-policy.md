@@ -12,7 +12,7 @@ Use this policy in every generated workflow prompt.
 ## Runtime Portability
 - Operating instructions are host-neutral. The current host may be Claude, Codex, Cursor, Zcode, T3Code, another agent, or a person.
 - Resolve repository, skill, and tool paths at runtime. Never persist absolute host paths as workflow identity.
-- DIRF coordination state is canonical and central (~/.dirf/projects/<slug>/). Worktrees resolve to the same store entry automatically via git-common-dir, so no per-worktree setup is needed and state cannot drift between checkouts. Scratch isolation stays local to the current execution.
+- DIRF coordination state is canonical and central (~/.dirf/projects/<slug>/). Worktrees resolve to the same store entry automatically via git-common-dir, so no per-worktree setup is needed and worktrees share the same coordination store. Scratch isolation stays local to the current execution.
 - Select scratch space inside the active workspace. Never silently fall back to another drive or the operating-system temp directory.
 - Persist capability names and provider hints, not installation paths.
 
@@ -69,7 +69,7 @@ Use this policy in every generated workflow prompt.
 - Keep grades, confidence scores, P-codes, and the detailed findings ledger in
   the review artifact. Show or link that detail when it helps, or when the user
   asks for it; do not make the user decode it in every status update.
-- `Complete` requires a review of the current commit with no remaining issues,
+- For implementation and merge-readiness work, `Complete` requires a review of the current commit with no remaining issues,
   all required checks passed, all review conversations resolved, and proof that
   the corrected behavior works. Green checks alone are not completion.
 - Separate code pushed, PR text posted, checks completed, and review completed.
@@ -95,7 +95,7 @@ Use this policy in every generated workflow prompt.
 - Self-audit once before delivery.
 
 ## Side observations
-- Park anything noticed that is NOT the current task (a side bug, a doc staleness, a "fix later") via `dirf notice "<note>"`. Default target: the current attempt.
+- Park anything noticed that is NOT the current task (a side bug, a doc staleness, a "fix later") via `dirf notice "<note>"`. Default target: the active checkout owner. If no unique owner exists, use `--attempt <id>` or `--project`.
 - Never put side observations in HANDOFF.md — they are not status, decisions, or blockers.
 - Do not act on a side observation in the current attempt. Log it and continue.
 - Observations are ephemeral to the attempt. Promote one to the project-level list with `dirf notice promote <N>` only if it should survive across sessions.

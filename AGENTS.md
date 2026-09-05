@@ -15,7 +15,7 @@ with agents correctly mapped to the host repo's **actual installed skills**.
 DIRF coordination state (config, attempts, the canonical handoff) lives in a
 **central store** at `~/.dirf/projects/<slug>/`, keyed by
 `git rev-parse --git-common-dir` so every worktree of a repo collapses to the
-same store entry. State cannot drift between checkouts.
+same store entry. Worktrees share the same store; continuation still requires checking task ownership and current evidence.
 
 ## Two governing principles
 

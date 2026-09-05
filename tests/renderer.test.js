@@ -44,7 +44,7 @@ test("renderMarkdownLite strips html comments", () => {
   assert.ok(html.includes("visible"));
 });
 
-test("kickoff prompt is embedded in both renders and stays host-agnostic", () => {
+test("kickoff prompt is optional in Markdown and embedded in HTML, preserving startup rules", () => {
   const workflow = {
     name: "demo", task: "review a pull request", playbook: "pr-review",
     workflow: { phases: ["a", "b"], output: "a page", validation: "v", recovery: "r", requirements: ["derive every screen x state x viewport row"] },
@@ -85,8 +85,12 @@ test("kickoff prompt is embedded in both renders and stays host-agnostic", () =>
 
   const outDir = mkdtempSync(join(tmpdir(), "dirf-kickoff-"));
   const readme = (buildInstructions(workflow, outDir), readFileSync(join(outDir, "README.md"), "utf-8"));
-  assert.ok(readme.includes("## Kickoff prompt (copy into your model of choice)"));
-  assert.ok(readme.includes('"demo" DIRF workflow'));
+  assert.ok(readme.includes("[kickoff.md](kickoff.md)"));
+  assert.ok(!readme.includes('"demo" DIRF workflow'));
+  assert.equal(readFileSync(join(outDir, "kickoff.md"), "utf8"), prompt + "\n");
+  assert.equal((readme.match(/## Focused output/g) || []).length, 1);
+  assert.match(readme, /Repository: not recorded/);
+  assert.match(readme, /act as one role at a time/);
   assert.ok(readme.includes("## Required acceptance contract"));
   assert.ok(readme.includes("## Model advice (diagnostic preflight)"));
   assert.ok(readme.includes("Host catalog SHA-256"));

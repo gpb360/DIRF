@@ -78,7 +78,7 @@ Paste-ready instructions identifying the Project and Attempt and directing an ag
 _Avoid_: Resume command, process launch
 
 **Canonical Handoff**:
-The Project's current cross-session coordination snapshot and highest-precedence resume context. An Attempt Handoff may add scoped detail but never overrides newer canonical Project state.
+The Project's shared coordination snapshot. Resolve checkout responsibility first and load that Attempt's Handoff. Reconcile warnings about related work before continuing. Use the Project handoff as supporting context when it does not conflict with the active Attempt.
 _Avoid_: Attempt handoff, local handoff
 
 **Project Rollup**:

@@ -156,6 +156,17 @@ export function negatesInterviewCapability(taskText) {
   return !/\b(?:grill(?:[- ]with[- ]docs|(?:\s+me)?)|interview(?:\s+me)?|question(?:\s+me)?)\b/.test(affirmativeRoutingText(text));
 }
 
+// A task constraint selects a reporting contract, never a repair loop.
+// Do not confuse a read-only product feature with an audit of that product.
+export function requestsReadOnlyAudit(task) {
+  const text = String(task || "").toLowerCase();
+  if (!/\b(review|audit|inspect|assess|analy[sz]e|recommendations?)\b/.test(text)) return false;
+  const noChanges = /\b(?:do not|don't|never)\s+(?:edit|fix|modify|change|implement)\b|\bwithout\s+(?:implementation|(?:editing|changing|modifying)\s+(?:the\s+)?(?:code|source|repository))\b|\bno\s+(?:code|source|repository)\s+changes\b/.test(text);
+  if (noChanges) return true;
+  if (/^\s*(?:please\s+)?(?:build|implement|add|fix|create)\b/.test(text)) return false;
+  return /\b(?:read[- ]only|audit[- ]only|review[- ]only)\b/.test(text);
+}
+
 function interviewCueIndex(taskText, interviewPlaybook) {
   const interviewKeywords = matchedKeywords(taskText, interviewPlaybook)
     .filter((keyword) => /\b(?:grill|interview|question)\b/.test(keyword.replaceAll("-", " ")));
@@ -453,6 +464,10 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
   // Pick the best playbook for a task. Returns a recommendation object.
   const taskText = (task || "").toLowerCase();
   const routingTaskText = affirmativeRoutingText(taskText);
+  const readOnly = requestsReadOnlyAudit(taskText);
+  if (readOnly && !Object.values(playbooks).some((pb) => pb.workflow?.execution_mode === "read_only")) {
+    throw new Error("Read-only audit requested but no read-only workflow is available.");
+  }
   let haystack = routingTaskText;
   const taskHasRoutingCue = Object.entries(playbooks).some(([name, playbook]) =>
     name !== FALLBACK_PLAYBOOK && matchedKeywords(taskText, playbook).length > 0,
@@ -482,12 +497,16 @@ export function recommend(task, facts, playbooks = loadPlaybooks(), stack = null
   let index = 0;
   for (const [name, pb] of Object.entries(playbooks)) {
     if (name === FALLBACK_PLAYBOOK) continue;
+    // Keep explicit interview sequencing, but do not let its continuation
+    // select an implementation workflow when the task excludes repairs.
+    if (readOnly && pb.workflow?.execution_mode !== "read_only" && !explicitlyRequestsInterview(routingTaskText, pb)) continue;
     const reviewConflictsWithImplementation = isImplementation && (
       name === "pr-review" || (name === "security-review" && !isExplicitSecurityAudit)
     );
     let { score, count, context } = reviewConflictsWithImplementation
       ? { score: 0, count: 0, context: [] }
       : scorePlaybook(haystack, taskTokens, pb);
+    if (readOnly && pb.workflow?.execution_mode === "read_only") score = Math.max(score, 1);
 
     // (a) Positive stack-affinity boost for genuinely software-building
     //     playbooks when the detected app is a software app and the task is
