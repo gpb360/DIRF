@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { readFileSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { isAbsolute, win32 } from "node:path";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
@@ -44,7 +44,8 @@ function score(value) {
 }
 
 function relativeFile(value) {
-  return nonEmptyString(value) && !isAbsolute(value) && !value.replaceAll("\\", "/").split("/").includes("..");
+  return nonEmptyString(value) && !isAbsolute(value) && !win32.isAbsolute(value)
+    && !value.replaceAll("\\", "/").split("/").includes("..");
 }
 
 function repositoryUrl(value) {
