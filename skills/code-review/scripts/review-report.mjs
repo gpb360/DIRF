@@ -543,10 +543,15 @@ function currentGitContext(review, io = {}) {
     const mergeParents = output(["rev-list", "--parents", "-n", "1", mergeCommit]).split(/\s+/);
     if (
       mergeParents.length !== 3
-      || mergeParents[1].toLowerCase() !== pr.baseRefOid.toLowerCase()
       || mergeParents[2].toLowerCase() !== remotePrHead.toLowerCase()
     ) {
       throw new Error("DIRF could not verify GitHub's merged pull-request commit against its reported base and head.");
+    }
+    // GitHub may retain the PR's earlier base SHA after other PRs land.
+    // It must still belong to the actual first parent's history.
+    ensureCommit(pr.baseRefOid, succeeds, runGit, "DIRF could not load GitHub's reported pull-request base from origin.");
+    if (!succeeds(["merge-base", "--is-ancestor", pr.baseRefOid, mergeParents[1]])) {
+      throw new Error("GitHub's reported pull-request base is not an ancestor of the merge's first parent.");
     }
     if (!succeeds(["merge-base", "--is-ancestor", mergeCommit, liveBaseHead])) {
       throw new Error("GitHub's merged pull-request commit is not present on the live base branch.");

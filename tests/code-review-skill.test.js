@@ -128,6 +128,7 @@ test("readiness verifies an already-merged PR against GitHub and the live base b
     `cat-file -e ${SHA_C}^{commit}`,
     `cat-file -e ${SHA_D}^{commit}`,
     `cat-file -e ${SHA_A}^{commit}`,
+    `merge-base --is-ancestor ${SHA_A} ${SHA_A}`,
     `merge-base --is-ancestor ${SHA_A} ${SHA_B}`,
     `merge-base --is-ancestor ${SHA_C} ${SHA_D}`,
     "check-ref-format refs/heads/main",
@@ -162,6 +163,30 @@ test("readiness verifies an already-merged PR against GitHub and the live base b
     new RegExp(`Verified: the review matches merged PR #42 at ${SHA_B.slice(0, 12)} with merge commit ${SHA_C.slice(0, 12)}`),
   );
   assert.equal(liveStateCalls, 0, "merged-PR verification must not consult live check runs");
+
+  const advancedBase = "e".repeat(40);
+  const advancedIo = {
+    ...io,
+    gitOutput: (args) => {
+      const command = args.join(" ");
+      if (command === `rev-list --parents -n 1 ${SHA_C}`) return `${SHA_C} ${advancedBase} ${SHA_B}`;
+      if (command === `merge-base ${advancedBase} ${SHA_B}`) return SHA_A;
+      return io.gitOutput(args);
+    },
+    gitSucceeds: (args) => args.join(" ") === `merge-base --is-ancestor ${SHA_A} ${advancedBase}` || io.gitSucceeds(args),
+  };
+  assert.match(run(["ready", reviewPath], advancedIo), /Verified: the review matches merged PR/);
+  assert.throws(
+    () => run(["ready", reviewPath], { ...advancedIo, gitSucceeds: io.gitSucceeds }),
+    /reported pull-request base is not an ancestor/i,
+  );
+  assert.throws(
+    () => run(["ready", reviewPath], {
+      ...advancedIo,
+      gitOutput: (args) => args.join(" ") === `merge-base ${advancedBase} ${SHA_B}` ? advancedBase : advancedIo.gitOutput(args),
+    }),
+    /review base/i,
+  );
 
   assert.throws(
     () => run(["ready", reviewPath], {
