@@ -1697,21 +1697,21 @@ function withProgressLock(slug, action) {
   }), "utf8");
   const deadline = Date.now() + PROGRESS_LOCK_WAIT_MS;
   while (true) {
+    if (Date.now() >= deadline) {
+      rmSync(candidatePath, { recursive: true, force: true });
+      throw new Error("Another progress update is still running; retry this checkpoint.");
+    }
     try {
       renameSync(candidatePath, lockPath);
       break;
     } catch (error) {
-      if (!existsSync(lockPath)) throw error;
+      if (!existsSync(lockPath) && !["EEXIST", "ENOTEMPTY", "EPERM"].includes(error.code)) throw error;
       try {
         const owner = readProgressLockOwner(lockPath);
         if (reclaimDeadProgressLock(lockPath, owner, token)) continue;
       } catch (statError) {
         if (statError.code !== "ENOENT") throw statError;
         continue;
-      }
-      if (Date.now() >= deadline) {
-        rmSync(candidatePath, { recursive: true, force: true });
-        throw new Error("Another progress update is still running; retry this checkpoint.");
       }
       Atomics.wait(LOCK_WAIT_ARRAY, 0, 0, 25);
     }
@@ -1720,7 +1720,13 @@ function withProgressLock(slug, action) {
     return action();
   } finally {
     const owner = readProgressLockOwner(lockPath);
-    if (owner?.token === token) rmSync(lockPath, { recursive: true, force: true });
+    if (owner?.token === token) {
+      // Detach the owned directory before deleting its contents. Otherwise a
+      // contender can replace the emptied directory while rmSync is finishing.
+      const releasedPath = `${lockPath}.released-${token}`;
+      renameSync(lockPath, releasedPath);
+      rmSync(releasedPath, { recursive: true, force: true });
+    }
     rmSync(candidatePath, { recursive: true, force: true });
   }
 }
