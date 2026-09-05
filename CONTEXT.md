@@ -33,8 +33,44 @@ _Avoid_: Agent monitor, issue tracker
 An Attempt recorded as actively being worked, including its current phase and assigned agent when known. It does not assert that an agent process is currently running.
 _Avoid_: Live, running
 
+**Execution Observation**:
+The latest trusted-harness snapshot for an Attempt: owning orchestrator, normalized status, observed time, worktree, branch, and bounded child reports. A host-held capability, bound during trusted setup before agents run, authorizes updates without being exposed in the Project view. It describes runtime evidence without changing Attempt lifecycle state.
+_Avoid_: Attempt status, inferred process
+
+**Active Now**:
+An Attempt whose fresh orchestrator snapshot reports the orchestrator or at least one registered child as `active`. The harness is the sole authority for this runtime fact; branch, worktree, lifecycle, and handoff evidence cannot infer it.
+_Avoid_: In Progress, recently edited
+
+**Execution Ownership Conflict**:
+A different harness session or Attempt tries to claim a worktree and branch that has an Active Now owner. DIRF stops and shows the owning session, Attempt, and handoff. Re-observing the same session and Attempt is an idempotent refresh.
+_Avoid_: New Attempt, automatic takeover
+
+**Dormant Owner**:
+The last owner of a worktree and branch is idle or stale rather than Active Now. DIRF defaults to resuming that Attempt's handoff. A new harness session may take over the same Attempt only with an explicit reason; a different Attempt must first explicitly abandon the old Attempt.
+_Avoid_: Available branch, abandoned Attempt
+
+**Abandoned Attempt**:
+An Attempt explicitly stopped without completion by an authorized user or owning orchestrator, with a recorded reason. It remains visible in history and may be reopened. A timeout, missing observation, or released execution claim never implies abandonment.
+_Avoid_: Stale Attempt, idle session, deleted Attempt
+
+**Delegated Status Contract**:
+Instructions attached by an orchestrator to every subagent assignment, identifying the DIRF Attempt and requiring the subagent to report its runtime state, result, blocker, and handoff back to that orchestrator.
+_Avoid_: Optional status update, independent Attempt
+
+**Child Execution**:
+A bounded subagent run owned by an orchestrator within one Attempt. It has its own harness session, assignment, runtime state, blocker, and result, but it does not own an independent DIRF lifecycle or continuation handoff.
+_Avoid_: Attempt, autonomous project task
+
+**Independent Attempt Boundary**:
+A delegated work item becomes a separate Attempt only when it must be resumed, transferred, blocked, abandoned, or continued through its own handoff independently of the parent Attempt.
+_Avoid_: One Attempt per subagent
+
+**Live Work Registry**:
+The Project view that reconciles every Attempt's lifecycle, Execution Observation, worktree, and Attempt Handoff. It reports active, resumable, blocked, stale, explicitly abandoned, planned, historical, and completed work without starting or managing agent processes.
+_Avoid_: Latest Attempt, process manager
+
 **Attempt Lifecycle Action**:
-An explicit Start, Block, Complete, or Reopen transition applied to canonical Attempt state. Moving or viewing a card in the Flow Board never changes status implicitly.
+An explicit Start, Block, Abandon, Complete, or Reopen transition applied to canonical Attempt state. Moving or viewing a card in the Flow Board never changes status implicitly.
 _Avoid_: Drag-and-drop update, automatic status inference
 
 **Resume Prompt**:

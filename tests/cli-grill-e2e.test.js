@@ -414,7 +414,7 @@ test("a broken explicit human router fails validation before an attempt is creat
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /Task Routing validation failed/);
-  assert.match(result.stderr, /grill-me is human-invoked but none of its installed model-invoked references covers plan interview/);
+  assert.match(result.stderr, /grill-me references unavailable, human-only, or incomplete dependencies: missing-engine/);
   const slug = readdirSync(join(home, "projects"))[0];
   const attempts = join(home, "projects", slug, "attempts");
   assert.equal(existsSync(attempts) ? readdirSync(attempts).length : 0, 0);

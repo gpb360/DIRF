@@ -72,6 +72,10 @@ the store at `~/.dirf/projects/<slug>/attempts/<id>/`. It prints the attempt id.
 Open that attempt's `README.md` — it's the operating workflow (ordered phases,
 agent roles, done-when checks, policy). Execute it one phase at a time.
 
+An entrypoint alone does not prove that a skill is runnable. See
+[Declare required skill resources](writing-great-playbooks.md#declare-required-skill-resources)
+for the readiness and routing contract.
+
 To see the routed skill flow without building:
 
 ```bash
@@ -146,9 +150,18 @@ Metadata requires a stable `id`, a supported `type`, and an attempt-relative
 types are `source`, `research_questions`, `research`, `lesson`, `design`,
 `structure`, `plan`, `implementation_evidence`, and `plan_delta`. Recording
 never implies acceptance. New acceptances bind the exact artifact bytes with
-`accepted_sha256`; historical accepted artifacts without a digest remain valid.
+`accepted_sha256`; historical accepted artifacts without a digest remain valid
+for gates that only require acceptance. Any gate declaring
+`artifact_type: "implementation_evidence"` requires the digest: a historical
+accepted evidence artifact without one reports as pending until a SHA-bound
+superseding artifact is accepted.
 When a decision gate declares `artifact_type`, both its accepted
 decision record and the governing accepted artifact are required to advance.
+A verify gate may opt into `artifact_type: "implementation_evidence"`; that
+gate requires both its exact command-match evidence record and the governing
+accepted, SHA-bound implementation-evidence artifact. Other artifact types
+remain decision-only, soft gates remain artifact-free, and verify gates without
+`artifact_type` keep their existing command-evidence behavior.
 For `plan_delta`, the referenced JSON must name the governing accepted plan and
 contain all four evidence buckets: `implemented_as_planned`, `additions`,
 `omissions`, and `unverifiable`.
@@ -199,6 +212,8 @@ Reference existing specs/tickets/decisions rather than restating them.
 | `dirf attempt advance <id> [--evidence "CMD"] [--output F] [--strict] [--auto]` | advance one phase (gates enforced); `--auto` crosses covered phases and stops at gates |
 | `dirf attempt gate <id> <phase> accept\|deny [--comment "…"]` | record a user-owned decision on a decision-gated phase (deny requires a comment) |
 | `dirf attempt block <id> --reason R [--wait input\|blocker]` | block an attempt; `--wait input` marks it as awaiting user input |
+| `dirf attempt observe <id> [--execution-status active\|idle\|unknown] [--file SNAPSHOT]` | trusted harness adapter refreshes the orchestrator-owned execution snapshot; requires `DIRF_ORCHESTRATOR_TOKEN` |
+| `dirf attempt abandon <id> --reason "..."` | explicitly abandon an unfinished Attempt; requires the pre-bound `DIRF_ORCHESTRATOR_TOKEN` |
 | `dirf artifact record <id> --file F` | validate and record one typed artifact metadata object (`add` is an alias) |
 | `dirf artifact list <id> [--json]` | list artifacts and governing accepted versions |
 | `dirf artifact accept <id> <artifact-id>` | explicitly accept a recorded artifact |
@@ -209,8 +224,9 @@ Reference existing specs/tickets/decisions rather than restating them.
 | `dirf review verify-update <request.json> <updated-review.json>` | compare artifact targets and emit a re-review trigger; the harness must verify the live PR head |
 | `dirf list` | list attempts (alias for state list-attempts scoped here) |
 | `dirf state list` | all registered projects (works from anywhere) |
-| `dirf portfolio` | cross-project status view: every project + attempt classified active/stale/completed/archived/empty |
-| `dirf project complete\|archive\|reopen\|status` | explicit project status override (derived classification otherwise) |
+| `dirf portfolio` | cross-project status view: every project + attempt classified active/idle/stale/completed/archived/empty |
+| `dirf project status [--json]` | reconciled project work view; JSON contains every attempt and continuation handoff |
+| `dirf project complete\|archive\|reopen` | explicit project status override (derived classification otherwise) |
 | `dirf export obsidian` | render the portfolio into an Obsidian vault (notes + canvas dashboard) |
 | `dirf export graphify` | render the portfolio as a graphify graph + interactive HTML |
 | `dirf skills scan` | show installed skills + resolved refs on this host |
@@ -270,17 +286,88 @@ state which` resolves to the same store entry as the main tree (via
 per-worktree setup, no per-worktree state. Two agents in two worktrees of the
 same repo see each other's handoff updates through the store.
 
+## Live work registry
+
+`dirf project status --json` reconciles every Attempt in the current Project.
+Each item keeps lifecycle state separate from observed runtime state and shows
+the current harness session, worktree, Attempt Handoff, and exact next action.
+
+Before any agents run, the trusted harness generates a high-entropy
+`DIRF_ORCHESTRATOR_TOKEN` and binds it through the normal idempotent setup path:
+
+```bash
+DIRF_ORCHESTRATOR_TOKEN=<secret> dirf setup <project-path>
+```
+
+Observation cannot create or replace this authority record. The adapter keeps
+the token stable for the Project and does not pass it to child agents. It then
+reports ownership through one small command, providing its identity through
+`DIRF_HARNESS` and `DIRF_SESSION_ID`; Codex may use `CODEX_THREAD_ID` instead:
+
+```bash
+DIRF_HARNESS=<name> DIRF_SESSION_ID=<id> DIRF_ORCHESTRATOR_TOKEN=<secret> \
+  dirf attempt observe <attempt> --execution-status active --worktree <path>
+```
+
+`active` means the observation is fresh; it expires after five minutes without
+a refresh. An old or missing observation never proves that work is running. A
+fresh owner cannot be replaced by a different session, even with a transfer
+reason. Once the owner is dormant, changing the owning session for that same
+Attempt requires `--transfer-reason "..."`; DIRF records the previous owner and
+reason rather than treating expiry as permission to take over. A worktree or
+branch tied to another unfinished Attempt remains unavailable until that Attempt
+is explicitly abandoned.
+
+The orchestrator is the sole registry writer. It tells every child agent to
+report its session, assignment, state, result, blocker, and handoff back to the
+orchestrator. The adapter may submit those reports atomically with `--file`:
+
+```json
+{
+  "children": [
+    {
+      "session_id": "child-17",
+      "assignment": "Check the API contract",
+      "status": "completed",
+      "result": "Contract verified"
+    }
+  ]
+}
+```
+
+Child status is bounded data, not authority: children do not call DIRF state
+commands. Trusted setup pins only the token hash in the Project store; later
+execution writes require the matching capability. A child marked
+`blocked` changes the parent view only when the
+orchestrator also sets `"blocks_parent": true`; child completion never completes
+the Attempt. The owning adapter may use
+`dirf attempt abandon <id> --reason "..."` with the same capability for explicit
+abandonment; `dirf attempt reopen <id>` resumes it. DIRF never infers abandonment
+from a stale heartbeat.
+
+This guard prevents unauthorized CLI takeover. It is not a security boundary
+against a process that can freely edit the DIRF store; harnesses must keep the
+token and canonical state mutation tools out of untrusted child sandboxes.
+
+Codex refreshes automatically when `CODEX_THREAD_ID` and
+`DIRF_ORCHESTRATOR_TOKEN` are present during `dirf state active`. Other harnesses
+set `DIRF_HARNESS`, `DIRF_SESSION_ID`, `DIRF_ORCHESTRATOR_TOKEN`, and optional
+`DIRF_EXECUTION_STATUS` before the same startup command.
+
 ## Portfolio (cross-project overview)
 
 `dirf portfolio` shows **every registered project on the machine**, not just the
 one you're in — useful at session start to see what's live, what's abandoned,
 and what's finished:
 
-- **active** — open work (in_progress/blocked attempts) or activity within the
-  staleness threshold (`settings set --stale-project-days N`, default 30).
+- **active** — at least one Attempt has a fresh harness observation reporting
+  active work.
+- **idle** — unfinished work exists, but no fresh harness observation reports
+  active work.
 - **completed** — all tracked attempts done, or the canonical handoff carries
   `## Status: Complete.`
-- **stale** — nothing open and no activity past the threshold.
+- **stale** — no live work and no project activity past the threshold;
+  abandonment is never inferred.
 - **archived** / **empty** — explicitly parked, or registered with no attempts.
 
 Status is derived from store data, so it can't drift; `dirf project
