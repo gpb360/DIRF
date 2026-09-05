@@ -143,6 +143,9 @@ project and common host locations, then maps those capabilities to what is
 actually installed. Missing optional capabilities are reported as gaps instead
 of causing the build to fail.
 
+Skills with required package resources follow the
+[readiness contract](docs/writing-great-playbooks.md#declare-required-skill-resources).
+
 Generated attempts contain portable capability names and provider hints, not
 hardcoded installation paths. The Markdown can therefore be executed by Codex,
 Claude, Cursor, another host, or a person. Existing project instructions still
@@ -262,7 +265,10 @@ An attempt may record portable metadata for research, design, structure, plans,
 implementation evidence, and plan deltas. Artifact content stays inside the
 attempt folder; recording it does not imply acceptance. DIRF resolves the
 governing accepted version deterministically from the supersession graph and
-can require that content at an existing decision gate.
+can require that content at an existing decision gate. A verify gate may also
+opt into `artifact_type: "implementation_evidence"`, requiring both its exact
+command evidence and an accepted, SHA-bound implementation-evidence artifact.
+Verify gates without that declaration remain backward compatible.
 
 ```bash
 dirf artifact record <attempt> --file artifact.json --path "../my-project"
@@ -332,7 +338,7 @@ dirf review render <review.json>                        render a review artifact
 dirf review ready <review.json>                         fail closed unless the exact PR is merge-ready
 
 # portfolio (cross-project view — see "Portfolio" below)
-dirf portfolio [--json]                              classify every project: active/stale/completed/archived/empty
+dirf portfolio [--json]                              classify every project: active/idle/stale/completed/archived/empty
 dirf project <complete|reopen|archive|status> [...]  explicit project status override
 dirf export obsidian [--out DIR]                     export the portfolio into an Obsidian vault (notes + canvas)
 dirf export graphify [--out DIR] [--skip-render]     export the portfolio as a graphify graph (+ HTML render)
@@ -515,9 +521,10 @@ anywhere on the machine. It derives a status for each project and its attempts:
 
 | Status | Meaning |
 |---|---|
-| `active` | open work (in-progress/blocked attempts) or activity within the staleness threshold |
+| `active` | at least one Attempt has a fresh harness observation reporting active work |
+| `idle` | unfinished work exists, but no fresh harness observation says it is active |
 | `completed` | all tracked attempts done, or the handoff carries `## Status: Complete.` |
-| `stale` | nothing open and no activity past the threshold — likely abandoned |
+| `stale` | no live work and no project activity past the threshold; abandonment is never inferred |
 | `archived` | explicitly archived (`dirf project archive`) |
 | `empty` | registered but no attempts yet |
 

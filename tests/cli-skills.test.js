@@ -40,7 +40,7 @@ test("skills scan reports invocation classes, reference graph, and token budget"
   const out = run(["skills", "scan", "--path", root], { DIRF_HOME: home, USERPROFILE: home, HOME: home }, root);
   assert.match(out, /grill-me[\s\S]*?\[user-invoked — human-only\]/);
   assert.match(out, /grill-with-docs[\s\S]*?\[model-invoked\]/);
-  assert.match(out, /Invocation: 2 model-invoked \(agent-routable\), 1 user-invoked \(human-only\)\./);
+  assert.match(out, /Invocation: 2 model-invoked \(agent-routable\), 1 user-invoked \(human-only\), 0 incomplete \(not routable\)\./);
   assert.match(out, /grill-me → grill-with-docs \(installed\)/);
   assert.match(out, /missing-ref → absent-skill \(referenced, not installed\)/);
   assert.match(out, /Token budget: \d+ tokens always loaded \(metadata tier\)/);

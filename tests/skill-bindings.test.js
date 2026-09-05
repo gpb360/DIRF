@@ -76,3 +76,20 @@ test("an unavailable skill stays visible as missing", () => {
   assert.equal(bindings[0].status, "missing");
   assert.equal(bindings[0].entry, null);
 });
+
+test("saved bindings refresh required resource readiness", () => {
+  const root = mkdtempSync(join(tmpdir(), "dirf-binding-incomplete-"));
+  const skill = join(root, ".agents", "skills", "testing");
+  mkdirSync(skill, { recursive: true });
+  writeFileSync(join(skill, "SKILL.md"), "---\nname: testing\nmetadata: {\"required_files\":[\"scripts/run.cjs\"]}\n---\n# Testing\n");
+  const workflow = plan(skill);
+  const saved = bindingsFromPlan(workflow, root);
+
+  const bindings = refreshSkillBindings(workflow, saved, root, {
+    discoverSkills() { throw new Error("saved binding readiness must not scan"); },
+  });
+
+  assert.equal(bindings[0].status, "incomplete");
+  assert.deepEqual(bindings[0].required_files, ["scripts/run.cjs"]);
+  assert.deepEqual(bindings[0].missing_files, ["scripts/run.cjs"]);
+});

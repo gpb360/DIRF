@@ -58,6 +58,7 @@ function gitContext(overrides = {}) {
     pr_state: "open",
     merge_commit: SHA_A,
     merge_commit_is_ancestor: true,
+    live_checks_passed: true,
     ...overrides,
   };
 }
@@ -239,6 +240,11 @@ test("readiness fails when issues remain or the checkout differs from the review
 });
 
 test("readiness rejects the wrong repository, invalid base, stale live PR, and failed verification", () => {
+  assert.throws(() => assertReviewReady(artifact(), gitContext({ live_checks_passed: undefined })), /Live pull-request checks/);
+  assert.throws(() => assertReviewReady(artifact(), gitContext({ live_checks_passed: undefined,
+    pr_state: "merged", merge_commit: undefined, merge_commit_is_ancestor: false })), /Live pull-request checks|merged pull-request commit/);
+  assert.doesNotThrow(() => assertReviewReady(artifact(), gitContext({ live_checks_passed: undefined,
+    pr_state: "merged", merge_commit: "c".repeat(40), merge_commit_is_ancestor: true })));
   assert.throws(() => assertReviewReady(artifact(), gitContext({ repository: "https://example.test/other/repo.git" })), /different repository/i);
   assert.throws(() => assertReviewReady(artifact(), gitContext({ base_exists: false })), /review base/i);
   assert.throws(() => assertReviewReady(artifact(), gitContext({ base_matches_merge_base: false })), /review base/i);

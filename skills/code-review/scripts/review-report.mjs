@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { readFileSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { isAbsolute, win32 } from "node:path";
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
@@ -44,7 +44,8 @@ function score(value) {
 }
 
 function relativeFile(value) {
-  return nonEmptyString(value) && !isAbsolute(value) && !value.replaceAll("\\", "/").split("/").includes("..");
+  return nonEmptyString(value) && !isAbsolute(value) && !win32.isAbsolute(value)
+    && !value.replaceAll("\\", "/").split("/").includes("..");
 }
 
 function repositoryUrl(value) {
@@ -259,7 +260,12 @@ export function assertReviewReady(review, gitContext) {
   if (review.verification.some(({ status }) => status !== "passed") || review.completion.required_checks !== "passed") {
     throw new Error("The required checks have not all passed.");
   }
-  if (!gitContext?.live_checks_skipped && gitContext?.live_checks_passed === false) {
+  // A merged PR can supply the separate commit-and-ancestry proof instead of
+  // current open-PR checks. A state label alone is not proof.
+  const verifiedMerge = gitContext?.pr_state === "merged"
+    && SHA_PATTERN.test(gitContext.merge_commit || "")
+    && gitContext.merge_commit_is_ancestor === true;
+  if (!gitContext?.live_checks_skipped && !verifiedMerge && gitContext?.live_checks_passed !== true) {
     throw new Error("Live pull-request checks were not verified.");
   }
   if (review.completion.unresolved_threads !== 0) {
@@ -404,20 +410,30 @@ function ghJson(args, failureMessage) {
   }
 }
 
-function liveGithubState(review, remoteHead) {
+export function liveGithubState(review, remoteHead, request = ghJson) {
   if (/^file:/i.test(String(review.target.repository || "").trim())) return { live_checks_skipped: true };
-  const repository = normalizeRepository(review.target.repository);
-  if (!/^[^/]+\/[^/]+$/.test(repository)) return null;
-  const checks = ghJson([`repos/${repository}/commits/${remoteHead}/check-runs?per_page=100`], "DIRF could not read live pull-request checks from GitHub.");
+  const parts = normalizeRepository(review.target.repository).split("/");
+  const qualified = /^(?:[a-z][a-z0-9+.-]*:\/\/|git@)/i.test(String(review.target.repository).trim());
+  const hostname = parts.length === 2 && !qualified ? "github.com" : parts.shift();
+  if (!/^[a-z0-9.-]+$/i.test(hostname || "") || parts.length !== 2
+    || parts.some((part) => !/^[a-z0-9_-][a-z0-9_.-]*$/i.test(part))
+    || !SHA_PATTERN.test(remoteHead || "")) {
+    throw new Error("DIRF could not identify a GitHub repository and commit for live verification.");
+  }
+  const repository = parts.join("/");
+  const checks = request(["--hostname", hostname, `repos/${repository}/commits/${remoteHead}/check-runs?per_page=100`], "DIRF could not read live pull-request checks from GitHub.");
   const runs = Array.isArray(checks.check_runs) ? checks.check_runs : [];
-  if (!runs.length || runs.some((run) => run.status !== "completed" || run.conclusion !== "success")) {
+  if (!runs.length || checks.total_count !== runs.length
+    || runs.some((run) => run.status !== "completed" || run.conclusion !== "success")) {
     throw new Error("DIRF could not verify that all live pull-request checks passed.");
   }
   const [owner, name] = repository.split("/");
-  const query = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved}}}}}";
-  const graph = ghJson(["graphql", "-f", `query=${query}`, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${review.target.pr_number}`], "DIRF could not read live pull-request conversations from GitHub.");
-  const threads = graph?.data?.repository?.pullRequest?.reviewThreads?.nodes;
-  if (!Array.isArray(threads) || threads.some((thread) => thread.isResolved !== true)) {
+  const query = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved} pageInfo{hasNextPage}}}}}";
+  const graph = request(["--hostname", hostname, "graphql", "-f", `query=${query}`, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${review.target.pr_number}`], "DIRF could not read live pull-request conversations from GitHub.");
+  const connection = graph?.data?.repository?.pullRequest?.reviewThreads;
+  const threads = connection?.nodes;
+  if (!Array.isArray(threads) || connection?.pageInfo?.hasNextPage !== false
+    || threads.some((thread) => thread.isResolved !== true)) {
     throw new Error("DIRF could not verify that all live pull-request conversations are resolved.");
   }
   return { live_checks_passed: true, live_unresolved_threads: 0 };

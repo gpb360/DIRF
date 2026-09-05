@@ -3,6 +3,7 @@
 //   projects.json            project registry
 //   projects/<slug>/
 //     config.json            canonical config
+//     execution-authority.json  hashed harness capability
 //     HANDOFF.md             canonical handoff
 //     attempts/<id>/         per-run state (layout unchanged)
 //
@@ -18,6 +19,10 @@ import { resolveGoverningArtifact, validateArtifactGraph, validatePlanDelta } fr
 import { parseCurrentHandoff, updateProgressSection } from "./handoff-update.js";
 
 const GIT_TIMEOUT = 30_000;
+const LIVE_OBSERVATION_TTL_MS = 5 * 60_000;
+const EXECUTION_STATUSES = new Set(["active", "idle", "unknown"]);
+const CHILD_EXECUTION_STATUSES = new Set(["active", "idle", "blocked", "completed", "unknown"]);
+const MAX_CHILD_EXECUTIONS = 64;
 
 export function storeHome() {
   return process.env.DIRF_HOME || join(homedir(), ".dirf");
@@ -60,10 +65,10 @@ function gitCommonDir(targetPath) {
 }
 
 // The normalization contract (spec §4). MUST be deterministic and byte-stable.
-// Order: absolute -> forward slashes -> strip trailing slash -> resolve symlinks
+// Order: normalize separators -> absolute -> strip trailing slash -> resolve symlinks
 //        -> case-fold to lower case.
 export function normalizeIdentityKey(rawKey) {
-  let key = resolve(rawKey);                    // 1. absolute
+  let key = resolve(rawKey.replaceAll("\\", "/")); // 1. normalize separators before host path resolution
   key = key.replaceAll("\\", "/");              // 2. forward slashes
   key = key.replace(/\/+$/, "");                // 3. strip trailing slash(es)
   try { key = realpathSync(key).replaceAll("\\", "/"); } catch { /* not-yet-existing path: keep resolved form */ }
@@ -383,7 +388,7 @@ export function listAttemptArtifacts(slug, idOrName) {
   return artifacts;
 }
 
-export function recordAttemptArtifact(slug, idOrName, artifact, now = new Date()) {
+function recordAttemptArtifactLocked(slug, idOrName, artifact, now = new Date()) {
   const attempt = getAttempt(slug, idOrName);
   if (artifact?.accepted_at !== undefined || artifact?.accepted_sha256 !== undefined) {
     throw new Error("Record the artifact first and accept it separately");
@@ -401,7 +406,11 @@ export function recordAttemptArtifact(slug, idOrName, artifact, now = new Date()
   return writeAttempt(slug, { ...attempt, artifacts, updated_at: now.toISOString() });
 }
 
-export function acceptAttemptArtifact(slug, idOrName, artifactId, now = new Date()) {
+export function recordAttemptArtifact(slug, idOrName, artifact, now = new Date()) {
+  return withProgressLock(slug, () => recordAttemptArtifactLocked(slug, idOrName, artifact, now));
+}
+
+function acceptAttemptArtifactLocked(slug, idOrName, artifactId, now = new Date()) {
   const attempt = getAttempt(slug, idOrName);
   const current = attempt.artifacts || [];
   assertArtifactGraph(current);
@@ -427,6 +436,10 @@ export function acceptAttemptArtifact(slug, idOrName, artifactId, now = new Date
   return writeAttempt(slug, { ...attempt, artifacts, updated_at: now.toISOString() });
 }
 
+export function acceptAttemptArtifact(slug, idOrName, artifactId, now = new Date()) {
+  return withProgressLock(slug, () => acceptAttemptArtifactLocked(slug, idOrName, artifactId, now));
+}
+
 // Single workflow.json read for an already-loaded attempt. Projections pass
 // the attempt they already hold so per-attempt work stays O(1) reads, not O(N)
 // (every getAttempt lists the whole attempts tree).
@@ -448,7 +461,8 @@ export function attemptPhases(slug, idOrName) {
 // Playbooks declare per-phase gates (config.workflow.gates), flattened into the
 // persisted workflow.json at selection time (same precedent as
 // conditional_contract). Gate kinds:
-//   verify   — the phase must be advanced past WITH a recorded evidence record
+//   verify   — the phase must be advanced past WITH a recorded evidence record;
+//              it may also require an accepted implementation_evidence artifact
 //   decision — the phase must be advanced past WITH an accepted gate record
 //              (user-owned decision — see the Decision Ownership policy)
 //   soft     — tracked only; advance allowed without a record unless --strict
@@ -471,8 +485,12 @@ function gateRequirement(gates, records, evidence, attempt, phase, strict = fals
     if (records[phase]?.status !== "accepted") {
       return { kind, reason: `Phase "${phase}" is a decision gate — record the decision first (dirf attempt gate ... accept|deny --comment "...")` };
     }
-    if (gate.artifact_type && !governingAttemptArtifact(attempt, gate.artifact_type)) {
+    const governing = gate.artifact_type ? governingAttemptArtifact(attempt, gate.artifact_type) : null;
+    if (gate.artifact_type && !governing) {
       return { kind, reason: `Phase "${phase}" requires an accepted governing artifact of type "${gate.artifact_type}"` };
+    }
+    if (gate.artifact_type === "implementation_evidence" && !governing.accepted_sha256) {
+      return { kind, reason: `Phase "${phase}" requires a SHA-bound accepted implementation_evidence artifact` };
     }
     const declared = String(gate.verify || "").trim();
     if (declared && !evidence[phase]) {
@@ -487,6 +505,13 @@ function gateRequirement(gates, records, evidence, attempt, phase, strict = fals
     const declared = String(gate.verify || "").trim();
     if (declared && evidence[phase].command !== declared) {
       return { kind, reason: `Phase "${phase}" evidence command must match its declared verify command: ${JSON.stringify(declared)}` };
+    }
+    const governing = gate.artifact_type ? governingAttemptArtifact(attempt, gate.artifact_type) : null;
+    if (gate.artifact_type && !governing) {
+      return { kind, reason: `Phase "${phase}" requires an accepted governing artifact of type "${gate.artifact_type}"` };
+    }
+    if (gate.artifact_type === "implementation_evidence" && !governing.accepted_sha256) {
+      return { kind, reason: `Phase "${phase}" requires a SHA-bound accepted implementation_evidence artifact` };
     }
     return null;
   }
@@ -523,7 +548,11 @@ export function attemptGateState(slug, attempt) {
       );
       const artifactType = gates[phase].artifact_type || null;
       const governingArtifact = artifactType ? governingAttemptArtifact(attempt, artifactType) : null;
-      const artifactPending = kind === "decision" && record?.status === "accepted" && artifactType && !governingArtifact;
+      // Existence alone is not enough for implementation_evidence: a historical
+      // accepted artifact without a digest cannot satisfy the binding contract,
+      // so the gate must project as pending exactly when enforcement would block.
+      const artifactPending = artifactType && record?.status !== "denied" &&
+        (!governingArtifact || (artifactType === "implementation_evidence" && !governingArtifact.accepted_sha256));
       const decisionEvidencePending = kind === "decision" && record?.status === "accepted" && declaredVerify && !evidenceMatches;
       let status = "pending";
       if (kind === "decision" && record) status = record.status;
@@ -594,11 +623,19 @@ export function handoffHasCompletionEvidence(markdown) {
 // lies about where a status came from). Reading is cheap (one tiny file per
 // attempt) and the store itself is never mutated by this.
 export function effectiveAttemptStatus(slug, attempt) {
-  if (attempt.status === "done" || attempt.status === "in_progress" || attempt.status === "blocked") {
+  if (["done", "in_progress", "blocked", "abandoned"].includes(attempt.status)) {
     return { status: attempt.status, status_source: "lifecycle" };
   }
-  if (handoffHasCompletionEvidence(readAttemptHandoffFile(slug, attempt.id)) &&
-      !attemptGateState(slug, attempt).gates.some(gateIsPending)) {
+  // An unreadable gate (for example an accepted artifact edited or deleted
+  // after acceptance) must never upgrade the attempt to done — degrade to the
+  // lifecycle status instead of crashing read-only projections.
+  let gatesCleared = true;
+  try {
+    gatesCleared = !attemptGateState(slug, attempt).gates.some(gateIsPending);
+  } catch {
+    gatesCleared = false;
+  }
+  if (handoffHasCompletionEvidence(readAttemptHandoffFile(slug, attempt.id)) && gatesCleared) {
     return { status: "done", status_source: "handoff" };
   }
   return { status: attempt.status, status_source: "lifecycle" };
@@ -903,7 +940,6 @@ export function projectHandoffContextState(slug) {
   const context = contextForAttempt(entry, entries, repositoryPath);
   return { ...context, handoff: context.needs_refresh ? null : handoff };
 }
-
 export function attemptResponsibility(slug, worktreePath) {
   const key = normalizeIdentityKey(worktreePath);
   const attempts = listAttempts(slug).filter((attempt) =>
@@ -915,7 +951,7 @@ export function attemptResponsibility(slug, worktreePath) {
   return { state: "conflict", attempts };
 }
 
-export function startTrackingAttempt(slug, idOrName, now = new Date()) {
+function startTrackingAttemptLocked(slug, idOrName, now = new Date()) {
   const attempt = getAttempt(slug, idOrName);
   if (attempt.tracked) return attempt;
   return writeAttempt(slug, {
@@ -930,7 +966,11 @@ export function startTrackingAttempt(slug, idOrName, now = new Date()) {
   });
 }
 
-export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now = new Date()) {
+export function startTrackingAttempt(slug, idOrName, now = new Date()) {
+  return withProgressLock(slug, () => startTrackingAttemptLocked(slug, idOrName, now));
+}
+
+function updateAttemptLifecycleLocked(slug, idOrName, action, options = {}, now = new Date()) {
   let attempt = getAttempt(slug, idOrName);
   if (!attempt.tracked) throw new Error(`Attempt ${attempt.id} is historical. Start tracking it first.`);
   const phases = attemptPhases(slug, attempt.id);
@@ -985,8 +1025,33 @@ export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now
     };
     attempt = { ...attempt, gates };
   } else if (action === "reopen") {
-    if (!new Set(["blocked", "done"]).has(attempt.status)) throw new Error("Only blocked or done attempts can reopen");
-    attempt = { ...attempt, status: "in_progress", current_phase: attempt.current_phase || phases[0] || null, blocker: null, wait: null, completed_at: null };
+    if (!new Set(["blocked", "done", "abandoned"]).has(attempt.status)) throw new Error("Only blocked, done, or abandoned attempts can reopen");
+    attempt = {
+      ...attempt,
+      status: "in_progress",
+      current_phase: attempt.current_phase || phases[0] || null,
+      blocker: null,
+      wait: null,
+      completed_at: null,
+      abandoned_at: null,
+      abandonment_reason: null,
+    };
+  } else if (action === "abandon") {
+    projectExecutionAuthority(slug, executionAuthorityHash(options.authorityToken));
+    const reason = String(options.reason || "").trim();
+    if (!reason) throw new Error("abandonment reason is required");
+    if (!new Set(["planned", "in_progress", "blocked"]).has(attempt.status)) {
+      throw new Error("Only planned, in-progress, or blocked attempts can be abandoned");
+    }
+    attempt = {
+      ...attempt,
+      status: "abandoned",
+      blocker: null,
+      wait: null,
+      current_execution: null,
+      abandoned_at: timestamp,
+      abandonment_reason: reason,
+    };
   } else if (action === "complete") {
     if (attempt.status !== "in_progress") throw new Error("Only an in-progress attempt can complete");
     if (!phases.length || attempt.current_phase !== phases.at(-1)) throw new Error("Attempt must reach its final phase before completion");
@@ -1015,6 +1080,7 @@ export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now
       ...attempt,
       status: "done",
       blocker: null,
+      current_execution: null,
       completed_at: timestamp,
       ...(Object.keys(evidence).length ? { evidence } : {}),
     };
@@ -1026,6 +1092,10 @@ export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now
   return writeAttempt(slug, { ...attempt, updated_at: timestamp });
 }
 
+export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now = new Date()) {
+  return withProgressLock(slug, () => updateAttemptLifecycleLocked(slug, idOrName, action, options, now));
+}
+
 // Guarded auto-advance: covered transitions auto-start the next
 // session; the user-owned handoffs always wait). Advances through non-gated
 // phases and stops AT any unsatisfied gate, reporting it. Never crosses a
@@ -1033,7 +1103,7 @@ export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now
 // `evidence` (from `advance --auto --evidence`) is recorded for the FIRST
 // leaving phase, so a verify gate is satisfiable in the same pass; a decision
 // gate still stops and nothing is recorded for it.
-export function autoAdvance(slug, idOrName, { strict = false, evidence, now = new Date() } = {}) {
+function autoAdvanceLocked(slug, idOrName, { strict = false, evidence, now = new Date() } = {}) {
   let attempt = getAttempt(slug, idOrName);
   if (!attempt.tracked) throw new Error(`Attempt ${attempt.id} is historical. Start tracking it first.`);
   const phases = attemptPhases(slug, attempt.id);
@@ -1050,13 +1120,17 @@ export function autoAdvance(slug, idOrName, { strict = false, evidence, now = ne
     // verify gate blocks the very step that would satisfy it.
     const view = stepEvidence ? { ...(attempt.evidence || {}), [leaving]: stepEvidence } : attempt.evidence || {};
     if (gateRequirement(gates, attempt.gates || {}, view, attempt, leaving, strict)) { stoppedAt = leaving; break; }
-    attempt = updateAttemptLifecycle(slug, attempt.id, "advance", stepEvidence ? { evidence: stepEvidence } : {}, now);
+    attempt = updateAttemptLifecycleLocked(slug, attempt.id, "advance", stepEvidence ? { evidence: stepEvidence } : {}, now);
     advanced += 1;
   }
   return { attempt, advanced, stopped_at_gate: stoppedAt };
 }
 
-export function linkAttemptWorktree(slug, idOrName, worktreePath, now = new Date()) {
+export function autoAdvance(slug, idOrName, options = {}) {
+  return withProgressLock(slug, () => autoAdvanceLocked(slug, idOrName, options));
+}
+
+function linkAttemptWorktreeLocked(slug, idOrName, worktreePath, now = new Date()) {
   const attempt = getAttempt(slug, idOrName);
   if (!attempt.tracked) throw new Error(`Attempt ${attempt.id} is historical. Start tracking it first.`);
   const resolvedPath = resolve(String(worktreePath || ""));
@@ -1065,10 +1139,15 @@ export function linkAttemptWorktree(slug, idOrName, worktreePath, now = new Date
   return writeAttempt(slug, { ...attempt, worktree_path: portable(resolvedPath), updated_at: now.toISOString() });
 }
 
-export function claimAttemptCheckout(slug, idOrName, worktreePath, now = new Date()) {
+export function linkAttemptWorktree(slug, idOrName, worktreePath, now = new Date()) {
+  return withProgressLock(slug, () => linkAttemptWorktreeLocked(slug, idOrName, worktreePath, now));
+}
+
+function claimAttemptCheckoutLocked(slug, idOrName, worktreePath, now = new Date()) {
   const attempt = getAttempt(slug, idOrName);
   if (!attempt.tracked) return attempt;
   const resolvedPath = resolve(String(worktreePath || ""));
+  const branch = git(resolvedPath, ["branch", "--show-current"], { allowFailure: true }) || null;
   const key = normalizeIdentityKey(resolvedPath);
   const match = inspectProjectWorktrees(slug, now).some((entry) => normalizeIdentityKey(entry.path) === key);
   if (!match) throw new Error("checkout must belong to the attempt's registered project");
@@ -1076,10 +1155,10 @@ export function claimAttemptCheckout(slug, idOrName, worktreePath, now = new Dat
     candidate.id !== attempt.id &&
     candidate.status === "in_progress" &&
     candidate.responsibility_path &&
-    normalizeIdentityKey(candidate.responsibility_path) === key);
+    (normalizeIdentityKey(candidate.responsibility_path) === key || (branch && candidate.responsibility_branch === branch)));
   if (owner) throw new Error(`checkout is already governed by ${owner.id}`);
   if (!attempt.responsibility_path) {
-    return writeAttempt(slug, { ...attempt, responsibility_path: portable(resolvedPath), updated_at: now.toISOString() });
+    return writeAttempt(slug, { ...attempt, responsibility_path: portable(resolvedPath), responsibility_branch: branch, updated_at: now.toISOString() });
   }
   if (normalizeIdentityKey(attempt.responsibility_path) !== key) {
     throw new Error(`attempt ${attempt.id} is already responsible for ${attempt.responsibility_path}`);
@@ -1087,15 +1166,212 @@ export function claimAttemptCheckout(slug, idOrName, worktreePath, now = new Dat
   return attempt;
 }
 
+export function claimAttemptCheckout(slug, idOrName, worktreePath, now = new Date()) {
+  return withProgressLock(slug, () => claimAttemptCheckoutLocked(slug, idOrName, worktreePath, now));
+}
+
+function executionIsFresh(execution, now) {
+  if (!execution) return false;
+  const observedAt = Date.parse(execution.observed_at || 0) || 0;
+  return now.getTime() - observedAt <= LIVE_OBSERVATION_TTL_MS;
+}
+
+function executionIsActive(execution) {
+  return execution?.status === "active" || (execution?.children || []).some((child) => child.status === "active");
+}
+
+function requiredBoundedText(value, label, maxLength) {
+  const text = String(value || "").trim();
+  if (!text) throw new Error(`${label} is required`);
+  if (text.length > maxLength) throw new Error(`${label} must be ${maxLength} characters or fewer`);
+  return text;
+}
+
+function optionalBoundedText(value, label, maxLength) {
+  if (value === undefined || value === null || value === "") return null;
+  return requiredBoundedText(value, label, maxLength);
+}
+
+function executionAuthorityHash(token) {
+  const value = requiredBoundedText(token, "execution authority token", 4_096);
+  if (value.length < 32) throw new Error("execution authority token must be at least 32 characters");
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function projectExecutionAuthority(slug, authorityHash) {
+  const path = join(storeProjectDir(slug), "execution-authority.json");
+  if (!existsSync(path)) {
+    throw new Error(`execution authority is not initialized for project ${slug}; the trusted harness must bind DIRF_ORCHESTRATOR_TOKEN during setup before agents run`);
+  }
+  const record = JSON.parse(readFileSync(path, "utf8"));
+  if (record.authority_hash !== authorityHash) {
+    throw new Error(`execution authority rejected for project ${slug}; the trusted harness adapter must retain the original project capability`);
+  }
+}
+
+export function bindExecutionAuthority(slug, token) {
+  return withProgressLock(slug, () => {
+    if (!getProject(slug)) throw new Error(`Unknown DIRF project ${slug}`);
+    const authorityHash = executionAuthorityHash(token);
+    const path = join(storeProjectDir(slug), "execution-authority.json");
+    if (existsSync(path)) {
+      const record = JSON.parse(readFileSync(path, "utf8"));
+      if (record.authority_hash !== authorityHash) {
+        throw new Error(`execution authority is already initialized for project ${slug}`);
+      }
+      return { changed: false, path };
+    }
+    atomicWrite(path, JSON.stringify({ schema_version: 1, authority_hash: authorityHash }, null, 2) + "\n");
+    return { changed: true, path };
+  });
+}
+
+function normalizeChildExecutions(children, harness) {
+  if (!Array.isArray(children)) throw new Error("execution children must be an array");
+  if (children.length > MAX_CHILD_EXECUTIONS) throw new Error(`execution children cannot exceed ${MAX_CHILD_EXECUTIONS}`);
+  const seen = new Set();
+  return children.map((child, index) => {
+    if (!child || typeof child !== "object" || Array.isArray(child)) throw new Error(`execution child ${index + 1} must be an object`);
+    const childHarness = optionalBoundedText(child.harness, `execution child ${index + 1} harness`, 100) || harness;
+    const sessionId = requiredBoundedText(child.sessionId || child.session_id, `execution child ${index + 1} session id`, 200);
+    const key = `${childHarness}\0${sessionId}`;
+    if (seen.has(key)) throw new Error(`duplicate execution child ${childHarness}:${sessionId}`);
+    seen.add(key);
+    const status = requiredBoundedText(child.status, `execution child ${index + 1} status`, 20);
+    if (!CHILD_EXECUTION_STATUSES.has(status)) {
+      throw new Error(`Invalid child execution status ${JSON.stringify(status)} — use active, idle, blocked, completed, or unknown`);
+    }
+    const assignment = requiredBoundedText(child.assignment, `execution child ${index + 1} assignment`, 500);
+    const blocker = optionalBoundedText(child.blocker, `execution child ${index + 1} blocker`, 2_000);
+    if (status === "blocked" && !blocker) throw new Error(`execution child ${index + 1} blocker is required when status is blocked`);
+    return {
+      harness: childHarness,
+      session_id: sessionId,
+      assignment,
+      status,
+      blocker,
+      result: optionalBoundedText(child.result, `execution child ${index + 1} result`, 4_000),
+      handoff: optionalBoundedText(child.handoff, `execution child ${index + 1} handoff`, 4_000),
+      blocks_parent: child.blocksParent === true || child.blocks_parent === true,
+    };
+  });
+}
+
+function observeAttemptLocked(slug, idOrName, options, now) {
+  const attempt = getAttempt(slug, idOrName);
+  if (!attempt.tracked) throw new Error(`Attempt ${attempt.id} is historical. Start tracking it first.`);
+  if (attempt.status === "done" || attempt.status === "abandoned") throw new Error(`Attempt ${attempt.id} is ${attempt.status} and cannot be observed`);
+  const harness = requiredBoundedText(options.harness, "execution harness", 100);
+  const sessionId = requiredBoundedText(options.sessionId, "execution session id", 200);
+  const status = requiredBoundedText(options.status, "execution status", 20);
+  const authorityHash = executionAuthorityHash(options.authorityToken);
+  projectExecutionAuthority(slug, authorityHash);
+  if (!EXECUTION_STATUSES.has(status)) {
+    throw new Error(`Invalid execution status ${JSON.stringify(status)} — use active, idle, or unknown`);
+  }
+  const observedAt = options.observedAt ? new Date(options.observedAt) : now;
+  if (!Number.isFinite(observedAt.getTime())) throw new Error("execution observed time must be a valid date");
+  if (observedAt.getTime() > now.getTime()) throw new Error("execution observed time cannot be in the future");
+
+  let worktreePath = null;
+  let branch = null;
+  if (options.worktreePath) {
+    const resolvedPath = resolve(String(options.worktreePath));
+    const project = getProject(slug);
+    if (identityKeyForPath(resolvedPath) !== project.git_common_dir) {
+      throw new Error("execution worktree must belong to the attempt's registered project");
+    }
+    worktreePath = portable(resolvedPath);
+    branch = git(resolvedPath, ["branch", "--show-current"], { allowFailure: true }) || null;
+  }
+
+  const previous = attempt.current_execution || null;
+  const sameOwner = previous?.harness === harness && previous?.session_id === sessionId;
+  if (sameOwner && !worktreePath) {
+    worktreePath = previous.worktree_path || null;
+    branch = previous.branch || null;
+  }
+  if (previous?.authority_hash && previous.authority_hash !== authorityHash) {
+    throw new Error(`execution authority rejected for attempt ${attempt.id}; the trusted harness adapter must retain the original project capability`);
+  }
+  if (previous && !previous.authority_hash) {
+    throw new Error(`attempt ${attempt.id} has an observation without an authority capability; explicitly abandon and reopen it before recording new execution`);
+  }
+  const previousIsActive = executionIsFresh(previous, now) && executionIsActive(previous);
+  if (previous && !sameOwner && previousIsActive) {
+    throw new Error(`attempt ${attempt.id} has active orchestrator ${previous.harness}:${previous.session_id}; continue from ${join(attempt.folder, "HANDOFF.md")} because a fresh owner cannot be transferred`);
+  }
+  if (previous && !sameOwner && !String(options.transferReason || "").trim()) {
+    throw new Error(`attempt ${attempt.id} has recorded orchestrator ${previous.harness}:${previous.session_id}; continue from ${join(attempt.folder, "HANDOFF.md")} or pass an explicit transfer reason`);
+  }
+  if (sameOwner && Date.parse(previous.observed_at || 0) > observedAt.getTime()) {
+    throw new Error("execution observation is older than the current orchestrator snapshot");
+  }
+  if (worktreePath) {
+    const worktreeKey = normalizeIdentityKey(worktreePath);
+    const otherOwner = listAttempts(slug).find((candidate) => {
+      if (candidate.id === attempt.id || ["done", "abandoned", "historical"].includes(candidate.status)) return false;
+      const owner = candidate.current_execution;
+      const ownerPath = owner?.worktree_path || candidate.responsibility_path || candidate.worktree_path;
+      const sameWorktree = ownerPath && normalizeIdentityKey(ownerPath) === worktreeKey;
+      const sameBranch = branch && owner?.branch && owner.branch === branch;
+      return sameWorktree || sameBranch;
+    });
+    if (otherOwner) {
+      const owner = otherOwner.current_execution;
+      const ownerLabel = owner ? `${owner.harness}:${owner.session_id}` : "the recorded Attempt responsibility";
+      throw new Error(`worktree or branch is owned by ${otherOwner.id} (${ownerLabel}); continue from ${join(otherOwner.folder, "HANDOFF.md")} or explicitly abandon that attempt first`);
+    }
+  }
+
+  const children = options.children === undefined
+    ? (sameOwner ? previous.children || [] : [])
+    : normalizeChildExecutions(options.children, harness);
+  const transferReason = !sameOwner ? optionalBoundedText(options.transferReason, "execution transfer reason", 2_000) : null;
+
+  return writeAttempt(slug, {
+    ...attempt,
+    current_execution: {
+      harness,
+      session_id: sessionId,
+      status,
+      observed_at: observedAt.toISOString(),
+      worktree_path: worktreePath,
+      branch,
+      children,
+      authority_hash: authorityHash,
+      ...(sameOwner && previous?.previous_owner ? { previous_owner: previous.previous_owner } : {}),
+      ...(previous && !sameOwner ? {
+        previous_owner: {
+          harness: previous.harness,
+          session_id: previous.session_id,
+          transferred_at: observedAt.toISOString(),
+          reason: transferReason,
+        },
+      } : {}),
+    },
+  });
+}
+
+// A trusted harness adapter submits one orchestrator-owned snapshot. Children
+// report to that orchestrator; they never get an independent DIRF writer. The
+// project lock makes worktree and branch ownership checks atomic.
+export function observeAttempt(slug, idOrName, options = {}, now = new Date()) {
+  return withProgressLock(slug, () => observeAttemptLocked(slug, idOrName, options, now));
+}
+
 // Backfill: promote handoff completion evidence into the lifecycle. Only
 // planned/historical attempts are upgraded (in_progress/blocked stay put —
 // open work is authoritative). completed_at comes from the handoff file mtime,
 // i.e. when the work was actually written. Never touches the handoff itself.
-export function syncAttemptFromHandoff(slug, idOrName) {
+function syncAttemptFromHandoffLocked(slug, idOrName) {
   const attempt = getAttempt(slug, idOrName);
   if (attempt.status === "done") return { ...attempt, changed: false, reason: "already done" };
-  if (attempt.status === "in_progress" || attempt.status === "blocked") {
-    return { ...attempt, changed: false, reason: `status is ${attempt.status} — open work wins` };
+  if (["in_progress", "blocked", "abandoned"].includes(attempt.status)) {
+    const reason = attempt.status === "abandoned"
+      ? "status is abandoned — explicit lifecycle state wins"
+      : `status is ${attempt.status} — open work wins`;
+    return { ...attempt, changed: false, reason };
   }
   const handoffPath = join(storeAttemptDir(slug, attempt.id), "HANDOFF.md");
   const handoff = readAttemptHandoffFile(slug, attempt.id);
@@ -1127,18 +1403,22 @@ export function syncAttemptFromHandoff(slug, idOrName) {
   };
 }
 
+export function syncAttemptFromHandoff(slug, idOrName) {
+  return withProgressLock(slug, () => syncAttemptFromHandoffLocked(slug, idOrName));
+}
+
 // Automation: keep the lifecycle honest as work progresses. Called by
 // `dirf record-progress`. planned → start (needs workflow phases); in_progress
 // → advance until current_phase matches the reported phase (unknown phases are
 // left alone — conservative). Returns the updated attempt, or null when
 // nothing changed.
-export function syncLifecycleFromProgress(slug, idOrName, phase, now = new Date()) {
+function syncLifecycleFromProgressLocked(slug, idOrName, phase, now = new Date()) {
   const attempt = getAttempt(slug, idOrName);
   if (!attempt?.tracked) return null;
   const phases = attemptPhases(slug, attempt.id);
   if (attempt.status === "planned") {
     if (!phases.length) return null;
-    return updateAttemptLifecycle(slug, attempt.id, "start", {}, now);
+    return updateAttemptLifecycleLocked(slug, attempt.id, "start", {}, now);
   }
   if (attempt.status === "in_progress" && phase && phases.includes(phase)) {
     let current = attempt;
@@ -1147,12 +1427,16 @@ export function syncLifecycleFromProgress(slug, idOrName, phase, now = new Date(
     while (current.current_phase !== phase && steps < phases.length) {
       // Stop at unsatisfied gates — the lifecycle must never cross one.
       if (gateRequirement(gates, current.gates || {}, current.evidence || {}, current, current.current_phase, false)) break;
-      current = updateAttemptLifecycle(slug, attempt.id, "advance", {}, now);
+      current = updateAttemptLifecycleLocked(slug, attempt.id, "advance", {}, now);
       steps += 1;
     }
     return current.current_phase === phase ? current : null;
   }
   return null;
+}
+
+export function syncLifecycleFromProgress(slug, idOrName, phase, now = new Date()) {
+  return withProgressLock(slug, () => syncLifecycleFromProgressLocked(slug, idOrName, phase, now));
 }
 
 const DEFAULT_SETTINGS = Object.freeze({ schema_version: 1, dirf_cli_path: null, stale_worktree_days: 14, archive_reminder_days: 30, stale_project_days: 30 });
@@ -1229,7 +1513,7 @@ export function inspectProjectWorktrees(slug, now = new Date()) {
     const lastCommitRaw = git(path, ["log", "-1", "--format=%cI"], { allowFailure: true });
     const lastCommitAt = lastCommitRaw || null;
     const activity = Math.max(Date.parse(attempt?.updated_at || attempt?.created_at || 0) || 0, Date.parse(lastCommitAt || 0) || 0);
-    const stale = !attempt?.status || attempt.status !== "done" ? now.getTime() - activity >= settings.stale_worktree_days * 86_400_000 : false;
+    const stale = !attempt?.status || !["done", "abandoned"].includes(attempt.status) ? now.getTime() - activity >= settings.stale_worktree_days * 86_400_000 : false;
     const archived = archives.find((item) => normalizeIdentityKey(item.path) === key) || null;
     const archiveDue = archived ? now.getTime() >= Date.parse(archived.next_prompt_at) : false;
     let cleanup_state = "active";
@@ -1238,6 +1522,7 @@ export function inspectProjectWorktrees(slug, now = new Date()) {
     else if (archived) cleanup_state = "archived";
     else if (!attempt) cleanup_state = "unlinked";
     else if (attempt.status === "done") cleanup_state = "completed";
+    else if (attempt.status === "abandoned") cleanup_state = "abandoned";
     else if (stale) cleanup_state = "stale";
     return {
       path: portable(path), branch: entry.branch || null, head: entry.head || null,
@@ -1510,7 +1795,7 @@ export function recordProgress(slug, { message, timestamp, phase, next, files, a
 
     if (attempt) atomicWrite(join(storeAttemptDir(slug, attempt.id), "HANDOFF.md"), updatedAttemptHandoff);
     writeHandoff(slug, updatedHandoff);
-    const lifecycle = attempt ? syncLifecycleFromProgress(slug, attempt.id, phase || null) : null;
+    const lifecycle = attempt ? syncLifecycleFromProgressLocked(slug, attempt.id, phase || null) : null;
     return { handoff: updatedHandoff, attempt_handoff: updatedAttemptHandoff, attempt, lifecycle };
   });
 }
@@ -1740,9 +2025,8 @@ export function setProjectStatus(slug, status) {
 const HANDOFF_COMPLETE_RE = /^##\s*Status:\s*Complete\.?\s*$/m;
 
 // Classification ladder (first match wins):
-//   explicit override -> empty (no attempts) -> active (open work)
-//   -> completed (all tracked done | handoff says Complete)
-//   -> active (recent activity within stale_project_days) -> stale.
+//   explicit override -> empty -> active (fresh harness evidence)
+//   -> completed -> idle (open but recently observed/updated) -> stale.
 export function portfolioSnapshot(now = new Date()) {
   const settings = readSettings();
   const staleDays = Number.isInteger(settings.stale_project_days) && settings.stale_project_days > 0
@@ -1752,35 +2036,38 @@ export function portfolioSnapshot(now = new Date()) {
   const nowMs = now.getTime();
 
   const projects = listProjects().map((project) => {
-    const attempts = listAttempts(project.slug);
-    const counts = { planned: 0, in_progress: 0, blocked: 0, done: 0, historical: 0 };
-    const effective = new Map();
+    const workRegistry = projectWorkSnapshot(project.slug, now);
+    const attempts = workRegistry.attempts;
+    const counts = { planned: 0, in_progress: 0, blocked: 0, abandoned: 0, done: 0, historical: 0 };
     let evidenceDone = 0;
     let lastActivity = Date.parse(project.last_seen || 0) || 0;
     for (const attempt of attempts) {
-      const { status, status_source: source } = effectiveAttemptStatus(project.slug, attempt);
-      effective.set(attempt.id, { status, status_source: source });
+      const status = attempt.lifecycle_status;
+      const source = attempt.status_source;
       if (status === "done" && source === "handoff") evidenceDone += 1;
-      const key = ["planned", "in_progress", "blocked", "done", "historical"].includes(status) ? status : "historical";
+      const key = ["planned", "in_progress", "blocked", "abandoned", "done", "historical"].includes(status) ? status : "historical";
       counts[key] += 1;
       const ts = Date.parse(attempt.updated_at || attempt.created_at || 0) || 0;
       if (ts > lastActivity) lastActivity = ts;
+      const observedAt = Date.parse(attempt.execution?.observed_at || 0) || 0;
+      if (observedAt > lastActivity) lastActivity = observedAt;
     }
     const tracked = attempts.filter((attempt) => attempt.tracked);
-    const latest = attempts.at(-1) || null;
+    const latest = attempts.reduce((candidate, attempt) => !candidate || attempt.id > candidate.id ? attempt : candidate, null);
     const handoffPath = join(storeProjectDir(project.slug), "HANDOFF.md");
     const handoff = readHandoff(project.slug);
     if (handoff !== null) lastActivity = Math.max(lastActivity, statSync(handoffPath).mtimeMs);
     const handoffComplete = handoff !== null && HANDOFF_COMPLETE_RE.test(handoff);
     const hasOpenWork = counts.in_progress > 0 || counts.blocked > 0;
-    const allTrackedDone = tracked.length > 0 && tracked.every((attempt) => effective.get(attempt.id).status === "done");
+    const allTrackedDone = tracked.length > 0 && tracked.every((attempt) => attempt.lifecycle_status === "done");
+    const hasLiveWork = (workRegistry.summary.active || 0) > 0;
 
     let status;
     if (project.status === "complete" || project.status === "archived") status = project.status;
     else if (attempts.length === 0) status = "empty";
-    else if (hasOpenWork) status = "active";
-    else if (allTrackedDone || handoffComplete) status = "completed";
-    else if (nowMs - lastActivity < staleMs) status = "active";
+    else if (hasLiveWork) status = "active";
+    else if (!hasOpenWork && (allTrackedDone || handoffComplete)) status = "completed";
+    else if (nowMs - lastActivity < staleMs) status = "idle";
     else status = "stale";
 
     return {
@@ -1795,11 +2082,12 @@ export function portfolioSnapshot(now = new Date()) {
       days_since_activity: lastActivity ? Math.max(0, Math.floor((nowMs - lastActivity) / 86_400_000)) : null,
       handoff: handoff !== null,
       attempts: { total: attempts.length, tracked: tracked.length, evidence_done: evidenceDone, ...counts },
+      work_registry: workRegistry,
       latest: latest ? {
         id: latest.id,
         name: latest.name,
-        status: effective.get(latest.id).status,
-        status_source: effective.get(latest.id).status_source,
+        status: latest.lifecycle_status,
+        status_source: latest.status_source,
         current_phase: latest.current_phase || null,
         updated_at: latest.updated_at || latest.created_at,
         ...attemptContextState(project.slug, latest.id),
@@ -1821,5 +2109,107 @@ export function portfolioSnapshot(now = new Date()) {
     stale_project_days: staleDays,
     summary,
     projects,
+  };
+}
+
+// Point-in-time, project-scoped view for humans and board adapters. Lifecycle
+// remains authoritative for completion; a host observation only answers who
+// owns the work and whether that execution is live now.
+export function projectWorkSnapshot(slug, now = new Date()) {
+  const project = getProject(slug);
+  if (!project) throw new Error(`Unknown DIRF project ${slug}`);
+  const staleMs = readSettings().stale_worktree_days * 86_400_000;
+  const stateOrder = ["active", "blocked", "resumable", "stale", "abandoned", "planned", "completed", "historical", "unknown"];
+  const storedAttempts = listAttempts(slug);
+  const attempts = storedAttempts.map((attempt) => {
+    const effective = effectiveAttemptStatus(slug, attempt);
+    const nextAction = handoffNextAction(readAttemptHandoffFile(slug, attempt.id));
+    const execution = attempt.current_execution || null;
+    const observedAt = Date.parse(execution?.observed_at || 0) || 0;
+    const updatedAt = Date.parse(attempt.updated_at || attempt.created_at || 0) || 0;
+    const observationIsFresh = executionIsFresh(execution, now);
+    const observationIsActive = observationIsFresh && executionIsActive(execution);
+    const observationIsExpired = Boolean(execution) && !observationIsFresh;
+    const hasBlockingChild = observationIsFresh &&
+      (execution.children || []).some((child) => child.status === "blocked" && child.blocks_parent === true);
+    const isStale = now.getTime() - Math.max(updatedAt, observedAt) >= staleMs;
+
+    let liveState = "unknown";
+    if (effective.status === "done") liveState = "completed";
+    else if (effective.status === "abandoned") liveState = "abandoned";
+    else if (observationIsActive) liveState = "active";
+    else if (attempt.status === "blocked" || hasBlockingChild) liveState = "blocked";
+    else if (observationIsExpired || isStale) liveState = "stale";
+    else if (attempt.status === "planned") liveState = "planned";
+    else if (attempt.status === "historical") liveState = "historical";
+    else if (nextAction) liveState = "resumable";
+
+    const executionView = execution ? {
+      harness: execution.harness,
+      session_id: execution.session_id,
+      status: execution.status,
+      observed_at: execution.observed_at,
+      branch: execution.branch || null,
+      fresh: observationIsFresh,
+      children: execution.children || [],
+      ...(execution.previous_owner ? { previous_owner: execution.previous_owner } : {}),
+    } : null;
+    const worktreePath = execution?.worktree_path || attempt.responsibility_path || attempt.worktree_path || null;
+    const handoffPath = join(attempt.folder, "HANDOFF.md");
+    return {
+      id: attempt.id,
+      name: attempt.name,
+      tracked: attempt.tracked,
+      created_at: attempt.created_at,
+      lifecycle_status: effective.status,
+      status_source: effective.status_source,
+      live_state: liveState,
+      current_phase: attempt.current_phase || null,
+      worker: attempt.worker || null,
+      blocker: attempt.blocker || null,
+      abandonment_reason: attempt.abandonment_reason || null,
+      updated_at: attempt.updated_at || attempt.created_at,
+      execution: executionView,
+      worktree_path: worktreePath,
+      handoff_path: existsSync(handoffPath) ? handoffPath : null,
+      next_action: nextAction,
+    };
+  }).sort((left, right) => {
+    const state = stateOrder.indexOf(left.live_state) - stateOrder.indexOf(right.live_state);
+    return state || right.updated_at.localeCompare(left.updated_at);
+  });
+
+  const summary = { total: attempts.length };
+  for (const attempt of attempts) summary[attempt.live_state] = (summary[attempt.live_state] || 0) + 1;
+  const projectHandoffPath = join(storeProjectDir(slug), "HANDOFF.md");
+  const projectHandoff = readHandoff(slug);
+  const scoped = attempts.find((attempt) => ["active", "blocked", "resumable", "stale"].includes(attempt.live_state) && attempt.handoff_path) || null;
+  const projectUpdatedAt = projectHandoff !== null ? statSync(projectHandoffPath).mtime : null;
+  const scopedUpdatedAt = scoped?.handoff_path ? statSync(scoped.handoff_path).mtime : null;
+  const useProjectHandoff = projectHandoff !== null && (!scopedUpdatedAt || projectUpdatedAt >= scopedUpdatedAt);
+  const continuation = useProjectHandoff ? {
+    source: "project",
+    attempt_id: null,
+    handoff_path: projectHandoffPath,
+    next_action: handoffNextAction(projectHandoff),
+    updated_at: projectUpdatedAt.toISOString(),
+  } : scoped ? {
+    source: "attempt",
+    attempt_id: scoped.id,
+    handoff_path: scoped.handoff_path,
+    next_action: scoped.next_action,
+    updated_at: scopedUpdatedAt.toISOString(),
+  } : null;
+  return {
+    generated_at: now.toISOString(),
+    project: {
+      slug: project.slug,
+      name: project.name,
+      main_path: project.main_path,
+      handoff_path: projectHandoff !== null ? projectHandoffPath : null,
+    },
+    summary,
+    continuation,
+    attempts,
   };
 }

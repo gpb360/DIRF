@@ -6,6 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 function git(repo, args) {
   try {
@@ -133,6 +134,6 @@ export function main(root = process.cwd()) {
   }
 }
 
-if (process.argv[1] && new URL(process.argv[1]).pathname.endsWith("filing-cabinet.mjs")) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }

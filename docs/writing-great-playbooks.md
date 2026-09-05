@@ -24,6 +24,20 @@ Skills and playbooks route differently. A skill routes from its description.
 A playbook routes from keywords because DIRF's router matches keywords, not
 playbook descriptions. Put trigger phrases in the keyword list.
 
+## Declare required skill resources
+
+When a skill cannot run from its entrypoint alone, declare every required
+co-located file through the standard `metadata` field:
+
+```yaml
+metadata: {"required_files":["scripts/run.cjs","references/checks.md"]}
+```
+
+Paths are relative to the skill folder and must stay inside it. DIRF treats a
+missing, non-file, absolute, or escaping path as incomplete. Incomplete skills
+remain visible for repair but are not candidates for automatic routing. An
+explicit request for one fails closed and names the missing resources.
+
 ## Completion criteria are checkable
 
 Every step needs a clear definition of done:
@@ -82,11 +96,12 @@ order. Action-first wording runs the action before the checkpoint. Otherwise,
 the checkpoint comes first and the original action continues after the user
 confirms the decision.
 
-Every skill referenced by that router must be installed and model-invoked.
-DIRF uses the reference that covers the requested capability as the executable
-engine and binds the others as required dependencies. A missing or human-only
-dependency stops with a plain validation error instead of running part of the
-workflow. A generic task may select the engine directly.
+Every skill referenced by that router must be installed, complete, and
+model-invoked. DIRF uses the reference that covers the requested capability as
+the executable engine and binds the others as required dependencies. A
+missing, human-only, or incomplete dependency stops with a plain validation
+error instead of running part of the workflow. A generic task may select the
+engine directly.
 
 Keep the router small and put the repeatable process in the engine. If one
 branch changes durable documentation, give that branch a named documentation
