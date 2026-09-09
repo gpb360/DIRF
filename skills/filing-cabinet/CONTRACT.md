@@ -1,7 +1,7 @@
-# Filing Cabinet — allow / deny / approval decision contract
+# Worktree cleanup — action permissions
 
-Accepted evidence requirements (attempt filing-cabinet, decision gate
-"check evidence requirements", 2026-08-20).
+Inventory is read-only. Recording archive status, moving a worktree, and
+removing a worktree are separate actions with explicit approval.
 
 ## Authority
 
@@ -16,7 +16,8 @@ once; a later policy cannot loosen an earlier denial.
 |---|---|---|---|
 | inventory | list worktrees, branches, state | none | allow (read-only) |
 | review | inspect branch history, diffs | none | allow (read-only) |
-| archive | move worktree aside without branch loss | low | allow, logged |
+| archive | record cleanup status without moving files | low | approval required |
+| move | relocate a worktree without branch loss | moderate | approval required |
 | remove | unlink a worktree (branches intact) | moderate | approval required |
 | branch delete | delete a branch with unmerged commits | high | approval required + evidence |
 | history rewrite | force-push rebase, filter-branch | deny | written mandate only |
@@ -24,9 +25,10 @@ once; a later policy cannot loosen an earlier denial.
 
 ## Evidence requirements (per class, before approval)
 
-- **archive / remove worktree**: inventory entry for the exact path; branch
+- **archive / move / remove worktree**: inventory entry for the exact path; branch
   merged status (`git branch --merged <default>`); ahead/behind counts; dirty
-  state (`git status --porcelain`); last commit date.
+  state (`git status --porcelain`); last commit date. Archive and removal require
+  a clean worktree. A move also names the destination and preserves all work.
 - **branch delete**: merged proof or a named backup ref (tag or remote);
   last commit date; PR link if one exists.
 - **history rewrite**: written mandate naming the exact refs and the intended

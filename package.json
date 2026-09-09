@@ -14,14 +14,17 @@
     "check:publication": "node src/publication-boundary.js",
     "typecheck": "tsc --noEmit",
     "smoke": "node scripts/smoke.js",
-    "check:release": "npm run validate && npm run typecheck && npm test && npm run smoke && npm run check:publication",
+    "check:release": "npm run validate && npm run check:syntax && npm run typecheck && npm test && npm run smoke && npm run check:publication && npm run check:package",
     "validate": "node src/cli.js validate",
-    "scan": "node src/cli.js skills scan"
+    "scan": "node src/cli.js skills scan",
+    "check:syntax": "node scripts/check-syntax.js",
+    "check:package": "node scripts/check-package.js"
   },
   "engines": {
     "node": ">=22"
   },
   "devDependencies": {
+    "@types/node": "^22.20.2",
     "typescript": "^5.9.3"
   },
   "license": "MIT"

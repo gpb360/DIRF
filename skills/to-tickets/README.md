@@ -1,14 +1,15 @@
 ---
 name: to-tickets
 kind: skill
-description: "Split an approved specification into dependency-aware tracer-bullet tickets"
+description: "Break an approved specification into small tasks ordered by dependency"
 uses: []
 details: []
 inputs: ["approved specification"]
-outputs: ["ordered tickets with blocking edges"]
+outputs: ["ordered tasks with explicit dependencies"]
 capabilities: ["dependency ticketing"]
 ---
 
-# To tickets
+# Break work into tasks
 
-Create narrow, independently verifiable vertical slices. Declare genuine blockers and keep each ticket small enough for one fresh execution context.
+Give each task a bounded change and a way to verify it. Name the tasks it
+depends on, and keep it small enough to complete in one session.

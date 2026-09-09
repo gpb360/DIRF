@@ -7,6 +7,35 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+### Fixed
+- Public HTTPS intake rejects mapped loopback/private addresses and special-use
+  networks, pins connections to validated DNS answers, and keeps one timeout
+  through redirects and response-body consumption.
+- Publication screening covers extensionless text, private environment and host
+  configuration paths, and common credential patterns. Package checks inspect
+  the actual npm dry-run manifest.
+- Worktree cleanup instructions consistently require approval for archive
+  status changes, filesystem moves, and removal.
+
+### Changed
+- The README is a getting-started guide; detailed commands and integration
+  instructions live under `docs/`. CI and development-install requirements
+  now match the repository.
+- Skill headings and descriptions use clearer language while public IDs remain
+  unchanged.
+- Release checks include JavaScript syntax and package checks. Public HTTPS
+  intake, publication screening, and check scripts opt into type checking;
+  Node type definitions are development-only dependencies.
+
+### Removed
+- Retired the standalone `pr-review` launcher and legacy review-cycle guides,
+  scripts, mock reports, and posting helpers. Use the `pr-review` playbook and
+  `code-review` skill instead.
+- Removed project-specific cast and pose-review workflows from the reusable kit.
+- Consolidated root integration guides and `setup-integration.sh` into
+  `docs/integration.md`. Existing user-owned aliases and updater scripts are
+  not modified automatically.
+
 ## [0.29.0] — 2026-08-30
 
 ### Added

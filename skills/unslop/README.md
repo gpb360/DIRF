@@ -9,7 +9,7 @@ outputs: ["clearer prose with an explicit self-review"]
 capabilities: ["prose editing"]
 ---
 
-# Unslop
+# Edit for clarity
 
 Use this as an optional final pass on human-facing prose.
 
