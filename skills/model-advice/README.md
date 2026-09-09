@@ -9,7 +9,7 @@ outputs: ["portable preflight model suggestions"]
 capabilities: ["model selection advice"]
 ---
 
-# Model advice
+# Model suggestions
 
 Use only the model catalog supplied by the host. Match each workflow
 requirement known before execution to an exact declared capability or catalog

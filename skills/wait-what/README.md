@@ -1,7 +1,7 @@
 ---
 name: wait-what
 kind: skill
-description: "Wait when the user says an explanation did not land; re-explain it in plain English with the missing context and project vocabulary"
+description: "Explain the current point again in plain English, restoring the context the user needs"
 disable-model-invocation: true
 uses: []
 details: []
@@ -10,9 +10,9 @@ outputs: ["a clearer explanation"]
 capabilities: ["plain-language repair"]
 ---
 
-# Wait, what?
+# Explain again
 
-Re-pitch the current point in plain English. Back up far enough to include the
+Explain the current point in plain English. Back up far enough to include the
 missing premise, and use the project's `CONTEXT.md` terms when available.
 
 Keep it shorter and clearer, not blunt. If the user invokes this again, restore

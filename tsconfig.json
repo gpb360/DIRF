@@ -17,6 +17,6 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": false
   },
-  "include": ["src/**/*.ts", "src/**/*.js"],
+  "include": ["src/**/*.ts", "src/**/*.js", "scripts/**/*.js"],
   "exclude": ["node_modules", "tests"]
 }

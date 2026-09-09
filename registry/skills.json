@@ -377,7 +377,7 @@
       "applies_to": [
         "backend-architect"
       ],
-      "summary": "Supabase/Postgres patterns, RLS, table constants, withTimeout wrapper",
+      "summary": "PostgreSQL schema, query performance, and row-level security guidance for Supabase projects",
       "capabilities": [
         "backend architecture"
       ]

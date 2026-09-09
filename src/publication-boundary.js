@@ -1,8 +1,9 @@
+// @ts-check
 // Deterministic public-tree checks. Keep private project context and local
 // workstation state out of the publishable repository and package surfaces.
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { extname, join } from "node:path";
+import { basename, extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ROOT } from "./paths.js";
 
@@ -14,12 +15,13 @@ const TEXT_EXTENSIONS = new Set([
 const TEXT_FILES = new Set([".gitignore", ".npmignore", "LICENSE"]);
 const COMPATIBILITY_FILES = new Set(["CHANGELOG.md", "npm-shrinkwrap.json", "package-lock.json", "package.json"]);
 
+/** @param {string[]} parts @param {string} [flags] */
 const joinedPattern = (parts, flags = "i") => new RegExp(parts.join(""), flags);
 
 const LEGACY_PACKAGE_PATTERN = joinedPattern(["a", "mf", "-", "dirf"]);
 const DENIED_CONTENT = [
-  // Deliberately public references (FlowStack integration docs, research
-  // reviews of external systems, test fixtures) are not private leaks; the
+  // Public integration docs, research about external systems, and test
+  // fixtures are not private leaks; the
   // gate protects personal/private context, not documented partners.
   { pattern: joinedPattern(["story", "tellers"]), reason: "private project name" },
   { pattern: joinedPattern(["agent", "\\s+", "spec", "\\s+", "kit"]), reason: "retired product identity" },
@@ -45,16 +47,30 @@ const DENIED_PATHS = [
   { pattern: /(?:^|\/)attempts(?:\/|$)/i, reason: "private attempt state" },
   { pattern: /^HANDOFF\.md$/i, reason: "private handoff" },
   { pattern: /(?:^|\/)(?:installed-skills|skills-inventory|workspace-inventory)(?:[._-]|$)/i, reason: "machine-derived inventory" },
+  { pattern: /(?:^|\/)(?:\.npmrc|\.netrc|id_rsa|id_ed25519)$/i, reason: "private credential configuration" },
+  { pattern: /(?:^|\/)\.(?:claude|codex|cursor|zcode)\/(?:settings|credentials|auth|config)(?:\.|\/|$)/i, reason: "private host configuration" },
 ];
 
+const SECRET_CONTENT = [
+  { pattern: joinedPattern(["-----BEGIN ", "(?:RSA |EC |OPENSSH )?PRIVATE KEY", "-----"]), reason: "private key material" },
+  { pattern: joinedPattern(["\\b(?:gh[pousr]_", "[A-Za-z0-9]{30,}|github_pat_", "[A-Za-z0-9_]{40,})\\b"], ""), reason: "GitHub token" },
+  { pattern: joinedPattern(["\\b(?:AKIA|ASIA)", "[A-Z0-9]{16}\\b"], ""), reason: "AWS access key identifier" },
+];
+
+/** @param {string} text @param {number} index */
 function lineNumber(text, index) {
   return text.slice(0, index).split(/\r?\n/).length;
 }
 
-function isTextFile(name) {
-  return TEXT_FILES.has(name) || TEXT_EXTENSIONS.has(extname(name).toLowerCase());
+/** @param {string} name @param {Buffer} bytes */
+function isTextFile(name, bytes) {
+  if (TEXT_FILES.has(basename(name)) || TEXT_EXTENSIONS.has(extname(name).toLowerCase())) return true;
+  if (bytes.includes(0)) return false;
+  try { new TextDecoder("utf-8", { fatal: true }).decode(bytes); return true; }
+  catch { return false; }
 }
 
+/** @param {string} root */
 function listPublicationFiles(root) {
   if (existsSync(join(root, ".git"))) {
     try {
@@ -69,7 +85,9 @@ function listPublicationFiles(root) {
   }
 
   // Installed packages and isolated fixtures have no Git metadata.
+  /** @type {string[]} */
   const files = [];
+  /** @param {string} directory @param {string} [prefix] */
   function walk(directory, prefix = "") {
     const entries = readdirSync(directory, { withFileTypes: true })
       .sort((left, right) => left.name.localeCompare(right.name));
@@ -89,26 +107,34 @@ function listPublicationFiles(root) {
   return files;
 }
 
-export function validatePublicationBoundary(root = ROOT) {
+/** @param {string} [root] @param {string[]} [files] */
+export function validatePublicationBoundary(root = ROOT, files = listPublicationFiles(root)) {
   const errors = [];
 
-  for (const relativePath of listPublicationFiles(root)) {
+  for (const relativePath of files) {
     const absolutePath = join(root, relativePath);
     if (!existsSync(absolutePath)) continue;
+
+    const name = basename(relativePath);
+    if (/^\.env(?:\.|$)/i.test(name) && !/^\.env(?:\.[a-z0-9_-]+)*\.(?:example|sample|template)$/i.test(name)) {
+      errors.push(`publication boundary: ${relativePath}: private environment file`);
+      continue;
+    }
 
     const deniedPath = DENIED_PATHS.find((rule) => rule.pattern.test(relativePath));
     if (deniedPath) {
       errors.push(`publication boundary: ${relativePath}: ${deniedPath.reason}`);
       continue;
     }
-    if (!isTextFile(relativePath)) continue;
+    const bytes = readFileSync(absolutePath);
+    if (!isTextFile(relativePath, bytes)) continue;
 
-    const text = readFileSync(absolutePath, "utf8");
+    const text = bytes.toString("utf8");
     const contentRules = COMPATIBILITY_FILES.has(relativePath)
       ? DENIED_CONTENT
       : [{ pattern: LEGACY_PACKAGE_PATTERN, reason: "legacy package identifier outside its compatibility surfaces" }, ...DENIED_CONTENT];
 
-    for (const rule of contentRules) {
+    for (const rule of [...contentRules, ...SECRET_CONTENT]) {
       const match = rule.pattern.exec(text);
       if (match) {
         errors.push(`publication boundary: ${relativePath}:${lineNumber(text, match.index)}: ${rule.reason}`);
@@ -118,6 +144,7 @@ export function validatePublicationBoundary(root = ROOT) {
   return errors;
 }
 
+/** @param {string} [root] */
 export function main(root = ROOT) {
   const errors = validatePublicationBoundary(root);
   if (errors.length) {

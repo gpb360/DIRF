@@ -51,7 +51,7 @@ done
 # 2. Absolute paths that leak this machine's filesystem layout.
 #
 # Diff-based on purpose: the test suite has deliberate path fixtures
-# (C:/Users/example/..., /home/skills/...) that must not trip this. Matches
+# (synthetic user-profile paths) that must not trip this. Matches
 # the actual leak signature only. This directory is excluded because the
 # rule's own pattern would otherwise match it.
 if git diff --cached -U0 --diff-filter=ACM -- . ':(exclude).githooks/' | grep -qiE '^\+.*s7s-projects'; then

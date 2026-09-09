@@ -1,6 +1,16 @@
 # Node
 node_modules/
 
+# Private environment values; sanitized examples may be committed.
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.sample
+!.env.*.sample
+!.env.template
+!.env.*.template
+
 # DIRF local working artifacts (central store lives in ~/.dirf/, not the repo)
 .dirf/
 .dirf.migrating.*/

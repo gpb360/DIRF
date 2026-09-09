@@ -250,6 +250,12 @@ export function assertReviewReady(review, gitContext) {
   if (!new Set(["open", "merged"]).has(gitContext?.pr_state)) {
     throw new Error("DIRF could not verify whether the pull request is open or merged.");
   }
+  if (gitContext.pr_state === "open") {
+    if (gitContext.worktree_clean !== true) throw new Error("The checkout has uncommitted files or its clean state was not verified. Commit or preserve the changes before checking merge readiness.");
+    if (!SHA_PATTERN.test(gitContext.merge_commit || "") || gitContext.merge_commit_is_ancestor !== true) {
+      throw new Error("DIRF could not verify a live merge commit for the open pull request.");
+    }
+  }
   if (gitContext.pr_state === "merged" && (
     !SHA_PATTERN.test(gitContext.merge_commit || "")
     || !gitContext.merge_commit_is_ancestor
@@ -571,6 +577,7 @@ function currentGitContext(review, io = {}) {
     base_is_ancestor: succeeds(["merge-base", "--is-ancestor", base, currentHead]),
     base_matches_merge_base: currentMergeBase.toLowerCase() === base.toLowerCase(),
     pr_state: prState,
+    worktree_clean: prState === "open" ? output(["status", "--porcelain", "--untracked-files=all"]) === "" : undefined,
     merge_commit: remoteMergeHead,
     merge_commit_is_ancestor: prState === "open" || mergeCommitIsAncestor,
     ...(prState === "open" ? liveState(review, remotePrHead) : {}),
