@@ -99,11 +99,12 @@ The AI loads `README.md` first, follows its ordered folder references, then
 loads only the detail file required by the active stage.
 Unread files cost zero tokens.
 
-Each attempt carries its own `HANDOFF.md` (written by `build`) for resuming that
-specific run. Separately, DIRF keeps one **canonical project handoff** in the
-central store (`~/.dirf/projects/<slug>/HANDOFF.md`) — the single source of
-truth a fresh agent session should read regardless of which checkout it starts
-from. Manage it with `dirf state read-handoff` / `dirf state write-handoff`.
+Start each session with `dirf state active`. If it reports an active attempt,
+load that attempt's workflow and `HANDOFF.md` when needed. If idle, route new
+work through DIRF; if ownership conflicts, ask which attempt owns the checkout.
+The shared project handoff at `~/.dirf/projects/<slug>/HANDOFF.md` is supporting
+context, not a way to select current work. Use `dirf state read-handoff` for
+explicit diagnosis or recovery, and `dirf state write-handoff` to update it.
 
 ### Typed artifact provenance
 
