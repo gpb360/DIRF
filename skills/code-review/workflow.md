@@ -66,3 +66,10 @@ store the stable PR identity with `--work-item pr:NUMBER` and the reviewed commi
 with `--review-revision SHA` so newer work can invalidate an older next step.
 The final readiness check requires a full review; incremental reports can guide
 the fix loop but cannot authorize merge approval.
+
+For an open PR, readiness also requires a clean checkout (including untracked
+files) and a live merge ref whose parents match the current PR head and base.
+These checks replace the retired review cycle's mergeability and clean-merge
+labels with Git evidence. A changed merge base requires a fresh review.
+Already-merged PRs use commit ancestry proof; local edits do not change that
+historical proof. Readiness never grants permission to merge.

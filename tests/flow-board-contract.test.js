@@ -80,13 +80,16 @@ test("worktree inspection identifies registered clean checkout", () => {
   assert.equal(existsSync(root), true);
 });
 
-test("clean non-main worktree can be archived without deleting its branch", () => {
+test("archiving records cleanup status without moving files or deleting its branch", () => {
   const { slug, root } = attemptFixture();
   const worktree = join(tmpdir(), `dirf-board-wt-${Date.now()}`);
   execFileSync("git", ["worktree", "add", "-q", "-b", "board-test", worktree], { cwd: root });
   const archivedAt = new Date("2026-08-01T00:00:00.000Z");
+  const before = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: root, encoding: "utf8" });
   const record = archiveWorktree(slug, worktree, archivedAt);
   assert.equal(record.branch, "board-test");
+  assert.equal(existsSync(join(worktree, "README.md")), true);
+  assert.equal(execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: root, encoding: "utf8" }), before);
   assert.equal(inspectProjectWorktrees(slug, archivedAt).find((entry) => entry.branch === "board-test").cleanup_state, "archived");
   execFileSync("git", ["worktree", "remove", "-f", worktree], { cwd: root });
   execFileSync("git", ["branch", "-D", "board-test"], { cwd: root, stdio: "ignore" });

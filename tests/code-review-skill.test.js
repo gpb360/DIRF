@@ -56,6 +56,7 @@ function gitContext(overrides = {}) {
     previous_head_exists: true,
     previous_head_is_ancestor: true,
     pr_state: "open",
+    worktree_clean: true,
     merge_commit: SHA_A,
     merge_commit_is_ancestor: true,
     live_checks_passed: true,
@@ -262,6 +263,54 @@ test("readiness fails when issues remain or the checkout differs from the review
     () => assertReviewReady(artifact({ completion: { review_complete: true, required_checks: "pending", unresolved_threads: 0 } }), gitContext()),
     /checks have not all passed/i,
   );
+});
+
+test("readiness preserves legacy dirty checkout, mergeability and stale base gates", () => {
+  for (const worktree_clean of [false, undefined]) {
+    assert.throws(() => assertReviewReady(artifact(), gitContext({ worktree_clean })), /uncommitted files|clean state/);
+  }
+  for (const merge_commit of ["", undefined, "unknown"]) {
+    assert.throws(() => assertReviewReady(artifact(), gitContext({ merge_commit })), /live merge commit/);
+  }
+  assert.throws(() => assertReviewReady(artifact(), gitContext({ merge_commit_is_ancestor: false })), /live merge commit/);
+  assert.throws(() => assertReviewReady(artifact(), gitContext({ base_matches_merge_base: false })), /review base/);
+});
+
+test("open PR readiness reads worktree state and rejects missing or stale merge refs", () => {
+  const reviewPath = join(mkdtempSync(join(tmpdir(), "dirf-open-review-")), "review.json");
+  writeFileSync(reviewPath, JSON.stringify(artifact()));
+  const outputs = new Map([
+    ["ls-remote --exit-code origin refs/pull/42/head", `${SHA_B}\trefs/pull/42/head`],
+    ["ls-remote origin refs/pull/42/merge", `${SHA_C}\trefs/pull/42/merge`],
+    ["rev-parse HEAD", SHA_B],
+    [`rev-list --parents -n 1 ${SHA_C}`, `${SHA_C} ${SHA_A} ${SHA_B}`],
+    [`merge-base ${SHA_A} ${SHA_B}`, SHA_A],
+    ["remote get-url origin", artifact().target.repository],
+    ["status --porcelain --untracked-files=all", ""],
+  ]);
+  const io = {
+    gitOutput: (args) => {
+      const command = args.join(" ");
+      assert.ok(outputs.has(command), `unexpected git command: ${command}`);
+      return outputs.get(command);
+    },
+    gitSucceeds: () => true,
+    pullRequest: () => ({ state: "OPEN" }),
+    liveGithubState: () => ({ live_checks_passed: true, live_unresolved_threads: 0 }),
+  };
+  assert.match(run(["ready", reviewPath], io), /^Ready:/);
+  for (const status of [" M src/store.js", "M  src/store.js", "?? scratch.txt", "UU src/store.js"]) {
+    outputs.set("status --porcelain --untracked-files=all", status);
+    assert.throws(() => run(["ready", reviewPath], io), /uncommitted files/);
+  }
+  outputs.set("status --porcelain --untracked-files=all", "");
+  outputs.set(`merge-base ${SHA_A} ${SHA_B}`, SHA_D);
+  assert.throws(() => run(["ready", reviewPath], io), /review base/);
+  outputs.set(`merge-base ${SHA_A} ${SHA_B}`, SHA_A);
+  outputs.set(`rev-list --parents -n 1 ${SHA_C}`, `${SHA_C} ${SHA_A} ${SHA_D}`);
+  assert.throws(() => run(["ready", reviewPath], io), /head against its live merge commit/);
+  outputs.set("ls-remote origin refs/pull/42/merge", "");
+  assert.throws(() => run(["ready", reviewPath], io), /no live merge ref/);
 });
 
 test("readiness rejects the wrong repository, invalid base, stale live PR, and failed verification", () => {
