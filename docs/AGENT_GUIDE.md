@@ -18,6 +18,32 @@ pre-cutover artifact or a migration backup. Reading it directly is how state
 context. That exact failure has broken real multi-session work before. Don't
 repeat it.
 
+## How a fresh agent discovers DIRF
+
+You should never have to grep a repo for "dirf" to find its state. Three
+surfaces make discovery automatic, in order of strength:
+
+1. **SessionStart hook.** `dirf host setup --settings <settings.json>` merges a
+   SessionStart hook (`node …/src/cli.js state active --hook`) into the host's
+   settings, adapting to the file's existing schema — Claude Code/Codex-style
+   `hooks.<Event>` or ZCode-style `hooks.events.<Event>` (setting
+   `hooks.enabled = true` when the ZCode shape requires it). Every new session
+   then receives a small envelope: active attempt + phase + exact next action +
+   lazy paths, or idle/conflict instructions. This is the strongest surface
+   because it costs the agent nothing.
+2. **In-repo bootstrap block.** `dirf setup` appends a marker-guarded block to
+   the project's `AGENTS.md` and context file. It names the one command that
+   matters (`dirf state active`), the canonical store path for this project,
+   and the `resume`/handoff commands. Append-only and idempotent — existing
+   content is never rewritten.
+3. **Global `dirf` skill.** `dirf host setup` also installs a machine-wide
+   `dirf` skill (default `~/.zcode/skills/dirf/SKILL.md`) any agent can invoke
+   from any repo; it teaches the same bootstrap in five lines.
+
+`dirf host hook-snippet` prints the hook JSON without touching anything, and
+`dirf state which` prints the canonical handoff path alongside the slug and
+store path.
+
 ## Setup (one-time, per machine)
 
 `dirf` is a shell function/alias pointing at `node <path-to-DIRF>/src/cli.js`.
@@ -200,7 +226,7 @@ Reference existing specs/tickets/decisions rather than restating them.
 
 | Command | Purpose |
 |---|---|
-| `dirf state which` | which project am I in? (slug + store path) |
+| `dirf state which` | which project am I in? (slug + store path + canonical handoff path) |
 | `dirf state read-handoff` | read the project-wide handoff for diagnosis or recovery |
 | `dirf state write-handoff --file F` | write the canonical handoff (end of session) |
 | `dirf state list-attempts` | prior runs for this project |
@@ -229,6 +255,8 @@ Reference existing specs/tickets/decisions rather than restating them.
 | `dirf project complete\|archive\|reopen` | explicit project status override (derived classification otherwise) |
 | `dirf export obsidian` | render the portfolio into an Obsidian vault (notes + canvas dashboard) |
 | `dirf export graphify` | render the portfolio as a graphify graph + interactive HTML |
+| `dirf host setup [--settings FILE] [--skill-dir DIR] [--skip-hook] [--skip-skill] [--force]` | one-time host bootstrap: SessionStart hook + global dirf skill |
+| `dirf host hook-snippet` | print the SessionStart hook JSON only |
 | `dirf skills scan` | show installed skills + resolved refs on this host |
 | `dirf validate` | validate registries + workflows |
 

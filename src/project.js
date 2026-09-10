@@ -51,6 +51,49 @@ function writeMissing(root, relativePath, content, created) {
   created.push(portable(relativePath));
 }
 
+// Marker-guarded bootstrap block injected into a host repo's agent-facing
+// files so a fresh agent can find DIRF state without grepping the repository.
+// The block is append-only: existing content is never rewritten, and the
+// marker makes re-injection a no-op. Content is deliberately portable — the
+// generic store path resolves on every machine, so nothing machine-specific
+// (usernames, absolute paths) leaks into committed files.
+export const BOOTSTRAP_MARKER = "<!-- dirf:bootstrap -->";
+
+export function bootstrapBlock(slug) {
+  return [
+    BOOTSTRAP_MARKER,
+    "## DIRF — coordination bootstrap",
+    "",
+    "- Start every session with `dirf state active` and follow what it reports: reuse an active attempt, build new work only when idle, stop and ask on conflict.",
+    `- Canonical state lives outside this repo at \`~/.dirf/projects/${slug}/\` — resolve the exact path with \`dirf state which\`. Never read or write \`.dirf/\` directly — it is legacy/inert.`,
+    "- Resume with `dirf resume <name-or-id>`; read the project handoff with `dirf show me the handoff`.",
+    "",
+  ].join("\n");
+}
+
+function ensureBootstrapBlock(root, relativePath, block, created, updated) {
+  const path = join(root, relativePath);
+  if (!existsSync(path)) {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, block, "utf8");
+    created.push(portable(relativePath));
+    return;
+  }
+  // Skip anything that is not a regular file (a directory named AGENTS.md,
+  // a dangling special path) rather than crashing setup — pre-existing host
+  // oddities are not DIRF's to repair.
+  if (!statSync(path).isFile()) return;
+  const content = readFileSync(path, "utf8");
+  // Append-only heuristic: the marker makes re-injection a no-op. A file that
+  // already carries the marker (even hand-copied, even with the block edited
+  // away) opts out of future injection rather than risk touching user text.
+  if (content.includes(BOOTSTRAP_MARKER)) return;
+  const eol = content.includes("\r\n") ? "\r\n" : "\n";
+  const separator = content.length && !content.endsWith("\n") ? eol + eol : content.length ? eol : "";
+  writeFileSync(path, `${content}${separator}${block.replaceAll("\n", eol)}`, "utf8");
+  updated.push(portable(relativePath));
+}
+
 export function projectRoot(path = process.cwd()) {
   return resolve(path || process.cwd());
 }
@@ -111,6 +154,7 @@ export function setupProject(root = process.cwd(), options = {}) {
   if (!Number.isInteger(reservePercent) || reservePercent < 1 || reservePercent > 50) throw new Error("reserve-percent must be an integer from 1 to 50");
 
   const created = [];
+  const updated = [];
   const { slug } = ensureRegistered(root);
   const storeConfigPath = join(storeProjectDir(slug), "config.json");
   const existingConfig = existsSync(storeConfigPath) ? loadProjectConfig(root) : null;
@@ -157,7 +201,14 @@ export function setupProject(root = process.cwd(), options = {}) {
   writeMissing(root, join(adrPath, "README.md"), "# Architecture Decisions\n\nRecord hard-to-reverse decisions as numbered Markdown files.\n", created);
   writeMissing(root, join(config.tracker.specs_path, "README.md"), "# Specifications\n\nDurable destination documents for multi-session work.\n", created);
   writeMissing(root, config.tracker.tickets_path, "# Tickets\n\nDependency-ordered implementation slices.\n", created);
-  return { root, slug, config: loadProjectConfig(root), created };
+
+  // Agent-facing discovery: a marker-guarded pointer so a fresh agent (or a
+  // different model/CLI) finds the store and the one command that matters
+  // without grepping the repo for state.
+  const bootstrap = bootstrapBlock(slug);
+  ensureBootstrapBlock(root, contextPath, bootstrap, created, updated);
+  ensureBootstrapBlock(root, "AGENTS.md", bootstrap, created, updated);
+  return { root, slug, config: loadProjectConfig(root), created, updated };
 }
 
 export function createAttempt(root, name, now = new Date()) {
