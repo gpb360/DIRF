@@ -2,7 +2,7 @@
 // Deterministic public-tree checks. Keep private project context and local
 // workstation state out of the publishable repository and package surfaces.
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ROOT } from "./paths.js";
@@ -114,6 +114,9 @@ export function validatePublicationBoundary(root = ROOT, files = listPublication
   for (const relativePath of files) {
     const absolutePath = join(root, relativePath);
     if (!existsSync(absolutePath)) continue;
+    // git ls-files --others can list a directory path (e.g. an embedded
+    // worktree); it is not a publishable file, so skip it instead of crashing.
+    if (!statSync(absolutePath).isFile()) continue;
 
     const name = basename(relativePath);
     if (/^\.env(?:\.|$)/i.test(name) && !/^\.env(?:\.[a-z0-9_-]+)*\.(?:example|sample|template)$/i.test(name)) {

@@ -10,12 +10,13 @@
 //   dirf list [--path DIR]                               list saved attempts
 //   dirf status [--path DIR]                             show project and repository state
 //   dirf resume <name-or-id> [--path DIR]                load the workflow handoff
+//   dirf host setup [--settings FILE] [--skill-dir DIR]  one-time host bootstrap: SessionStart hook + global dirf skill
 //   dirf state active [--path DIR] [--json|--hook]       report checkout-scoped responsibility
 //   dirf validate                                        validate registries + workflows
 //   dirf skills scan [--path DIR]                        scan host, print installed skills + resolved refs
 //   dirf review trigger|verify-update ...                 hand off findings to a same-PR fixer
 //   dirf validate|graph|run|render <folder>               operate an Eve-style folder DAG
-import { writeFileSync, readFileSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, dirname, join, isAbsolute, resolve } from "node:path";
 import { homedir } from "node:os";
 import { execFileSync, spawn } from "node:child_process";
@@ -824,7 +825,8 @@ function cmdSetup(args) {
     }
   }
   console.log(`DIRF configured: ${result.root}`);
-  console.log(result.created.length ? `Created: ${result.created.join(", ")}` : "Already configured; no files changed.");
+  console.log(result.created.length ? `Created: ${result.created.join(", ")}` : "Already configured; nothing new to scaffold.");
+  if (result.updated.length) console.log(`Updated: ${result.updated.join(", ")}`);
   if (authority) console.log(authority.changed ? "Execution authority initialized." : "Execution authority already initialized.");
   if (authorityNote) console.log(`Execution authority note: ${authorityNote}`);
   const discovered = enrichDiscovered(discover(result.root));
@@ -832,6 +834,121 @@ function cmdSetup(args) {
   console.log(`Detected ${Object.keys(discovered).length} installed skills; no skills were installed.`);
   if (gaps.length) console.log(`Capability gaps: ${gaps.map((gap) => gap.capability).join(", ")}`);
   else console.log("Capability gaps: none.");
+  console.log("Host hint: run `dirf host setup` once to make future agent sessions DIRF-aware (SessionStart hook + global dirf skill).");
+}
+
+// --- One-time host bootstrap ---------------------------------------------
+// dirf host setup makes every future agent session in DIRF-configured repos
+// DIRF-aware: a SessionStart hook that emits the checkout-ownership envelope,
+// and a global `dirf` skill any agent can invoke. Both are additive and
+// idempotent; neither edits user content without being asked.
+
+const HOST_SKILL_SOURCE = join(ROOT, "host", "dirf-skill", "SKILL.md");
+const DEFAULT_SKILL_DIR = join(homedir(), ".zcode", "skills");
+
+function hookCommandLine() {
+  return `node "${join(ROOT, "src", "cli.js")}" state active --hook`;
+}
+
+function hookGroup() {
+  return { hooks: [{ type: "command", command: hookCommandLine() }] };
+}
+
+function hookSnippet() {
+  return JSON.stringify({ hooks: { SessionStart: [hookGroup()] } }, null, 2);
+}
+
+function installHook(settingsPath) {
+  // Merge the SessionStart hook group into an existing settings file without
+  // touching anything else. Backs up the original once; re-runs are a no-op.
+  // Two host schema shapes are auto-detected from the file's existing hooks:
+  //   Claude Code / Codex:  hooks.SessionStart = [ { hooks: [...] } ]
+  //   ZCode config:         hooks.events.SessionStart = [ ... ], gated by hooks.enabled
+  const original = readFileSync(settingsPath, "utf8");
+  const settings = JSON.parse(original);
+  if (typeof settings !== "object" || settings === null || Array.isArray(settings)) {
+    throw new Error("settings file must contain a JSON object");
+  }
+  if (settings.hooks !== undefined && (typeof settings.hooks !== "object" || settings.hooks === null || Array.isArray(settings.hooks))) {
+    throw new Error(`settings.hooks must be an object, found ${Array.isArray(settings.hooks) ? "an array" : typeof settings.hooks}`);
+  }
+  if (settings.hooks?.events !== undefined && (typeof settings.hooks.events !== "object" || settings.hooks.events === null || Array.isArray(settings.hooks.events))) {
+    throw new Error("settings.hooks.events must be an object");
+  }
+  const eventsShape = settings.hooks?.events !== undefined;
+  const hooks = settings.hooks ?? (settings.hooks = {});
+  const target = eventsShape ? (hooks.events ??= {}) : hooks;
+  const list = target.SessionStart ?? (target.SessionStart = []);
+  if (!Array.isArray(list)) throw new Error(`${eventsShape ? "settings.hooks.events.SessionStart" : "settings.hooks.SessionStart"} must be an array or absent`);
+  const command = hookCommandLine();
+  const present = list.some((group) => Array.isArray(group?.hooks) && group.hooks.some((entry) => entry?.type === "command" && entry?.command === command));
+  if (present) return { installed: false, enabledChanged: false };
+  list.push(hookGroup());
+  let enabledChanged = false;
+  if (eventsShape && hooks.enabled !== true) { hooks.enabled = true; enabledChanged = true; }
+  const backup = `${settingsPath}.dirf-bak`;
+  if (!existsSync(backup)) writeFileSync(backup, original, "utf8");
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf8");
+  return { installed: true, enabledChanged };
+}
+
+function installHostSkill(skillDir, force = false) {
+  if (!existsSync(HOST_SKILL_SOURCE)) throw new Error(`host skill template missing: ${HOST_SKILL_SOURCE}`);
+  const source = readFileSync(HOST_SKILL_SOURCE, "utf8");
+  const target = join(skillDir, "dirf", "SKILL.md");
+  if (existsSync(target)) {
+    const current = readFileSync(target, "utf8");
+    if (current === source) return "unchanged";
+    if (!force) return "edited";
+  }
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, source, "utf8");
+  return "installed";
+}
+
+function cmdHost(args) {
+  const sub = args._[0] || "setup";
+  if (sub === "hook-snippet") { console.log(hookSnippet()); return; }
+  if (sub !== "setup") {
+    console.error("usage: dirf host [setup] [--settings FILE] [--skill-dir DIR] [--skip-hook] [--skip-skill] [--force]\n       dirf host hook-snippet");
+    process.exit(2);
+  }
+
+  if (!args.skipHook) {
+    if (args.settings) {
+      const settingsPath = resolve(args.settings);
+      try {
+        const result = installHook(settingsPath);
+        if (result.installed) {
+          const enabledNote = result.enabledChanged ? " Set hooks.enabled = true (ZCode config requires it for hooks to run)." : "";
+          console.log(`Hook installed in ${settingsPath} (backup at ${settingsPath}.dirf-bak).${enabledNote}`);
+        } else {
+          console.log(`Hook already present in ${settingsPath}; nothing changed.`);
+        }
+      } catch (error) {
+        console.error(`Hook install failed: ${error.message}`);
+        process.exitCode = 1;
+      }
+    } else {
+      console.log("SessionStart hook — add to the host's settings file, or re-run with --settings <settings.json> to install:");
+      console.log(hookSnippet());
+    }
+  }
+
+  if (!args.skipSkill) {
+    const skillDir = args.skillDir ? resolve(args.skillDir) : DEFAULT_SKILL_DIR;
+    try {
+      const state = installHostSkill(skillDir, Boolean(args.force));
+      if (state === "installed") console.log(`Installed global dirf skill at ${join(skillDir, "dirf", "SKILL.md")}.`);
+      else if (state === "unchanged") console.log(`Global dirf skill already up to date at ${join(skillDir, "dirf", "SKILL.md")}.`);
+      else console.error(`Not overwriting ${join(skillDir, "dirf", "SKILL.md")} — local edits present. Use --force to replace.`);
+      const alternate = join(homedir(), ".agents", "skills");
+      if (existsSync(alternate) && alternate !== skillDir) console.log(`Note: host also reads ${alternate} — install there too with --skill-dir if your CLI loads both.`);
+    } catch (error) {
+      console.error(`Skill install failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+  }
 }
 
 function cmdValidate() {
@@ -929,6 +1046,7 @@ function cmdStateWhich(args) {
   // worktrees of one project can sit on different branches.
   const branch = gitOutput(target, ["branch", "--show-current"]);
   console.log(`${resolved.slug}  ->  ${storeProjectDir(resolved.slug)}`);
+  console.log(`handoff: ${join(storeProjectDir(resolved.slug), "HANDOFF.md")}`);
   console.log(`branch: ${branch || "(detached HEAD)"}`);
 }
 
@@ -1508,6 +1626,10 @@ function parse(argv) {
       continue;
     }
     if (a === "--force") { out.force = true; continue; }
+    if (a === "--settings") { out.settings = rest[++i]; continue; }
+    if (a === "--skill-dir") { out.skillDir = rest[++i]; continue; }
+    if (a === "--skip-hook") { out.skipHook = true; continue; }
+    if (a === "--skip-skill") { out.skipSkill = true; continue; }
     if (a === "--project") { out.project = true; continue; }
     if (a === "--slug") { out.slug = rest[++i]; continue; }
     if (a === "--attempt") { out.attempt = rest[++i]; continue; }
@@ -1605,6 +1727,9 @@ Usage:
   dirf state active [--path DIR] [--json|--hook]      report idle, active, or conflicting checkout responsibility
   dirf state import-handoff [--path DIR] [--force]    promote a local HANDOFF.md into the store
   dirf state migrate-cleanup [--path DIR]            remove migration backup(s) after confirming the store works
+  dirf host setup [--settings FILE] [--skill-dir DIR] [--skip-hook] [--skip-skill] [--force]
+                                                     one-time host bootstrap: SessionStart hook + global dirf skill
+  dirf host hook-snippet                             print the SessionStart hook JSON only
 
 Side observations (park non-task notes without derailing):
   dirf notice "<text>"                                log an observation to the current attempt
@@ -1821,6 +1946,7 @@ async function main() {
   if (args.help) { console.log(HELP); return; }
 
   if (cmd === "setup") cmdSetup(args);
+  else if (cmd === "host") cmdHost(args);
   else if (cmd === "build") { args.name = args._[0]; args.task = args._.slice(1).join(" "); cmdBuild(args); }
   else if (cmd === "plan") { args.name = args._[0]; args.task = args._.slice(1).join(" "); cmdPlan(args); }
   else if (cmd === "create") { args.name = args._[0]; args.task = args._.slice(1).join(" "); cmdCreate(args); }

@@ -12,6 +12,12 @@ project-settlement kit. DIRF turns a task into a lean instruction set
 `~/.dirf/projects/<slug>/`, keyed by the repo's git common dir so every
 worktree shares one store.
 
+One-time host setup: `dirf host setup` installs a SessionStart hook (the
+`--hook` form of step 1 below) and a machine-wide `dirf` skill, so fresh
+sessions in any repo become DIRF-aware automatically. `dirf setup` in a repo
+also appends a marker-guarded bootstrap block to `AGENTS.md` and the context
+file that names the store path.
+
 ## Session start
 
 1. Run `dirf state active` (or install `dirf state active --hook` as the host's

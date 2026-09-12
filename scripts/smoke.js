@@ -39,7 +39,7 @@ try {
   const setup = run(["setup", TARGET, "--reserve-percent", "5"]);
   assertContains(setup, "DIRF configured:");
   assertContains(setup, "Capability gaps:");
-  assertContains(run(["setup", TARGET]), "Already configured; no files changed.");
+  assertContains(run(["setup", TARGET]), "Already configured; nothing new to scaffold.");
   assertContains(readFileSync(join(TARGET, ".gitignore"), "utf8"), ".dirf/attempts/");
   const registry = JSON.parse(readFileSync(join(FAKE_HOME, ".dirf", "projects.json"), "utf8"));
   const [slug] = Object.keys(registry.projects);

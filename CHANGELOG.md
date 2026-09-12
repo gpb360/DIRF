@@ -7,6 +7,18 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+### Added
+- **Agent-facing discovery bootstrap.** `dirf setup` appends a marker-guarded
+  block to the host's `AGENTS.md` and context file pointing a fresh agent at
+  `dirf state active` and the canonical store path (append-only; existing
+  content is never rewritten).
+- **One-time host bootstrap (`dirf host`).** `dirf host setup` installs a
+  SessionStart hook (`dirf state active --hook`) by idempotently merging it
+  into a settings file (backup at `<settings>.dirf-bak`), and installs a
+  machine-wide `dirf` skill (default `~/.zcode/skills/dirf/SKILL.md`) that
+  teaches any agent the session-start bootstrap. `dirf host hook-snippet`
+  prints the hook JSON only.
+
 ### Fixed
 - Public HTTPS intake rejects mapped loopback/private addresses and special-use
   networks, pins connections to validated DNS answers, and keeps one timeout
@@ -18,6 +30,8 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   status changes, filesystem moves, and removal.
 
 ### Changed
+- `dirf state which` also prints the canonical handoff path alongside the
+  slug and store path.
 - The README is a getting-started guide; detailed commands and integration
   instructions live under `docs/`. CI and development-install requirements
   now match the repository.

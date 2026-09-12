@@ -163,7 +163,7 @@ dirf migrate [<name-or-id>]                          refresh legacy schema 2–5
                                                       (not the same as `state migrate-cleanup`)
 
 # central state (canonical store — see "Canonical state" below)
-dirf state which [--path DIR]                        what project am I in? (slug + store path)
+dirf state which [--path DIR]                        what project am I in? (slug + store path + handoff path)
 dirf state list                                      list all registered projects
 dirf state register [--path DIR]                     register a project explicitly
 dirf state read-handoff [--path DIR|--slug S]        print the canonical project handoff
@@ -173,6 +173,11 @@ dirf state get-attempt <id> [...]                    show one attempt
 dirf state active [--path DIR] [--json|--hook]       report checkout-scoped responsibility
 dirf state import-handoff [--path DIR] [--force]     promote a local HANDOFF.md into the store
 dirf state migrate-cleanup [--path DIR]              remove migration backup(s) once the store works
+
+# host bootstrap (one-time; see "How a fresh agent discovers DIRF" in docs/AGENT_GUIDE.md)
+dirf host setup [--settings FILE] [--skill-dir DIR] [--skip-hook] [--skip-skill] [--force]
+                                                     install the SessionStart hook + global dirf skill
+dirf host hook-snippet                               print the SessionStart hook JSON only
 
 # typed artifact provenance
 dirf artifact list <attempt> [--json]                list artifacts and governing versions
