@@ -241,6 +241,23 @@ test("focused output can be disabled without changing task instructions", () => 
   assert.match(readme, /write a story/);
 });
 
+test("minimal execution rules render into every workflow regardless of focused_output", () => {
+  const workflow = {
+    name: "demo", task: "add a feature", playbook: "bug-fix",
+    workflow: { phases: ["fix"], output: "fixed", validation: "test", recovery: "revise" },
+    agents: [], baseline_skills: [], skill_flow: { label: "fix", steps: [] },
+    schema_version: 5, focused_output: false,
+  };
+  const outDir = mkdtempSync(join(tmpdir(), "dirf-minimal-"));
+  buildInstructions(workflow, outDir);
+  const readme = readFileSync(join(outDir, "README.md"), "utf8");
+  assert.match(readme, /## Keep the work minimal/);
+  assert.match(readme, /Reuse what the codebase already has before writing anything new\./);
+  assert.match(readme, /Standard library before a new dependency\./);
+  assert.match(kickoffPrompt(workflow), /Keep the work minimal: Reuse what the codebase already has/);
+  assert.match(buildHtml(workflow), /<h2>Keep the work minimal<\/h2>/);
+});
+
 test("buildInstructions includes lifecycle guidance when persisted", () => {
   const outDir = mkdtempSync(join(tmpdir(), "dirf-lifecycle-"));
   const workflow = {

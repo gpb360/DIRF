@@ -18,6 +18,12 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   machine-wide `dirf` skill (default `~/.zcode/skills/dirf/SKILL.md`) that
   teaches any agent the session-start bootstrap. `dirf host hook-snippet`
   prints the hook JSON only.
+- **Minimal execution rules in every workflow:** generated instruction sets
+  now carry a fixed, distilled version of the ponytail reuse ladder (reuse
+  what exists, standard library before new dependencies, smallest correct
+  change, delete before you add). Applies on every host regardless of
+  installed skills; the `ponytail` skill remains the full method where
+  installed. See ADR 0007.
 
 ### Fixed
 - Public HTTPS intake rejects mapped loopback/private addresses and special-use
