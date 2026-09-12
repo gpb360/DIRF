@@ -24,6 +24,16 @@ function focusedOutputRules(workflow) {
   return includesPrReview ? [...FOCUSED_OUTPUT_RULES, ...PR_REVIEW_OUTPUT_RULES] : FOCUSED_OUTPUT_RULES;
 }
 
+// Distilled from the ponytail method (see ADR 0007). Rendered into every
+// workflow's operating rules regardless of which skills the host has
+// installed — the ponytail skill, where present, remains the full method.
+export const MINIMAL_EXECUTION_RULES = [
+  "Reuse what the codebase already has before writing anything new.",
+  "Standard library before a new dependency.",
+  "Make the smallest correct change.",
+  "Delete before you add; don't build for needs that don't exist yet.",
+];
+
 function usesFocusedOutput(workflow) {
   return workflow.focused_output !== false;
 }
@@ -151,6 +161,7 @@ export function kickoffPrompt(workflow) {
   ];
   let nextRule = 5;
   if (wf.requirements?.length) lines.push(`${nextRule++}. Required acceptance contract: ${wf.requirements.join(" | ")}`);
+  lines.push(`${nextRule++}. Keep the work minimal: ${MINIMAL_EXECUTION_RULES.join(" ")}`);
   lines.push(`${nextRule++}. When your context is nearly exhausted, write a handoff note (completed work, decisions, changed files, validation, blockers, exact next action) and stop.`);
   if (usesFocusedOutput(workflow)) {
     lines.push(`${nextRule}. For status updates, validation summaries, and handoffs: ${focusedOutputRules(workflow).join(" ")} This does not constrain task-specific or creative output.`);
@@ -340,6 +351,7 @@ export function buildInstructions(workflow, outDir, skillBindings = []) {
     "## Context reserve",
     `Keep ${workflow.context_reserve_percent ?? 5}% of the model context available for handoff. When the host reports that reserve or less, update HANDOFF.md with completed work, decisions, changed files, validation, blockers, and the exact next action, then stop. If the host does not expose context usage, update HANDOFF.md after every completed phase.`,
   ];
+  lines.push("", "## Keep the work minimal", "", MINIMAL_EXECUTION_RULES.map((rule) => `- ${rule}`).join("\n"));
   writeFileSync(join(outDir, "kickoff.md"), kickoffPrompt(workflow) + "\n", "utf8");
   written.push(join(outDir, "kickoff.md"));
   if (usesFocusedOutput(workflow)) {
@@ -705,6 +717,10 @@ export function buildHtml(workflow, skillBindings = []) {
   parts.push("<p class='mute'>Copy this into your model of choice to run the workflow. <button class='chip' onclick=\"navigator.clipboard.writeText(document.getElementById('kickoff').textContent).then(()=>{this.textContent='Copied ✓';})\">Copy prompt</button></p>");
   parts.push(`<pre id='kickoff'>${escapeHtml(kickoffPrompt(workflow))}</pre>`);
   parts.push("<p class='mute'>DIRF state is canonical and central (~/.dirf/projects/<slug>/). Worktrees resolve to it automatically via git-common-dir — no per-worktree setup is needed. Keep scratch paths local to the current execution.</p>");
+
+  parts.push("<h2>Keep the work minimal</h2><ul>");
+  for (const rule of MINIMAL_EXECUTION_RULES) parts.push(`<li>${inline(rule)}</li>`);
+  parts.push("</ul>");
 
   if (usesFocusedOutput(workflow)) {
     parts.push("<h2>Focused output</h2><p>For status updates, validation summaries, and handoffs:</p><ul>");

@@ -52,6 +52,8 @@ file that names the store path.
 
 ## While working
 
+- Keep the work minimal: reuse what the codebase already has, standard library
+  before a new dependency, the smallest correct change, delete before you add.
 - Advance one phase at a time with evidence:
   `dirf attempt advance <id> --evidence "<what you ran / verified>"`
   Record evidence, not claims. `--auto` crosses covered phases and **stops at
