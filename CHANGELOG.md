@@ -7,7 +7,19 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+## [0.30.0] — 2026-09-12
+
 ### Added
+- **Review evidence ledger:** code-review findings and PR review readiness are
+  recorded in a hash-linked, tamper-evident ledger; review handoffs stay behind
+  verification, and the ledger triggers after PR fixes are applied.
+- **Live work registry:** a project-level registry of live PRs with verified
+  review evidence drives merge readiness instead of per-checkout guesses.
+- **Verify gates bind implementation evidence:** advancing past a verify gate
+  records the exact implementation evidence that justified the crossing.
+- **`dirf doctor`:** environment health diagnostics in one command.
+- **Read-only audit playbook:** repository audits that cannot modify state.
+- **CI:** GitHub Actions validates every push with the release check suite.
 - **Agent-facing discovery bootstrap.** `dirf setup` appends a marker-guarded
   block to the host's `AGENTS.md` and context file pointing a fresh agent at
   `dirf state active` and the canonical store path (append-only; existing
@@ -26,6 +38,10 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   installed. See ADR 0007.
 
 ### Fixed
+- PR review readiness fails closed: graded review convergence is enforced,
+  stale merge readiness is prevented, merged-base refs are verified exactly,
+  and progress locks release without deleting successor ownership.
+- Incomplete skill packages fail closed instead of half-routing.
 - Public HTTPS intake rejects mapped loopback/private addresses and special-use
   networks, pins connections to validated DNS answers, and keeps one timeout
   through redirects and response-body consumption.
@@ -36,6 +52,8 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   status changes, filesystem moves, and removal.
 
 ### Changed
+- PR review updates report in plain English: how many confirmed issues remain,
+  what checks passed, and whether another review is running.
 - `dirf state which` also prints the canonical handoff path alongside the
   slug and store path.
 - The README is a getting-started guide; detailed commands and integration
