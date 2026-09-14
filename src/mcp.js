@@ -7,7 +7,7 @@ import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
 import {
   resolveProject, resolveProjectReference, listProjects,
-  writeHandoff, listAttempts, getAttempt, storeProjectDir, recordProgress, projectHandoffContextState,
+  writeHandoff, listAttempts, getAttempt, readAttemptAssignment, storeProjectDir, recordProgress, projectHandoffContextState,
 } from "./state.js";
 import { resolve } from "node:path";
 
@@ -23,6 +23,7 @@ const TOOLS = [
   { name: "dirf_record_progress", description: "Record workflow progress in HANDOFF.md - call this after completing each step. Updates current phase, last action, completed steps, and next action.", inputSchema: { type: "object", properties: { project: { type: "string", description: "Project slug or path (default: server cwd)" }, attempt: { type: "string", description: "Attempt id or unique name; required when the project has multiple attempts" }, message: { type: "string", description: "What was just completed" }, currentPhase: { type: "string", description: "Current workflow phase" }, nextAction: { type: "string", description: "Exact next step" }, changedFiles: { type: "array", items: { type: "string" }, description: "Files changed in this step" }, workItem: { type: "string", description: "Stable work identity such as pr:1442" }, reviewRevision: { type: "string", description: "Reviewed commit SHA" } }, required: ["message", "nextAction"] } },
   { name: "dirf_list_attempts", description: "List attempts for a project.", inputSchema: { type: "object", properties: { project: { type: "string" } } } },
   { name: "dirf_get_attempt", description: "Get one attempt by id or name.", inputSchema: { type: "object", properties: { project: { type: "string" }, id: { type: "string" } }, required: ["id"] } },
+  { name: "dirf_read_assignment", description: "Read the complete workflow and handoff for one exact attempt id.", inputSchema: { type: "object", properties: { project: { type: "string" }, attempt: { type: "string", description: "Exact attempt id; names and paths are rejected" } }, required: ["attempt"] } },
 ];
 
 function resolveSlugFromParams(params = {}, options = {}) {
@@ -61,17 +62,30 @@ function callTool(name, args) {
       // recordProgress serializes the checkpoint itself; avoid mutating the
       // global registry while resolving the project before that lock.
       const slug = resolveSlugFromParams(args, { touch: false });
-      recordProgress(slug, {
+      const outcome = recordProgress(slug, {
         message: args.message,
         timestamp: null,
         phase: args.currentPhase || null,
         next: args.nextAction,
         files: args.changedFiles || [],
         attemptId: args.attempt || null,
-        workItem: args.workItem || null,
+        workItem: args.workItem ?? null,
         reviewRevision: args.reviewRevision || null,
       });
-      return { ok: true, slug, message: "Progress recorded" };
+      return {
+        ok: true,
+        slug,
+        recorded: outcome.recorded,
+        accepted: outcome.accepted,
+        reason: outcome.reason,
+        attempt_accepted: outcome.attempt_accepted,
+        attempt_reason: outcome.attempt_reason,
+        message: outcome.accepted
+          ? "Progress recorded"
+          : outcome.recorded
+            ? "Progress recorded for the attempt; canonical handoff unchanged"
+            : "Progress rejected; handoffs and lifecycle unchanged",
+      };
     }
     case "dirf_list_attempts": {
       const slug = resolveSlugFromParams(args);
@@ -81,6 +95,10 @@ function callTool(name, args) {
       const slug = resolveSlugFromParams(args);
       const a = getAttempt(slug, args.id);
       return { id: a.id, name: a.name, created_at: a.created_at, folder: a.folder };
+    }
+    case "dirf_read_assignment": {
+      const slug = resolveSlugFromParams(args);
+      return readAttemptAssignment(slug, args.attempt);
     }
     default:
       throw new Error(`Unknown tool: ${name}`);

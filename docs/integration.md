@@ -41,6 +41,23 @@ write handoffs, record progress, and retrieve one attempt. These tools expose
 a subset of the CLI. Tool calls happen only when the host makes them; adding
 this configuration does not automatically record progress or start work.
 
+For a delegated task, pass its exact attempt ID to `dirf_read_assignment`.
+The result includes that attempt's workflow and handoff, so a fresh session
+can retrieve its assignment without reading unrelated project progress.
+Names, unknown IDs, and missing handoff files are rejected. Returned metadata
+is limited to assignment fields; internal execution authority is omitted.
+This selects an attempt; it does not
+authenticate the caller or grant permission to execute its instructions.
+
+After `dirf_record_progress`, inspect `recorded`, `accepted`,
+`attempt_accepted`, and `reason`. `ok` means the tool handled the request;
+it does not mean the checkpoint became current. A rejected stale or
+unverifiable revision must be reconciled with the current assignment before
+continuing. Progress records do not create approval or decision-gate records.
+Once an attempt has a work identity, checkpoints must retain that identity.
+An explicitly empty identity or a different identity is rejected without
+changing the handoffs, lifecycle, or progress sequence.
+
 ## Session startup and progress
 
 Run `dirf state active` from the project checkout. Continue the reported active

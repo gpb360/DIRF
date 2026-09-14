@@ -1144,7 +1144,8 @@ function cmdStateActive(args) {
     else console.log("DIRF idle: this checkout is not configured. Run dirf setup before routing new work.");
     return;
   }
-  const responsibility = attemptResponsibility(project.slug, checkout);
+  const projectAttempts = listAttemptsState(project.slug);
+  const responsibility = attemptResponsibility(project.slug, checkout, { attempts: projectAttempts });
   const execution = responsibility.attempt ? currentExecutionFromEnv(process.env) : null;
   if (execution?.authorityToken) observeAttempt(project.slug, responsibility.attempt.id, { ...execution, worktreePath: checkout });
   const attempts = responsibility.attempts.map((attempt) => ({
@@ -1154,7 +1155,11 @@ function cmdStateActive(args) {
     responsibility_path: attempt.responsibility_path,
   }));
   const activeContext = responsibility.attempt
-    ? attemptContextState(project.slug, responsibility.attempt.id, { bounded: true })
+    ? attemptContextState(project.slug, responsibility.attempt.id, {
+      bounded: true,
+      attempts: projectAttempts,
+      attempt: responsibility.attempt,
+    })
     : null;
   const active = responsibility.attempt ? {
     ...attempts[0],
@@ -1581,12 +1586,24 @@ function cmdRecordProgress(args) {
       next: args.next || "Continue work",
       files: args.files ? args.files.split(",") : [],
       attemptId: args.attempt || null,
-      workItem: args.workItem || null,
+      workItem: args.workItem ?? null,
       reviewRevision: args.reviewRevision || null,
     };
 
-    const { lifecycle: synced } = recordProgress(project.slug, updateData);
+    const outcome = recordProgress(project.slug, updateData);
+    const synced = outcome.lifecycle;
     if (synced) console.log(`   Lifecycle: ${synced.status}${synced.current_phase ? ` · phase: ${synced.current_phase}` : ""}`);
+
+    if (!outcome.accepted) {
+      const detail = outcome.reason || "canonical handoff rejected the checkpoint";
+      if (outcome.recorded) {
+        console.error(`Progress recorded for the attempt only; canonical handoff unchanged (${detail}).`);
+      } else {
+        console.error(`Progress not recorded; handoffs and lifecycle unchanged (${detail}).`);
+      }
+      process.exitCode = 1;
+      return;
+    }
 
     console.log("✅ Progress recorded:");
     console.log(`   ${message}`);
