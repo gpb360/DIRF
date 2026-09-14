@@ -22,6 +22,7 @@ const PRIORITY_ORDER = new Map(PRIORITIES.map((priority, index) => [priority, in
 const MODES = new Set(["full", "incremental"]);
 const VERIFICATION_STATUSES = new Set(["passed", "pending", "failed"]);
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
+const CHECK_RUN_PAGE_SIZE = 100;
 
 export class ReviewValidationError extends Error {
   constructor(errors) {
@@ -427,11 +428,13 @@ export function liveGithubState(review, remoteHead, request = ghJson) {
     throw new Error("DIRF could not identify a GitHub repository and commit for live verification.");
   }
   const repository = parts.join("/");
-  const checks = request(["--hostname", hostname, `repos/${repository}/commits/${remoteHead}/check-runs?per_page=100`], "DIRF could not read live pull-request checks from GitHub.");
-  const runs = Array.isArray(checks.check_runs) ? checks.check_runs : [];
-  if (!runs.length || checks.total_count !== runs.length
-    || runs.some((run) => run.status !== "completed" || run.conclusion !== "success")) {
+  const runs = readAllCheckRuns({ hostname, repository, remoteHead, request });
+  if (!allRequiredCheckRunsPassed({ runs, hostname, repository, remoteHead, request })) {
     throw new Error("DIRF could not verify that all live pull-request checks passed.");
+  }
+  const statuses = readAllCommitStatuses({ hostname, repository, remoteHead, request });
+  if (!allCurrentCommitStatusesPassed(statuses)) {
+    throw new Error("DIRF could not verify that all live pull-request commit statuses passed.");
   }
   const [owner, name] = repository.split("/");
   const query = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved} pageInfo{hasNextPage}}}}}";
@@ -443,6 +446,223 @@ export function liveGithubState(review, remoteHead, request = ghJson) {
     throw new Error("DIRF could not verify that all live pull-request conversations are resolved.");
   }
   return { live_checks_passed: true, live_unresolved_threads: 0 };
+}
+
+function readAllCheckRuns({ hostname, repository, remoteHead, request }) {
+  const runs = [];
+  let expectedTotal = null;
+  let page = 1;
+  while (expectedTotal === null || runs.length < expectedTotal) {
+    const pageQuery = page === 1
+      ? `repos/${repository}/commits/${remoteHead}/check-runs?per_page=${CHECK_RUN_PAGE_SIZE}&filter=all`
+      : `repos/${repository}/commits/${remoteHead}/check-runs?per_page=${CHECK_RUN_PAGE_SIZE}&filter=all&page=${page}`;
+    const checks = request(["--hostname", hostname, pageQuery], "DIRF could not read live pull-request checks from GitHub.");
+    const pageRuns = Array.isArray(checks?.check_runs) ? checks.check_runs : null;
+    if (!Number.isInteger(checks?.total_count) || checks.total_count < 1 || !pageRuns) {
+      throw new Error("DIRF could not verify that all live pull-request checks passed.");
+    }
+    if (expectedTotal === null) expectedTotal = checks.total_count;
+    if (checks.total_count !== expectedTotal || pageRuns.length === 0 || runs.length + pageRuns.length > expectedTotal) {
+      throw new Error("DIRF could not verify that all live pull-request checks passed.");
+    }
+    runs.push(...pageRuns);
+    page += 1;
+  }
+  if (runs.length !== expectedTotal) {
+    throw new Error("DIRF could not verify that all live pull-request checks passed.");
+  }
+  const ids = runs.map((run) => run?.id);
+  if (ids.some((id) => !Number.isSafeInteger(id) || id < 1) || new Set(ids).size !== ids.length) {
+    throw new Error("DIRF could not verify that all live pull-request checks passed.");
+  }
+  return runs;
+}
+
+function readAllCommitStatuses({ hostname, repository, remoteHead, request }) {
+  const statuses = [];
+  const ids = new Set();
+  let page = 1;
+  while (true) {
+    const pageQuery = page === 1
+      ? `repos/${repository}/commits/${remoteHead}/statuses?per_page=${CHECK_RUN_PAGE_SIZE}`
+      : `repos/${repository}/commits/${remoteHead}/statuses?per_page=${CHECK_RUN_PAGE_SIZE}&page=${page}`;
+    const pageStatuses = request(
+      ["--hostname", hostname, pageQuery],
+      "DIRF could not read live pull-request commit statuses from GitHub.",
+    );
+    if (!Array.isArray(pageStatuses) || pageStatuses.length > CHECK_RUN_PAGE_SIZE) {
+      throw new Error("DIRF could not verify that all live pull-request commit statuses passed.");
+    }
+    for (const status of pageStatuses) {
+      if (!Number.isSafeInteger(status?.id) || status.id < 1 || ids.has(status.id)) {
+        throw new Error("DIRF could not verify that all live pull-request commit statuses passed.");
+      }
+      ids.add(status.id);
+      statuses.push(status);
+    }
+    if (pageStatuses.length < CHECK_RUN_PAGE_SIZE) return statuses;
+    page += 1;
+  }
+}
+
+function allCurrentCommitStatusesPassed(statuses) {
+  const latestByContext = new Map();
+  for (const status of statuses) {
+    if (
+      typeof status?.context !== "string"
+      || !status.context.trim()
+      || typeof status.state !== "string"
+      || !Number.isFinite(Date.parse(status.created_at))
+    ) return false;
+    const previous = latestByContext.get(status.context);
+    if (!previous) latestByContext.set(status.context, status);
+    else {
+      const newer = isNewer(status, previous, "created_at");
+      if (newer === null) return false;
+      if (newer) latestByContext.set(status.context, status);
+    }
+  }
+  return [...latestByContext.values()].every((status) => status.state === "success");
+}
+
+function checkRunAppIdentity(run) {
+  const app = run?.app;
+  if (!Number.isSafeInteger(app?.id) || app.id < 1 || typeof app.slug !== "string" || !app.slug.trim()) return null;
+  return `${app.id}\u0000${app.slug.toLowerCase()}`;
+}
+
+function isNewer(candidate, current, timestamp) {
+  const candidateCreated = Date.parse(candidate?.[timestamp]);
+  const currentCreated = Date.parse(current?.[timestamp]);
+  if (!Number.isFinite(candidateCreated) || !Number.isFinite(currentCreated)) return null;
+  if (candidateCreated !== currentCreated) return candidateCreated > currentCreated;
+  if (!Number.isSafeInteger(candidate?.id) || !Number.isSafeInteger(current?.id)) return null;
+  return candidate.id > current.id;
+}
+
+function isOptionalSkippedCheck(run) {
+  if (run.status !== "completed" || run.conclusion !== "skipped") return false;
+  return run.app?.id === 807020
+    && run.app?.slug === "blacksmith-sh"
+    && run.name === "[code]smith";
+}
+
+function githubActionsRunId(run, hostname) {
+  if (run?.app?.slug !== "github-actions" || typeof run.details_url !== "string") return null;
+  try {
+    const details = new URL(run.details_url);
+    const match = details.pathname.match(/\/actions\/runs\/(\d+)\/job\/\d+\/?$/);
+    const id = Number(match?.[1]);
+    if (details.hostname.toLowerCase() !== hostname.toLowerCase() || !Number.isSafeInteger(id) || id < 1) return null;
+    return id;
+  } catch {
+    return null;
+  }
+}
+
+function readWorkflowExecution({ runId, suiteId, hostname, repository, remoteHead, request }) {
+  const workflow = request(
+    ["--hostname", hostname, `repos/${repository}/actions/runs/${runId}`],
+    "DIRF could not read live workflow-run evidence from GitHub.",
+  );
+  if (
+    workflow?.id !== runId
+    || workflow?.check_suite_id !== suiteId
+    || !Number.isSafeInteger(workflow?.workflow_id)
+    || workflow.workflow_id < 1
+    || !Number.isSafeInteger(workflow?.run_number)
+    || workflow.run_number < 1
+    || !Number.isSafeInteger(workflow?.run_attempt)
+    || workflow.run_attempt < 1
+    || typeof workflow?.status !== "string"
+    || (workflow.conclusion !== null && typeof workflow.conclusion !== "string")
+    || typeof workflow?.created_at !== "string"
+    || !Number.isFinite(Date.parse(workflow.created_at))
+    || String(workflow?.head_sha || "").toLowerCase() !== remoteHead.toLowerCase()
+  ) return null;
+  return workflow;
+}
+
+function latestWorkflowChecks({ runs, hostname, repository, remoteHead, request }) {
+  const executions = new Map();
+  for (const run of runs) {
+    if (run?.app?.slug !== "github-actions") continue;
+    const appIdentity = checkRunAppIdentity(run);
+    const runId = githubActionsRunId(run, hostname);
+    const suiteId = run?.check_suite?.id;
+    if (
+      !appIdentity
+      || !runId
+      || !Number.isSafeInteger(suiteId)
+      || suiteId < 1
+      || typeof run.name !== "string"
+      || !run.name.trim()
+    ) return null;
+    const existing = executions.get(runId);
+    if (existing && existing.suiteId !== suiteId) return null;
+    if (existing) {
+      existing.checks.push(run);
+      continue;
+    }
+    const workflow = readWorkflowExecution({ runId, suiteId, hostname, repository, remoteHead, request });
+    if (!workflow) return null;
+    executions.set(runId, { appIdentity, suiteId, workflow, checks: [run] });
+  }
+
+  const latestByWorkflow = new Map();
+  for (const execution of executions.values()) {
+    const identity = `${execution.appIdentity}\u0000${execution.workflow.workflow_id}`;
+    const previous = latestByWorkflow.get(identity);
+    if (!previous) {
+      latestByWorkflow.set(identity, execution);
+      continue;
+    }
+    const newer = isNewer(execution.workflow, previous.workflow, "created_at");
+    if (newer === null) return null;
+    if (newer) latestByWorkflow.set(identity, execution);
+  }
+  return [...latestByWorkflow.values()];
+}
+
+function latestExternalChecks(runs) {
+  const latestByIdentity = new Map();
+  for (const run of runs) {
+    if (run?.app?.slug === "github-actions") continue;
+    const appIdentity = checkRunAppIdentity(run);
+    if (
+      !appIdentity
+      || typeof run.name !== "string"
+      || !run.name.trim()
+      || !Number.isFinite(Date.parse(run.started_at))
+    ) return null;
+    const identity = `${appIdentity}\u0000${run.name}`;
+    const previous = latestByIdentity.get(identity);
+    if (!previous) latestByIdentity.set(identity, run);
+    else {
+      const newer = isNewer(run, previous, "started_at");
+      if (newer === null) return null;
+      if (newer) latestByIdentity.set(identity, run);
+    }
+  }
+  return [...latestByIdentity.values()];
+}
+
+function allRequiredCheckRunsPassed({ runs, hostname, repository, remoteHead, request }) {
+  const workflowExecutions = latestWorkflowChecks({ runs, hostname, repository, remoteHead, request });
+  const externalChecks = latestExternalChecks(runs);
+  if (!workflowExecutions || !externalChecks) return false;
+  const requiredChecks = [...externalChecks];
+  for (const execution of workflowExecutions) {
+    if (execution.workflow.status !== "completed" || execution.workflow.conclusion !== "success") return false;
+    requiredChecks.push(...execution.checks);
+  }
+  let requiredSuccesses = 0;
+  for (const run of requiredChecks) {
+    if (isOptionalSkippedCheck(run)) continue;
+    if (run.status !== "completed" || run.conclusion !== "success") return false;
+    requiredSuccesses += 1;
+  }
+  return requiredSuccesses > 0;
 }
 
 function gitRun(args) {
