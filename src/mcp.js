@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // DIRF MCP server — optional stdio JSON-RPC surface over src/state.js.
-// Pure Node built-ins (no SDK). Speaks MCP initialize / notifications.initialized
-// / tools/list / tools/call. Every tool is a thin call into state.js.
+// Pure Node built-ins (no SDK). Modern per-request metadata and legacy
+// initialization share the same tools and state core.
 
 import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
@@ -12,6 +12,9 @@ import {
 import { resolve } from "node:path";
 
 const PROTOCOL_VERSION = "2024-11-05";
+const MODERN_VERSION = "2026-07-28";
+const VERSION_KEY = "io.modelcontextprotocol/protocolVersion";
+const CAPABILITIES_KEY = "io.modelcontextprotocol/clientCapabilities";
 const PACKAGE_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 const SERVER_INFO = { name: "dirf", version: PACKAGE_VERSION };
 
@@ -108,31 +111,113 @@ function callTool(name, args) {
 function respond(id, result) {
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
 }
-function respondError(id, code, message) {
-  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }) + "\n");
+function respondError(id, code, message, data) {
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message, ...(data ? { data } : {}) } }) + "\n");
+}
+
+const object = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const modernResult = (result) => ({ ...result, resultType: "complete", _meta: { "io.modelcontextprotocol/serverInfo": SERVER_INFO } });
+// No shared cache: a local process may serve unrelated projects and callers.
+const cache = { ttlMs: 0, cacheScope: "private" };
+
+// Validate the small, fixed vocabulary used by DIRF's own input schemas.
+// This is not a general-purpose JSON Schema evaluator or external schema loader.
+function validateArguments(tool, args) {
+  for (const key of tool.inputSchema.required || []) {
+    if (!Object.hasOwn(args, key)) throw new Error(`Missing required argument: ${key}`);
+  }
+  for (const [key, schema] of Object.entries(tool.inputSchema.properties)) {
+    if (!Object.hasOwn(args, key)) continue;
+    if (schema.type === "string" && typeof args[key] !== "string") throw new Error(`${key} must be a string`);
+    if (schema.type === "array" && (!Array.isArray(args[key]) || args[key].some(item => typeof item !== "string"))) {
+      throw new Error(`${key} must be an array of strings`);
+    }
+  }
 }
 
 const rl = createInterface({ input: process.stdin });
 rl.on("line", (line) => {
   let msg;
-  try { msg = JSON.parse(line); } catch { return; } // ignore malformed lines
-  if (msg.method === "initialize") {
-    respond(msg.id, { protocolVersion: PROTOCOL_VERSION, capabilities: { tools: {} }, serverInfo: SERVER_INFO });
+  try { msg = JSON.parse(line); } catch {
+    respondError(null, -32700, "Parse error");
     return;
   }
-  if (msg.method === "notifications/initialized") return; // notification — no response
+  const validId = object(msg) && (typeof msg.id === "string" || Number.isSafeInteger(msg.id));
+  if (!object(msg) || msg.jsonrpc !== "2.0" || typeof msg.method !== "string" ||
+      (Object.hasOwn(msg, "id") && !validId)) {
+    respondError(validId ? msg.id : null, -32600, "Invalid request");
+    return;
+  }
+  // Notifications have no response, and cannot invoke state-changing tools.
+  // Operations are synchronous, so cancellation cannot interrupt an in-flight call.
+  if (!Object.hasOwn(msg, "id")) return;
+  if (msg.params !== undefined && !object(msg.params)) {
+    respondError(msg.id, -32602, "params must be an object");
+    return;
+  }
+  const params = msg.params || {};
+  if (params._meta !== undefined && !object(params._meta)) {
+    respondError(msg.id, -32602, "_meta must be an object");
+    return;
+  }
+  const meta = params._meta || {};
+  const modern = Object.hasOwn(meta, VERSION_KEY);
+  if (modern && typeof meta[VERSION_KEY] !== "string") {
+    respondError(msg.id, -32602, "Protocol version must be a string");
+    return;
+  }
+  if (modern && meta[VERSION_KEY] !== MODERN_VERSION) {
+    respondError(msg.id, -32022, "Unsupported protocol version", { supported: [MODERN_VERSION], requested: meta[VERSION_KEY] });
+    return;
+  }
+  if ((modern && !object(meta[CAPABILITIES_KEY])) ||
+      (!modern && (Object.hasOwn(meta, CAPABILITIES_KEY) || msg.method === "server/discover"))) {
+    respondError(msg.id, -32602, "Modern requests require protocolVersion and clientCapabilities in _meta");
+    return;
+  }
+  const info = meta["io.modelcontextprotocol/clientInfo"];
+  if (modern && info !== undefined && (!object(info) || typeof info.name !== "string" || typeof info.version !== "string")) {
+    respondError(msg.id, -32602, "clientInfo must include name and version strings");
+    return;
+  }
+  const reply = (result) => respond(msg.id, modern ? modernResult(result) : result);
+  if (msg.method === "initialize" && !modern) {
+    if (typeof params.protocolVersion !== "string" || !object(params.capabilities) ||
+        !object(params.clientInfo) || typeof params.clientInfo.name !== "string" || typeof params.clientInfo.version !== "string") {
+      respondError(msg.id, -32602, "Invalid initialize parameters");
+      return;
+    }
+    // A legacy client may accept this supported version or disconnect.
+    reply({ protocolVersion: PROTOCOL_VERSION, capabilities: { tools: {} }, serverInfo: SERVER_INFO });
+    return;
+  }
+  if (msg.method === "server/discover") {
+    reply({ supportedVersions: [MODERN_VERSION, PROTOCOL_VERSION], capabilities: { tools: {} }, ...cache });
+    return;
+  }
+  if (msg.method === "ping" && !modern) { reply({}); return; }
   if (msg.method === "tools/list") {
-    respond(msg.id, { tools: TOOLS });
+    if (params.cursor !== undefined) { respondError(msg.id, -32602, "Invalid cursor: this tool list fits on one page"); return; }
+    reply({ tools: TOOLS, ...(modern ? cache : {}) });
     return;
   }
   if (msg.method === "tools/call") {
+    const tool = TOOLS.find(tool => tool.name === params.name);
+    if (!tool || (params.arguments !== undefined && !object(params.arguments))) {
+      respondError(msg.id, -32602, "Unknown tool or invalid tools/call parameters");
+      return;
+    }
     try {
-      const result = callTool(msg.params.name, msg.params.arguments || {});
-      respond(msg.id, { content: [{ type: "text", text: JSON.stringify(result) }] });
+      const args = params.arguments || {};
+      validateArguments(tool, args);
+      const result = callTool(params.name, args);
+      reply({ content: [{ type: "text", text: JSON.stringify(result) }],
+        ...(modern ? { structuredContent: result, isError: result.recorded === false } : {}) });
     } catch (e) {
-      respondError(msg.id, -32603, e.message);
+      if (modern) reply({ content: [{ type: "text", text: e.message }], isError: true });
+      else respondError(msg.id, -32603, e.message);
     }
     return;
   }
-  if (msg.id) respondError(msg.id, -32601, `method not found: ${msg.method}`);
+  respondError(msg.id, -32601, `method not found: ${msg.method}`);
 });
