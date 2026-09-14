@@ -54,6 +54,9 @@ After `dirf_record_progress`, inspect `recorded`, `accepted`,
 it does not mean the checkpoint became current. A rejected stale or
 unverifiable revision must be reconciled with the current assignment before
 continuing. Progress records do not create approval or decision-gate records.
+Once an attempt has a work identity, checkpoints must retain that identity.
+An explicitly empty identity or a different identity is rejected without
+changing the handoffs, lifecycle, or progress sequence.
 
 ## Session startup and progress
 

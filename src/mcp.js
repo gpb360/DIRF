@@ -69,7 +69,7 @@ function callTool(name, args) {
         next: args.nextAction,
         files: args.changedFiles || [],
         attemptId: args.attempt || null,
-        workItem: args.workItem || null,
+        workItem: args.workItem ?? null,
         reviewRevision: args.reviewRevision || null,
       });
       return {

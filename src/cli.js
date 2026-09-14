@@ -1144,7 +1144,8 @@ function cmdStateActive(args) {
     else console.log("DIRF idle: this checkout is not configured. Run dirf setup before routing new work.");
     return;
   }
-  const responsibility = attemptResponsibility(project.slug, checkout);
+  const projectAttempts = listAttemptsState(project.slug);
+  const responsibility = attemptResponsibility(project.slug, checkout, { attempts: projectAttempts });
   const execution = responsibility.attempt ? currentExecutionFromEnv(process.env) : null;
   if (execution?.authorityToken) observeAttempt(project.slug, responsibility.attempt.id, { ...execution, worktreePath: checkout });
   const attempts = responsibility.attempts.map((attempt) => ({
@@ -1154,7 +1155,11 @@ function cmdStateActive(args) {
     responsibility_path: attempt.responsibility_path,
   }));
   const activeContext = responsibility.attempt
-    ? attemptContextState(project.slug, responsibility.attempt.id, { bounded: true })
+    ? attemptContextState(project.slug, responsibility.attempt.id, {
+      bounded: true,
+      attempts: projectAttempts,
+      attempt: responsibility.attempt,
+    })
     : null;
   const active = responsibility.attempt ? {
     ...attempts[0],
@@ -1581,7 +1586,7 @@ function cmdRecordProgress(args) {
       next: args.next || "Continue work",
       files: args.files ? args.files.split(",") : [],
       attemptId: args.attempt || null,
-      workItem: args.workItem || null,
+      workItem: args.workItem ?? null,
       reviewRevision: args.reviewRevision || null,
     };
 

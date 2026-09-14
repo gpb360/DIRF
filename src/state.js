@@ -308,14 +308,17 @@ export function listAttempts(slug) {
   });
 }
 
-export function getAttempt(slug, idOrName) {
-  const attempts = listAttempts(slug);
+function getAttemptFromList(slug, attempts, idOrName) {
   const exact = attempts.find((a) => a.id === idOrName);
   if (exact) return exact;
   const wanted = slugifyName(idOrName);
   const matches = attempts.filter((a) => slugifyName(a.name) === wanted);
   if (!matches.length) throw new Error(`No DIRF attempt named ${JSON.stringify(idOrName)} for project ${slug}`);
   return matches.at(-1);
+}
+
+export function getAttempt(slug, idOrName) {
+  return getAttemptFromList(slug, listAttempts(slug), idOrName);
 }
 
 function attemptMetadataPath(slug, id) {
@@ -796,24 +799,25 @@ function graphContainsAncestor(graph, ancestor, descendant) {
 // same pull request. Keep the old handoff for audit history, but do not present
 // its old next step as safe current guidance.
 export function attemptContextState(slug, idOrName, options = {}) {
-  const attempt = getAttempt(slug, idOrName);
+  const attempts = options.attempts || listAttempts(slug);
+  const attempt = options.attempt?.id === idOrName
+    ? options.attempt
+    : getAttemptFromList(slug, attempts, idOrName);
   if (options.bounded) {
     // Keep startup output scoped to the active work item, but inspect other
     // attempt handoffs for that same item. A rejected canonical write can leave
     // newer or unverifiable work only in its attempt handoff; considering the
     // canonical snapshot alone would then expose stale next-step guidance.
-    const { entries: allAttemptEntries, repositoryPath } = attemptContextEntries(slug);
-    const entry = allAttemptEntries.find((candidate) => candidate.id === attempt.id);
-    const entries = allAttemptEntries.filter((candidate) => candidate.id === attempt.id
-      || [...entry.references].some((reference) => candidate.references.has(reference)));
+    const entry = attemptContextEntry(slug, attempt);
+    const repositoryPath = repositoryPathForAttempts(slug, attempts);
+    const entries = [entry];
     const canonicalPath = join(storeProjectDir(slug), "HANDOFF.md");
     const canonical = readHandoff(slug) || "";
     const canonicalParsed = parseCurrentHandoff(canonical);
-    if (canonicalParsed.attemptId
-      && canonicalParsed.attemptId !== attempt.id) {
+    if (canonicalParsed.attemptId) {
       entries.push({
         id: canonicalParsed.attemptId,
-        handoffPath: join(storeAttemptDir(slug, canonicalParsed.attemptId), "HANDOFF.md"),
+        handoffPath: canonicalPath,
         nextAction: handoffNextAction(canonical),
         references: handoffWorkReferences(canonical),
         updatedAt: handoffUpdatedAt(canonical, canonicalPath, canonicalParsed),
@@ -821,9 +825,13 @@ export function attemptContextState(slug, idOrName, options = {}) {
         reviewRevision: canonicalParsed.reviewRevision,
       });
     }
+    if (entry.references.size === 0) return contextForAttempt(entry, entries, repositoryPath);
+    const { entries: allAttemptEntries } = attemptContextEntries(slug, attempts, entry);
+    entries.unshift(...allAttemptEntries.filter((candidate) => candidate !== entry
+      && [...entry.references].some((reference) => candidate.references.has(reference))));
     return contextForAttempt(entry, entries, repositoryPath);
   }
-  const { entries, repositoryPath } = attemptContextEntries(slug);
+  const { entries, repositoryPath } = attemptContextEntries(slug, attempts);
   const entry = entries.find((candidate) => candidate.id === attempt.id);
   return contextForAttempt(entry, entries, repositoryPath);
 }
@@ -837,8 +845,9 @@ function checkpointIsNewer(current, candidate) {
 
 function contextForAttempt(entry, entries, repositoryPath, relationFor = revisionRelation) {
   const newerRelated = entries
-    .filter((candidate) => candidate.id !== entry.id
-      && [...entry.references].some((reference) => candidate.references.has(reference)))
+    .filter((candidate) => candidate !== entry
+      && (candidate.id === entry.id
+        || [...entry.references].some((reference) => candidate.references.has(reference))))
     .map((candidate) => {
       const relation = relationFor(repositoryPath, entry.reviewRevision, candidate.reviewRevision);
       return {
@@ -886,26 +895,33 @@ function contextForAttempt(entry, entries, repositoryPath, relationFor = revisio
 
 // Parse each handoff once so list views do not repeatedly re-read every task.
 // Work identity is checked before any Git ancestry command is run.
-function attemptContextEntries(slug) {
+function attemptContextEntry(slug, attempt) {
+  const handoffPath = join(storeAttemptDir(slug, attempt.id), "HANDOFF.md");
+  const handoff = readAttemptHandoffFile(slug, attempt.id) || "";
+  const parsed = parseCurrentHandoff(handoff);
+  return {
+    id: attempt.id,
+    handoffPath,
+    nextAction: handoffNextAction(handoff),
+    references: handoffWorkReferences(handoff),
+    updatedAt: handoffUpdatedAt(handoff, handoffPath, parsed),
+    updateNumber: parsed.updateNumber,
+    reviewRevision: parsed.reviewRevision,
+  };
+}
+
+function repositoryPathForAttempts(slug, attempts) {
   const project = getProject(slug);
-  const attempts = listAttempts(slug);
-  const entries = attempts.map((attempt) => {
-    const handoffPath = join(storeAttemptDir(slug, attempt.id), "HANDOFF.md");
-    const handoff = readAttemptHandoffFile(slug, attempt.id) || "";
-    const parsed = parseCurrentHandoff(handoff);
-    return {
-      id: attempt.id,
-      handoffPath,
-      nextAction: handoffNextAction(handoff),
-      references: handoffWorkReferences(handoff),
-      updatedAt: handoffUpdatedAt(handoff, handoffPath, parsed),
-      updateNumber: parsed.updateNumber,
-      reviewRevision: parsed.reviewRevision,
-    };
-  });
-  const repositoryPath = attempts.find((attempt) => attempt.responsibility_path)?.responsibility_path
+  return attempts.find((attempt) => attempt.responsibility_path)?.responsibility_path
     || project?.main_path
     || process.cwd();
+}
+
+function attemptContextEntries(slug, attempts = listAttempts(slug), seededEntry = null) {
+  const entries = attempts.map((attempt) => seededEntry?.id === attempt.id
+    ? seededEntry
+    : attemptContextEntry(slug, attempt));
+  const repositoryPath = repositoryPathForAttempts(slug, attempts);
   return { entries, repositoryPath };
 }
 
@@ -970,9 +986,9 @@ export function projectHandoffContextState(slug) {
   const context = contextForAttempt(entry, entries, repositoryPath);
   return { ...context, handoff: context.needs_refresh ? null : handoff };
 }
-export function attemptResponsibility(slug, worktreePath) {
+export function attemptResponsibility(slug, worktreePath, options = {}) {
   const key = normalizeIdentityKey(worktreePath);
-  const attempts = listAttempts(slug).filter((attempt) =>
+  const attempts = (options.attempts || listAttempts(slug)).filter((attempt) =>
     attempt.status === "in_progress" &&
     attempt.responsibility_path &&
     normalizeIdentityKey(attempt.responsibility_path) === key);
@@ -1786,19 +1802,29 @@ function nextProgressUpdateNumber(slug) {
   return next;
 }
 
+function normalizeWorkItemIdentity(value) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+}
+
 function progressAcceptance(slug, handoffBase, { workItem, reviewRevision }) {
   const current = parseCurrentHandoff(handoffBase);
-  const currentHasIdentity = Boolean(current.workItem?.trim());
-  if (currentHasIdentity && !workItem) {
+  const currentWorkItem = normalizeWorkItemIdentity(current.workItem);
+  const proposedWorkItem = normalizeWorkItemIdentity(workItem);
+  if (workItem !== null && workItem !== undefined && !proposedWorkItem) {
+    return { accepted: false, reason: "invalid_work_item" };
+  }
+  if (currentWorkItem && !proposedWorkItem) {
     return { accepted: false, reason: "missing_work_item" };
   }
-  if (currentHasIdentity && !/^[0-9a-f]{40}$/i.test(reviewRevision || "")) {
+  if (currentWorkItem && !/^[0-9a-f]{40}$/i.test(reviewRevision || "")) {
     return { accepted: false, reason: "missing_review_revision" };
   }
-  if (!workItem || !/^[0-9a-f]{40}$/i.test(reviewRevision || "")) {
+  if (!proposedWorkItem || !/^[0-9a-f]{40}$/i.test(reviewRevision || "")) {
     return { accepted: true, reason: null };
   }
-  if (current.workItem?.trim().toLowerCase() !== workItem.trim().toLowerCase()) {
+  if (currentWorkItem !== proposedWorkItem) {
     return { accepted: true, reason: null };
   }
   if (!/^[0-9a-f]{40}$/i.test(current.reviewRevision || "")) {
@@ -1810,6 +1836,21 @@ function progressAcceptance(slug, handoffBase, { workItem, reviewRevision }) {
   if (relation === "conflict") return { accepted: false, reason: "conflicting_review_revision" };
   if (relation === "unknown") return { accepted: false, reason: "unverified_review_revision" };
   return { accepted: true, reason: null };
+}
+
+function attemptProgressAcceptance(slug, handoffBase, update, establishedWorkItem) {
+  const expectedWorkItem = normalizeWorkItemIdentity(establishedWorkItem);
+  const proposedWorkItem = normalizeWorkItemIdentity(update.workItem);
+  if (update.workItem !== null && update.workItem !== undefined && !proposedWorkItem) {
+    return { accepted: false, reason: "invalid_work_item" };
+  }
+  if (expectedWorkItem && !proposedWorkItem) {
+    return { accepted: false, reason: "missing_work_item" };
+  }
+  if (expectedWorkItem && proposedWorkItem !== expectedWorkItem) {
+    return { accepted: false, reason: "work_item_mismatch" };
+  }
+  return progressAcceptance(slug, handoffBase, update);
 }
 
 // Record one progress checkpoint through the canonical core so CLI and MCP
@@ -1831,13 +1872,15 @@ export function recordProgress(slug, { message, timestamp, phase, next, files, a
       phase: phase || null,
       next,
       files: files || [],
-      workItem: workItem || recordedAttemptContext.workItem || null,
+      workItem: workItem ?? recordedAttemptContext.workItem ?? null,
       reviewRevision: reviewRevision || recordedAttemptContext.reviewRevision || null,
       attemptId: attempt?.id || null,
     };
     const attemptBase = attempt ? attemptHandoff || canonicalBase : null;
     const canonicalDecision = progressAcceptance(slug, canonicalBase, draftUpdate);
-    const attemptDecision = attempt ? progressAcceptance(slug, attemptBase, draftUpdate) : null;
+    const attemptDecision = attempt
+      ? attemptProgressAcceptance(slug, attemptBase, draftUpdate, recordedAttemptContext.workItem)
+      : null;
     // An explicit attempt is the assignment authority for its checkpoint. If
     // that scoped handoff rejects a delayed revision, do not let an unrelated
     // canonical work item accidentally publish the rejected attempt data.

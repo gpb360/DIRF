@@ -220,13 +220,13 @@ test("dirf_record_progress distinguishes scoped recording from canonical accepta
   const newer = JSON.parse(cli("build", "newer-review", "newer review", "--path", dir, "--json"));
   const child = startServer(home);
   let requestId = 1;
-  const callProgress = async (attempt, message, reviewRevision) => {
+  const callProgress = async (attempt, message, reviewRevision, workItem = "pr:77") => {
     requestId += 1;
     send(child, {
       jsonrpc: "2.0", id: requestId, method: "tools/call",
       params: { name: "dirf_record_progress", arguments: {
         project: dir, attempt, message, nextAction: `Next after ${message}`,
-        workItem: "pr:77", reviewRevision,
+        workItem, reviewRevision,
       } },
     });
     const response = await once(child);
@@ -268,6 +268,27 @@ test("dirf_record_progress distinguishes scoped recording from canonical accepta
       metadata: readFileSync(attemptMetadataPath, "utf8"),
       sequence: readFileSync(sequencePath, "utf8"),
     };
+
+    const rebound = await callProgress(older.attempt.id, "try delayed revision A under another work item", revisionA, "pr:88");
+    assert.deepEqual(
+      { ok: rebound.ok, recorded: rebound.recorded, accepted: rebound.accepted, attemptAccepted: rebound.attempt_accepted, reason: rebound.reason },
+      { ok: true, recorded: false, accepted: false, attemptAccepted: false, reason: "work_item_mismatch" },
+    );
+    const blankIdentity = await callProgress(older.attempt.id, "try delayed revision A under a blank work item", revisionA, "   ");
+    assert.deepEqual(
+      { ok: blankIdentity.ok, recorded: blankIdentity.recorded, accepted: blankIdentity.accepted, attemptAccepted: blankIdentity.attempt_accepted, reason: blankIdentity.reason },
+      { ok: true, recorded: false, accepted: false, attemptAccepted: false, reason: "invalid_work_item" },
+    );
+    const emptyIdentity = await callProgress(older.attempt.id, "try current revision B under an empty work item", revisionB, "");
+    assert.deepEqual(
+      { ok: emptyIdentity.ok, recorded: emptyIdentity.recorded, accepted: emptyIdentity.accepted, attemptAccepted: emptyIdentity.attempt_accepted, reason: emptyIdentity.reason },
+      { ok: true, recorded: false, accepted: false, attemptAccepted: false, reason: "invalid_work_item" },
+    );
+    const normalizedStale = await callProgress(older.attempt.id, "try delayed revision A with normalized identity", revisionA, " PR:77 ");
+    assert.deepEqual(
+      { ok: normalizedStale.ok, recorded: normalizedStale.recorded, accepted: normalizedStale.accepted, attemptAccepted: normalizedStale.attempt_accepted, reason: normalizedStale.reason },
+      { ok: true, recorded: false, accepted: false, attemptAccepted: false, reason: "stale_review_revision" },
+    );
 
     const stale = await callProgress(older.attempt.id, "try delayed revision A against unrelated canonical work", revisionA);
     assert.deepEqual(
