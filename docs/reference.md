@@ -475,7 +475,8 @@ no SDK:
 
 Tools: `dirf_resolve_project`, `dirf_list_projects`, `dirf_read_handoff`,
 `dirf_write_handoff`, `dirf_record_progress`, `dirf_list_attempts`, and
-`dirf_get_attempt`. Every tool is a thin call into the same `src/state.js` core
+`dirf_get_attempt`, and `dirf_read_assignment`. The latter requires an exact
+attempt ID and returns its workflow and handoff. Every tool is a thin call into the same `src/state.js` core
 as the CLI. Each surface formats its response for its caller; MCP currently exposes a subset of CLI operations.
 
 ## Conventions

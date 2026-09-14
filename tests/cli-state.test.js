@@ -14,6 +14,16 @@ function run(args, env, cwd) {
   });
 }
 
+function runRejectedProgress(args, env, cwd, reason) {
+  const result = spawnSync(process.execPath, [CLI, ...args], {
+    cwd, encoding: "utf8", timeout: TIMEOUT, env: { ...process.env, ...env },
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /recorded for the attempt only; canonical handoff unchanged/i);
+  assert.match(result.stderr, new RegExp(reason));
+  return result;
+}
+
 function runAsync(args, env, cwd) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [CLI, ...args], {
@@ -238,12 +248,14 @@ test("dirf state active keeps DIRF available and reuses the attempt claimed by t
   assert.equal(staleDetail.next_action, null, "all state views must suppress the stale next step");
   assert.doesNotMatch(JSON.stringify(staleDetail), /Ask to merge PR 21/, "attempt detail must not leak the stale merge instruction");
 
-  run([
+  runRejectedProgress([
     "record-progress", "The old review recorded a later unrelated checkpoint", "--attempt", first.id,
     "--path", main, "--next", "Ask to merge PR 21",
     "--work-item", "pr:21", "--review-revision", revisionA,
     "--timestamp", "2026-09-02T01:10:00.000Z",
-  ], { DIRF_HOME: home }, main);
+  ], { DIRF_HOME: home }, main, "stale_review_revision");
+  const firstAttemptHandoff = join(home, "projects", active.project, "attempts", first.id, "HANDOFF.md");
+  assert.match(readFileSync(firstAttemptHandoff, "utf8"), /The old review recorded a later unrelated checkpoint/);
   const stillStale = JSON.parse(run(["state", "active", "--path", main, "--json"], { DIRF_HOME: home }, main));
   assert.equal(stillStale.attempt.next_action, null, "an older reviewed commit cannot become current by writing a later checkpoint");
 
@@ -412,10 +424,10 @@ test("an older reviewed commit cannot replace or leak through canonical guidance
     "record-progress", "Reviewed commit B and found a problem", "--attempt", currentReview.id, "--path", main,
     "--next", "Fix PR 21", "--work-item", "pr:21", "--review-revision", revisionB,
   ], { DIRF_HOME: home }, main);
-  run([
+  runRejectedProgress([
     "record-progress", "Old task wrote another checkpoint", "--attempt", oldReview.id, "--path", main,
     "--next", "Ask to merge PR 21",
-  ], { DIRF_HOME: home }, main);
+  ], { DIRF_HOME: home }, main, "stale_review_revision");
 
   const canonical = run(["state", "read-handoff", "--path", main], { DIRF_HOME: home }, main);
   assert.match(canonical, /Fix PR 21/);
@@ -451,10 +463,10 @@ test("divergent reviewed commits are called conflicting instead of newer", () =>
     "record-progress", "Reviewed sibling A", "--attempt", reviewA.id, "--path", main,
     "--next", "Continue PR 21 from A", "--work-item", "pr:21", "--review-revision", revisionA,
   ], { DIRF_HOME: home }, main);
-  run([
+  runRejectedProgress([
     "record-progress", "Reviewed sibling B", "--attempt", reviewB.id, "--path", main,
     "--next", "Continue PR 21 from B", "--work-item", "pr:21", "--review-revision", revisionB,
-  ], { DIRF_HOME: home }, main);
+  ], { DIRF_HOME: home }, main, "conflicting_review_revision");
 
   for (const [current, other] of [[reviewA, reviewB], [reviewB, reviewA]]) {
     const result = spawnSync(process.execPath, [CLI, "resume", current.id, "--path", main], {
@@ -482,10 +494,10 @@ test("unavailable reviewed commits are called unverified instead of conflicting"
     "record-progress", "Recorded unavailable A", "--attempt", reviewA.id, "--path", main,
     "--next", "Continue PR 21 from A", "--work-item", "pr:21", "--review-revision", "a".repeat(40),
   ], { DIRF_HOME: home }, main);
-  run([
+  runRejectedProgress([
     "record-progress", "Recorded unavailable B", "--attempt", reviewB.id, "--path", main,
     "--next", "Continue PR 21 from B", "--work-item", "pr:21", "--review-revision", "b".repeat(40),
-  ], { DIRF_HOME: home }, main);
+  ], { DIRF_HOME: home }, main, "unverified_review_revision");
 
   const detail = JSON.parse(run(["state", "get-attempt", reviewA.id, "--path", main, "--json"], { DIRF_HOME: home }, main));
   assert.equal(detail.related_task_relation, "unknown");
@@ -499,6 +511,49 @@ test("unavailable reviewed commits are called unverified instead of conflicting"
   const hook = JSON.parse(run(["state", "active", "--path", main, "--hook"], { DIRF_HOME: home }, main));
   assert.match(hook.hookSpecificOutput.additionalContext, /cannot tell which task matches the current PR version/i);
   assert.doesNotMatch(hook.hookSpecificOutput.additionalContext, /conflicting reviewed commit/i);
+});
+
+test("bounded active state keeps a newer canonical checkpoint when its attempt handoff is older", () => {
+  const home = freshHome();
+  const main = mkdtempSync(join(tmpdir(), "bounded-canonical-"));
+  execFileSync("git", ["init", "-q"], { cwd: main, timeout: TIMEOUT });
+  execFileSync("git", ["config", "user.email", "dirf@example.invalid"], { cwd: main, timeout: TIMEOUT });
+  execFileSync("git", ["config", "user.name", "DIRF Test"], { cwd: main, timeout: TIMEOUT });
+  writeFileSync(join(main, "review.txt"), "A\n");
+  execFileSync("git", ["add", "review.txt"], { cwd: main, timeout: TIMEOUT });
+  execFileSync("git", ["commit", "-qm", "A"], { cwd: main, timeout: TIMEOUT });
+  const revisionA = execFileSync("git", ["rev-parse", "HEAD"], { cwd: main, encoding: "utf8", timeout: TIMEOUT }).trim();
+  writeFileSync(join(main, "review.txt"), "B\n");
+  execFileSync("git", ["commit", "-qam", "B"], { cwd: main, timeout: TIMEOUT });
+  const revisionB = execFileSync("git", ["rev-parse", "HEAD"], { cwd: main, encoding: "utf8", timeout: TIMEOUT }).trim();
+
+  run(["setup", main], { DIRF_HOME: home }, main);
+  const activeAttempt = JSON.parse(run(["build", "active-a", "review PR 21 at A", "--path", main, "--json"], { DIRF_HOME: home }, main)).attempt;
+  run(["resume", activeAttempt.id, "--path", main], { DIRF_HOME: home }, main);
+  const relatedAttempt = JSON.parse(run(["build", "related-b", "review PR 21 at B", "--path", main, "--json"], { DIRF_HOME: home }, main)).attempt;
+  run([
+    "record-progress", "Stored related attempt at A", "--attempt", relatedAttempt.id, "--path", main,
+    "--next", "Continue related A", "--work-item", "pr:21", "--review-revision", revisionA,
+  ], { DIRF_HOME: home }, main);
+  run([
+    "record-progress", "Stored active attempt at A", "--attempt", activeAttempt.id, "--path", main,
+    "--next", "Continue active A", "--work-item", "pr:21", "--review-revision", revisionA,
+  ], { DIRF_HOME: home }, main);
+
+  const canonical = [
+    "# DIRF Handoff", "", "## Work item", "", "pr:21", "", "## Review revision", "", revisionB, "",
+    "## Attempt ID", "", relatedAttempt.id, "", "## Update number", "", "3", "",
+    "## Exact next action", "", "Fix the current B review", "",
+  ].join("\n");
+  const canonicalFile = join(main, "canonical-b.md");
+  writeFileSync(canonicalFile, canonical);
+  run(["state", "write-handoff", "--file", canonicalFile, "--path", main], { DIRF_HOME: home }, main);
+
+  const active = JSON.parse(run(["state", "active", "--path", main, "--json"], { DIRF_HOME: home }, main));
+  assert.equal(active.attempt.needs_refresh, true);
+  assert.equal(active.attempt.next_action, null);
+  assert.equal(active.attempt.related_task_relation, "candidate_newer");
+  assert.equal(active.attempt.related_attempt_id, relatedAttempt.id);
 });
 
 test("an unavailable revision in one PR does not poison another PR list projection", () => {
@@ -525,10 +580,15 @@ test("an unavailable revision in one PR does not poison another PR list projecti
     [missingA, "pr:22", "a".repeat(40), "Reconcile PR 22 A"],
     [missingB, "pr:22", "b".repeat(40), "Reconcile PR 22 B"],
   ]) {
-    run([
+    const args = [
       "record-progress", next, "--attempt", attempt.id, "--path", main,
       "--next", next, "--work-item", workItem, "--review-revision", revision,
-    ], { DIRF_HOME: home }, main);
+    ];
+    if (attempt.id === missingB.id) {
+      runRejectedProgress(args, { DIRF_HOME: home }, main, "unverified_review_revision");
+    } else {
+      run(args, { DIRF_HOME: home }, main);
+    }
   }
 
   const listed = JSON.parse(run(["state", "list-attempts", "--path", main, "--json"], { DIRF_HOME: home }, main));

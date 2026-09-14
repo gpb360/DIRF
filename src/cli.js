@@ -1585,8 +1585,20 @@ function cmdRecordProgress(args) {
       reviewRevision: args.reviewRevision || null,
     };
 
-    const { lifecycle: synced } = recordProgress(project.slug, updateData);
+    const outcome = recordProgress(project.slug, updateData);
+    const synced = outcome.lifecycle;
     if (synced) console.log(`   Lifecycle: ${synced.status}${synced.current_phase ? ` · phase: ${synced.current_phase}` : ""}`);
+
+    if (!outcome.accepted) {
+      const detail = outcome.reason || "canonical handoff rejected the checkpoint";
+      if (outcome.recorded) {
+        console.error(`Progress recorded for the attempt only; canonical handoff unchanged (${detail}).`);
+      } else {
+        console.error(`Progress not recorded; handoffs and lifecycle unchanged (${detail}).`);
+      }
+      process.exitCode = 1;
+      return;
+    }
 
     console.log("✅ Progress recorded:");
     console.log(`   ${message}`);
