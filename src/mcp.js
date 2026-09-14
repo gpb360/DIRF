@@ -135,17 +135,18 @@ function validateArguments(tool, args) {
   }
 }
 
+let legacyInitialized = false;
 const rl = createInterface({ input: process.stdin });
 rl.on("line", (line) => {
   let msg;
   try { msg = JSON.parse(line); } catch {
-    respondError(null, -32700, "Parse error");
+    respondError(undefined, -32700, "Parse error");
     return;
   }
   const validId = object(msg) && (typeof msg.id === "string" || Number.isSafeInteger(msg.id));
   if (!object(msg) || msg.jsonrpc !== "2.0" || typeof msg.method !== "string" ||
       (Object.hasOwn(msg, "id") && !validId)) {
-    respondError(validId ? msg.id : null, -32600, "Invalid request");
+    respondError(validId ? msg.id : undefined, -32600, "Invalid request");
     return;
   }
   // Notifications have no response, and cannot invoke state-changing tools.
@@ -188,7 +189,12 @@ rl.on("line", (line) => {
       return;
     }
     // A legacy client may accept this supported version or disconnect.
+    legacyInitialized = true;
     reply({ protocolVersion: PROTOCOL_VERSION, capabilities: { tools: {} }, serverInfo: SERVER_INFO });
+    return;
+  }
+  if (!modern && !legacyInitialized) {
+    respondError(msg.id, -32602, "Supply modern request metadata or initialize a legacy session first");
     return;
   }
   if (msg.method === "server/discover") {

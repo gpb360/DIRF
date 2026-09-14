@@ -53,6 +53,21 @@ test('versions and capabilities are validated per request, with no inherited mod
   assert.equal(responses[5].result.resultType,'complete');
 });
 
+test('metadata-free tool calls require an explicit legacy initialization', () => {
+  const results = exchange([
+    {jsonrpc:'2.0',id:1,method:'tools/list'},
+    request(2,'tools/list'),
+    {jsonrpc:'2.0',id:3,method:'tools/list'},
+    {jsonrpc:'2.0',id:4,method:'initialize',params:{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'legacy',version:'1'}}},
+    {jsonrpc:'2.0',id:5,method:'tools/list'},
+  ]);
+  assert.equal(results[0].error.code,-32602);
+  assert.equal(results[1].result.resultType,'complete');
+  assert.equal(results[2].error.code,-32602);
+  assert.equal(results[3].result.protocolVersion,'2024-11-05');
+  assert.ok(results[4].result.tools.length);
+});
+
 test('invalid requests are specific, notifications never execute calls, and zero IDs get errors', () => {
   const results = exchange([
     '{broken', null, [],
@@ -63,6 +78,7 @@ test('invalid requests are specific, notifications never execute calls, and zero
     request(6,'tools/list'),
   ]);
   assert.deepEqual(results.map(r=>r.error?.code ?? 'ok'),[-32700,-32600,-32600,-32601,-32602,-32602,'ok']);
+  for (const response of results.slice(0,3)) assert.equal(Object.hasOwn(response,'id'),false);
   assert.equal(results[3].id,0);
 });
 
@@ -76,6 +92,12 @@ test('modern execution failures use isError; invalid version cannot write state'
     writeFileSync(seed,'# Original checkpoint\n');
     const written = spawnSync(process.execPath,[resolve('src/cli.js'),'state','write-handoff','--file',seed],{cwd:folder,env:{...process.env,DIRF_HOME:home},encoding:'utf8',timeout:30000});
     assert.equal(written.status,0,written.stderr);
+    const uninitialized = exchange([
+      {jsonrpc:'2.0',id:0,method:'tools/call',params:{name:'dirf_write_handoff',arguments:{content:'must not run'}}},
+      request(1,'tools/call',{name:'dirf_read_handoff'}),
+    ],folder,home);
+    assert.equal(uninitialized[0].error.code,-32602);
+    assert.equal(uninitialized[1].result.structuredContent.content,'# Original checkpoint\n');
     const results = exchange([
       request(1,'tools/call',{_meta:metadata('2099-01-01'),name:'dirf_write_handoff',arguments:{content:'overwrite'}}),
       request(2,'tools/call',{name:'dirf_read_handoff'}),

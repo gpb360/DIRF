@@ -64,8 +64,8 @@ use `ttlMs: 0` and `cacheScope: "private"`. Unknown modern versions are rejected
 before tool execution with error `-32022` and supported modern versions.
 
 Legacy clients continue to use `initialize` and `notifications/initialized`;
-the server offers `2024-11-05`. Requests without modern version metadata retain
-legacy behavior. Legacy versions listed by discovery use this handshake, not
+the server offers `2024-11-05`. Requests without modern version metadata require
+this legacy initialization first. Legacy versions listed by discovery use this handshake, not
 modern per-request metadata. Updating a host's MCP command and restarting its
 server process is necessary to use a new checkout; changing files elsewhere
 does not update an already running server.
