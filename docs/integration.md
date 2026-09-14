@@ -36,6 +36,59 @@ replacing the path with the installed DIRF checkout:
 The server uses standard input/output, not a public HTTP listener. The host
 may require a wrapper such as `mcpServers`; consult its configuration format.
 
+### Protocol versions
+
+DIRF supports modern MCP `2026-07-28` requests and legacy `2024-11-05`
+initialization. Modern clients can call `server/discover` before selecting a
+version, or send a tool request directly. Each modern request supplies its own
+metadata; discovery does not establish a session:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "server/discover",
+  "params": {
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": {}
+    }
+  }
+}
+```
+
+Include the same metadata on `tools/list` and `tools/call`. Modern results
+include `resultType: "complete"` and server identity; tool results include
+structured data alongside the existing JSON text. Discovery and tool listings
+use `ttlMs: 0` and `cacheScope: "private"`. Unknown modern versions are rejected
+before tool execution with error `-32022` and supported modern versions.
+
+Legacy clients continue to use `initialize` and `notifications/initialized`;
+the server offers `2024-11-05`. Requests without modern version metadata require
+this legacy initialization first. Legacy versions listed by discovery use this handshake, not
+modern per-request metadata. Updating a host's MCP command and restarting its
+server process is necessary to use a new checkout; changing files elsewhere
+does not update an already running server.
+
+Modern tool execution failures use `isError: true`; malformed requests and
+unknown tools use JSON-RPC errors. A wholly rejected progress checkpoint is a
+tool error with the detailed outcome retained in `structuredContent`. A write
+saved only to the assigned attempt reports that partial outcome in the existing
+fields. Legacy clients retain the earlier response/error shapes.
+
+This adapter exposes tools over stdio only. It does not advertise resources,
+prompts, subscriptions, sampling or elicitation. Its calls run synchronously;
+cancellation cannot interrupt a running state operation. Input validation covers
+DIRF's fixed string and string-array tool schemas, with no external schema
+fetching. Client identity metadata is descriptive, not authentication: host
+access restrictions remain necessary for the project-wide tools below.
+
+Protocol references: [stdio compatibility](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio),
+[discovery](https://modelcontextprotocol.io/specification/2026-07-28/server/discover),
+and [tool results](https://modelcontextprotocol.io/specification/2026-07-28/server/tools).
+
+### State tools
+
 The supported tools resolve projects, list projects and attempts, read and
 write handoffs, record progress, and retrieve one attempt. These tools expose
 a subset of the CLI. Tool calls happen only when the host makes them; adding
