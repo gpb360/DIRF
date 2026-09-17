@@ -18,6 +18,10 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   at least as fresh as the last phase write, and `record-progress` accepts only
   the current phase or its immediate successor. Attempts whose gates lack
   captured verification project as `unaudited`.
+- **Every shipped playbook ends in a user-owned decision gate.** All 23
+  playbooks (and their conditional and non-interview contract variants) now
+  declare a decision gate on their final phase, so no DIRF-governed attempt
+  completes without a recorded human accept.
 
 ## [0.30.0] — 2026-09-12
 
