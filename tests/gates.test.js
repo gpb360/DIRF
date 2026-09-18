@@ -22,6 +22,7 @@ import {
   syncLifecycleFromProgress,
   syncAttemptFromHandoff,
   updateAttemptLifecycle,
+  writeHandoff,
 } from "../src/state.js";
 import { reconcile } from "../src/flow.js";
 import { validateSnapshot } from "../src/validate.js";
@@ -228,14 +229,15 @@ test("completion enforces an implementation-evidence verify gate on the final ph
   assert.throws(
     () => updateAttemptLifecycle(slug, attempt.id, "complete", {
       confirm: true,
-      evidence: { command: "node --test", output: "all pass" },
+      evidence: { command: "node --test", output: "all pass", exit: 0 },
     }),
     /accepted governing artifact.*implementation_evidence/,
   );
   acceptImplementationEvidence(slug, attempt);
+  writeHandoff(slug, "# Handoff\n");
   const done = updateAttemptLifecycle(slug, attempt.id, "complete", {
     confirm: true,
-    evidence: { command: "node --test", output: "all pass" },
+    evidence: { command: "node --test", output: "all pass", exit: 0 },
   });
   assert.equal(done.status, "done");
   assert.equal(attemptGates(slug, attempt.id).find((gate) => gate.phase === "approve").status, "satisfied");
@@ -292,6 +294,7 @@ test("completion enforces a final decision gate and its governing artifact", () 
   assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "complete", { confirm: true }), /accepted governing artifact.*research/);
   recordAttemptArtifact(slug, attempt.id, { id: "research-v1", type: "research", path: "research.md" });
   acceptAttemptArtifact(slug, attempt.id, "research-v1");
+  writeHandoff(slug, "# Handoff\n");
   assert.equal(updateAttemptLifecycle(slug, attempt.id, "complete", { confirm: true }).status, "done");
 });
 
@@ -313,12 +316,20 @@ test("completion records and enforces evidence for a final verify gate", () => {
   updateAttemptLifecycle(slug, attempt.id, "advance");
   assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "complete", { confirm: true }), /verify gate/);
   assert.throws(
-    () => updateAttemptLifecycle(slug, attempt.id, "complete", { confirm: true, evidence: { command: "npm test" } }),
+    () => updateAttemptLifecycle(slug, attempt.id, "complete", { confirm: true, evidence: { command: "npm test", exit: 0 } }),
     /must match its declared verify command/,
   );
+  assert.throws(
+    () => updateAttemptLifecycle(slug, attempt.id, "complete", {
+      confirm: true,
+      evidence: { command: "node --test", output: "all pass", exit: 1 },
+    }),
+    /recorded run exited 1/,
+  );
+  writeHandoff(slug, "# Handoff\n");
   const done = updateAttemptLifecycle(slug, attempt.id, "complete", {
     confirm: true,
-    evidence: { command: "node --test", output: "all pass" },
+    evidence: { command: "node --test", output: "all pass", exit: 0 },
   });
   assert.equal(done.status, "done");
   assert.equal(done.evidence.approve.command, "node --test");
@@ -332,12 +343,35 @@ test("dirf attempt complete accepts final-phase evidence through the CLI", () =>
   });
   cli("attempt", "start", attempt.id, "--path", root);
   cli("attempt", "advance", attempt.id, "--path", root);
+  // Typed evidence can no longer complete a gated attempt: the CLI must run
+  // the check itself, and the canonical handoff must be synced.
+  assert.throws(
+    () => cli("attempt", "complete", attempt.id, "--confirm", "--evidence", "node --test", "--path", root),
+    /no captured verification/,
+  );
+  // --run lets the CLI capture the fact (exit 0); the command must be the
+  // declared verify, and the handoff must be at least as fresh as the last
+  // phase write.
+  assert.throws(
+    () => cli("attempt", "complete", attempt.id, "--confirm", "--run", "node -e \"process.exit(0)\"", "--path", root),
+    /must match its declared verify command/,
+  );
+  assert.throws(
+    () => cli("attempt", "complete", attempt.id, "--confirm", "--run", "node --test", "--path", root),
+    /[Cc]anonical handoff/,
+  );
+  const handoffFile = join(home, "handoff.md");
+  writeFileSync(handoffFile, "# DIRF Handoff\n\n## Status: In progress\n");
+  cli("state", "write-handoff", "--path", root, "--file", handoffFile);
   const done = JSON.parse(cli(
-    "attempt", "complete", attempt.id, "--confirm", "--evidence", "node --test", "--output", "all pass", "--path", root, "--json",
+    "attempt", "complete", attempt.id, "--confirm", "--run", "node --test", "--path", root, "--json",
   ));
   assert.equal(done.status, "done");
   assert.equal(done.evidence.approve.command, "node --test");
+  assert.equal(done.evidence.approve.exit, 0);
+  assert.equal(done.unaudited, false);
 });
+
 
 test("manual advance requires the accepted governing artifact declared by a decision gate", () => {
   const { slug, attempt } = artifactGateFixture();
@@ -588,22 +622,30 @@ test("gate-free attempts advance exactly as before", () => {
   assert.equal(current.gates, undefined);
 });
 
-test("syncLifecycleFromProgress stops at gates instead of crossing them", () => {
+test("syncLifecycleFromProgress enforces adjacency and stops at gates", () => {
   const { slug, attempt } = attemptFixture();
   updateAttemptLifecycle(slug, attempt.id, "start");
-  const synced = syncLifecycleFromProgress(slug, attempt.id, "ship");
-  assert.equal(synced, null);
-  assert.equal(getAttempt(slug, attempt.id).current_phase, "design");
+  // Multi-hop jumps are rejected outright — phases cannot be backfilled.
+  assert.throws(() => syncLifecycleFromProgress(slug, attempt.id, "ship"), /immediate successor/);
+  assert.equal(getAttempt(slug, attempt.id).current_phase, "define");
+  // The adjacent phase is reachable: "define" has no gate.
+  assert.equal(syncLifecycleFromProgress(slug, attempt.id, "design").current_phase, "design");
+  // From "design" (decision gate), the adjacent "build" stays blocked until
+  // the gate is satisfied.
+  assert.throws(() => syncLifecycleFromProgress(slug, attempt.id, "build"), /gate on "design" is unsatisfied/);
+  updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "design", decision: "accept", comment: "ok" });
+  assert.equal(syncLifecycleFromProgress(slug, attempt.id, "build").current_phase, "build");
+  // The current phase itself is always a valid checkpoint target.
+  assert.equal(syncLifecycleFromProgress(slug, attempt.id, "build").current_phase, "build");
 });
 
 test("progress sync uses the artifact-aware gate seam", () => {
   const { slug, attempt } = artifactGateFixture();
   updateAttemptLifecycle(slug, attempt.id, "start");
-  assert.equal(syncLifecycleFromProgress(slug, attempt.id, "build"), null);
-  assert.equal(getAttempt(slug, attempt.id).current_phase, "design");
+  assert.throws(() => syncLifecycleFromProgress(slug, attempt.id, "build"), /immediate successor/);
+  assert.equal(syncLifecycleFromProgress(slug, attempt.id, "design").current_phase, "design");
   updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "design", decision: "accept", comment: "approved" });
-  assert.equal(syncLifecycleFromProgress(slug, attempt.id, "build"), null);
-  assert.equal(getAttempt(slug, attempt.id).current_phase, "design");
+  assert.throws(() => syncLifecycleFromProgress(slug, attempt.id, "build"), /accepted governing artifact/);
   acceptPlan(slug, attempt);
   assert.equal(syncLifecycleFromProgress(slug, attempt.id, "build").current_phase, "build");
 });

@@ -7,6 +7,30 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+### Added
+- **Deterministic gate enforcement.** `dirf attempt advance --run "CMD"` makes
+  the CLI execute the command itself and record the exit code and an output
+  digest; verify gates open on that captured fact, not on typed evidence
+  claims. Playbooks can declare built-in `check` gates (executed inside DIRF,
+  no shell) — the pr-review playbook now gates its review-artifact phase on a
+  `review-json` validation and its final phase on a user-owned decision.
+  Completing a gated attempt additionally requires the canonical handoff to be
+  at least as fresh as the last phase write, and `record-progress` accepts only
+  the current phase or its immediate successor. Attempts whose gates lack
+  captured verification project as `unaudited`.
+- **Every shipped playbook ends in a user-owned decision gate.** All 23
+  playbooks (and their conditional and non-interview contract variants) now
+  declare a decision gate on their final phase, so no DIRF-governed attempt
+  completes without a recorded human accept.
+- **Gate records carry the recorder identity.** Decision gate records now
+  capture `recorded_by` — the agent harness and session that executed the
+  command — kept separate from `by`, the human the decision belongs to.
+  Resolution is explicit-over-detected: `DIRF_HARNESS` / `DIRF_SESSION_ID` /
+  `DIRF_MODEL` win, then known harness env markers, then the same dot-folder
+  scan the skill discovery uses (project and global: `.claude`, `.codex`,
+  `.cursor`, `.zcode`, `.opencode`, `.agents`). `dirf setup` prints what it
+  detected.
+
 ## [0.30.0] — 2026-09-12
 
 ### Added

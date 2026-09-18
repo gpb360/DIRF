@@ -19,13 +19,13 @@
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, dirname, join, isAbsolute, resolve } from "node:path";
 import { homedir } from "node:os";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { ROOT, REGISTRY, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, fileHash, folderHash, loadJson } from "./paths.js";
 import { collectRoutingFacts, loadPlaybooks, recommend } from "./router.js";
-import { bundledSkills, discover, discoverAgents, enrichDiscovered, lintSkillMetadata, loadRegistry, loadTrustedSources, missingSkillFiles, providerForPath, resolveAgentSkills, skillIsIncomplete, tokenBudget } from "./skills.js";
+import { bundledSkills, detectHarnesses, discover, discoverAgents, enrichDiscovered, lintSkillMetadata, loadRegistry, loadTrustedSources, missingSkillFiles, providerForPath, resolveAgentSkills, skillIsIncomplete, tokenBudget } from "./skills.js";
 import { FOCUSED_OUTPUT_RULES, buildInstructions, buildHtml } from "./renderer.js";
 import { main as validateMain, validateSnapshot } from "./validate.js";
 import { inspect, detectStackProfile } from "./inspect.js";
@@ -33,7 +33,7 @@ import { installationDiagnostics } from "./doctor.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, projectHandoffContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, attemptNextAction, projectWorkSnapshot, observeAttempt, bindExecutionAuthority, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings } from "./state.js";
+import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, projectHandoffContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, attemptNextAction, projectWorkSnapshot, observeAttempt, bindExecutionAuthority, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings, workflowGates, attemptAudit, runBuiltinCheck } from "./state.js";
 import { ARTIFACT_TYPES, explainGoverningArtifact } from "./artifacts.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 import {
@@ -578,8 +578,10 @@ function publicAttemptForSlug(slug, attempt, context = null) {
   let phases = [];
   let gates = [];
   let gateError = null;
+  let audit = { gated: false, unaudited: false };
   try {
     ({ phases, gates } = attemptGateState(slug, attempt));
+    audit = attemptAudit(slug, attempt);
   } catch (error) {
     gateError = error.message;
   }
@@ -602,6 +604,7 @@ function publicAttemptForSlug(slug, attempt, context = null) {
     ...(gateError ? { gate_error: gateError } : {}),
     pending_gates: gates.filter(gateIsPending).map((gate) => gate.phase),
     evidence: attempt.evidence || {},
+    ...audit,
     ...(context || attemptContextState(slug, attempt.id)),
   };
 }
@@ -832,6 +835,8 @@ function cmdSetup(args) {
   const discovered = enrichDiscovered(discover(result.root));
   const gaps = findCapabilityGaps(loadPlaybooks(), discovered);
   console.log(`Detected ${Object.keys(discovered).length} installed skills; no skills were installed.`);
+  const harnesses = detectHarnesses(result.root);
+  console.log(`Harnesses detected: project ${harnesses.project.join(", ") || "none"}; global ${harnesses.global.join(", ") || "none"}.`);
   if (gaps.length) console.log(`Capability gaps: ${gaps.map((gap) => gap.capability).join(", ")}`);
   else console.log("Capability gaps: none.");
   console.log("Host hint: run `dirf host setup` once to make future agent sessions DIRF-aware (SessionStart hook + global dirf skill).");
@@ -1274,6 +1279,68 @@ function cmdArtifact(args) {
   }
 }
 
+// Deterministic gate evidence. --run makes the CLI execute the command itself
+// and record the exit code plus an output digest: the gate opens on a fact the
+// CLI captured, not on a claim the model typed. Built-in check gates execute
+// inside DIRF (no shell at all). Legacy --evidence text stays compatible but
+// marks the attempt unaudited (derived in state.js attemptAudit).
+const RUN_OUTPUT_STORED_CHARS = 4000;
+
+function captureRun(command) {
+  const result = spawnSync(command, { shell: true, encoding: "utf8", windowsHide: true, timeout: 120_000 });
+  const output = `${result.stdout || ""}${result.stderr || ""}`;
+  // The digest always covers the full capture; the stored tail is bounded so
+  // a chatty command cannot bloat attempt.json.
+  const stored = output.length > RUN_OUTPUT_STORED_CHARS ? output.slice(-RUN_OUTPUT_STORED_CHARS) : output;
+  return {
+    exit: result.status === null ? 1 : result.status,
+    output: stored,
+    output_sha256: createHash("sha256").update(output).digest("hex"),
+    ...(output.length > RUN_OUTPUT_STORED_CHARS ? { truncated: true } : {}),
+  };
+}
+
+function gateEvidenceForPhase(slug, id, phase, args) {
+  const gate = workflowGates(slug, id)[phase];
+  if (gate?.check) {
+    const result = runBuiltinCheck(slug, id, gate.check);
+    if (!result.ok) throw new Error(`Built-in check "${gate.check}" failed — the gate stays pending:\n${result.output}`);
+    return { command: `builtin:${gate.check}`, mode: "builtin", check: gate.check, ok: true, exit: 0, output: result.output };
+  }
+  if (args.run) {
+    const captured = captureRun(args.run);
+    if (captured.exit !== 0) {
+      throw new Error(`Recorded run exited ${captured.exit} — the gate stays pending: ${args.run}\n${captured.output.slice(-800)}`);
+    }
+    return { ...captured, command: args.run, mode: "run" };
+  }
+  return args.evidence ? { command: args.evidence, output: args.output } : undefined;
+}
+
+// Deterministic recorder identity for gate records: the agent harness that
+// executed the command. Sourced from the same environment attempt observe
+// trusts (DIRF_HARNESS / DIRF_SESSION_ID / CODEX_THREAD_ID), plus DIRF_MODEL
+// when the host exports it. Null when the host provides nothing.
+// Resolution order is explicit-over-detected: DIRF_HARNESS wins, then known
+// harness env markers, then the dot-folder scan (project + global). Model and
+// session come from env only — DIRF never guesses them.
+function envHarnessMarker(env) {
+  if (env.CODEX_THREAD_ID || env.CODEX_HOME) return "codex";
+  if (env.CLAUDECODE || env.CLAUDE_CODE_ENTRYPOINT) return "claude";
+  if (env.CURSOR_AGENT || env.CURSOR_TRACE_ID) return "cursor";
+  return null;
+}
+
+function recorderIdentityFromEnv(env, detected = { project: [], global: [] }) {
+  const installed = [...new Set([...(detected.project || []), ...(detected.global || [])])].sort();
+  const harness = env.DIRF_HARNESS || envHarnessMarker(env) || (installed.length ? installed.join("+") : null);
+  const sessionId = env.DIRF_SESSION_ID || env.CODEX_THREAD_ID || null;
+  const model = env.DIRF_MODEL || env.ANTHROPIC_MODEL || null;
+  if (!harness && !sessionId && !model) return null;
+  const who = `${harness || "unknown"}${sessionId ? `/${sessionId}` : ""}`;
+  return model ? `${who} on ${model}` : who;
+}
+
 function cmdAttempt(args) {
   const slug = resolveStateSlug(args);
   const action = args._[0];
@@ -1322,21 +1389,35 @@ function cmdAttempt(args) {
     const phase = args._[2];
     const decision = args._[3];
     if (!phase || !decision) throw new Error('usage: dirf attempt gate <id> <phase> accept|deny [--comment "..."]');
-    result = updateAttemptLifecycle(slug, id, "gate", { phase, decision, comment: args.comment, worker: args.worker });
+    const detected = detectHarnesses(projectRoot(args.path || "."));
+    result = updateAttemptLifecycle(slug, id, "gate", { phase, decision, comment: args.comment, worker: args.worker, recordedBy: recorderIdentityFromEnv(process.env, detected) });
   } else if (action === "advance" && args.auto) {
     const outcome = autoAdvance(slug, id, {
       strict: args.strict,
       evidence: args.evidence ? { command: args.evidence, output: args.output } : undefined,
     });
+    if (args.run) {
+      throw new Error(`--run cannot be combined with --auto: auto-advance cannot capture a per-phase run. Advance the gated phase once with --run, then use --auto.`);
+    }
     result = outcome.attempt;
     extra = { advanced: outcome.advanced, stopped_at_gate: outcome.stopped_at_gate };
   } else {
+    let evidence;
+    if (action === "advance") {
+      const attempt = getAttemptState(slug, id);
+      evidence = gateEvidenceForPhase(slug, id, attempt.current_phase, args);
+    } else if (action === "complete") {
+      const phases = attemptPhases(slug, id);
+      evidence = gateEvidenceForPhase(slug, id, phases.at(-1), args);
+    } else if (args.run) {
+      throw new Error(`--run applies to attempt advance and attempt complete, not "${action}"`);
+    }
     result = updateAttemptLifecycle(slug, id, action, {
       worker: args.worker,
       reason: args.reason || args._[2],
       authorityToken: action === "abandon" ? process.env.DIRF_ORCHESTRATOR_TOKEN : undefined,
       confirm: args.confirm,
-      evidence: args.evidence ? { command: args.evidence, output: args.output } : undefined,
+      evidence,
       strict: args.strict,
       wait: args.wait,
     });
@@ -1675,6 +1756,7 @@ function parse(argv) {
     if (a === "--work-item") { out.workItem = rest[++i]; continue; }
     if (a === "--review-revision") { out.reviewRevision = rest[++i]; continue; }
     if (a === "--evidence") { out.evidence = rest[++i]; continue; }
+    if (a === "--run") { out.run = rest[++i]; continue; }
     if (a === "--output") { out.output = rest[++i]; continue; }
     if (a === "--policy") { out.policy = rest[++i]; continue; }
     if (a === "--ledger") { out.ledger = rest[++i]; continue; }
@@ -1708,7 +1790,7 @@ Usage:
   dirf record-progress "<message>" [--path DIR] [--attempt ID|UNIQUE_NAME] [--phase PHASE] [--next ACTION] [--files FILES] [--work-item ITEM] [--review-revision SHA]
                                                       record progress, update HANDOFF.md and sync the attempt lifecycle
   dirf attempt <action> <id> [--path DIR]              update lifecycle or execution ownership
-                                                      (advance: [--evidence "CMD" [--output F]] [--strict] [--auto])
+                                                      (advance: [--run "CMD" | --evidence "TEXT"] [--strict] [--auto] — gated attempts complete only with captured --run/built-in evidence and a synced handoff)
                                                       (complete: --confirm [--evidence "CMD" [--output F]] [--strict])
                                                       (gate <phase> accept|deny [--comment "..."]; block [--wait input|blocker])
                                                       (abandon: --reason "..." + DIRF_ORCHESTRATOR_TOKEN; observe: trusted harness env + DIRF_ORCHESTRATOR_TOKEN + active|idle|unknown [--file SNAPSHOT] [--transfer-reason "..."])

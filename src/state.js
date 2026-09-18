@@ -513,11 +513,86 @@ export function workflowGates(slug, idOrName) {
   return attemptWorkflow(slug, getAttempt(slug, idOrName)).gates;
 }
 
+// Deterministic audit derivation, recomputed from stored facts: an attempt is
+// unaudited exactly when its workflow declares gates but at least one gate
+// carries no captured verification (a CLI-run exit-0 or a passed built-in
+// check). Gateless workflows declare no verification contract and are never
+// flagged. Derived on read — it cannot be edited into or out of existence.
+export function attemptAudit(slug, idOrName) {
+  const attempt = getAttempt(slug, idOrName);
+  const gates = workflowGates(slug, idOrName);
+  const gated = Object.keys(gates).length > 0;
+  if (!gated) return { gated: false, unaudited: false };
+  const evidence = attempt.evidence || {};
+  const unaudited = Object.entries(gates).some(([phase, gate]) => {
+    if (gate.check) {
+      const record = evidence[phase];
+      return !(record?.mode === "builtin" && record.check === gate.check && record.ok === true);
+    }
+    if ((gate.kind || "verify") === "decision" && !gate.verify) return false;
+    const record = evidence[phase];
+    return !(record?.exit !== undefined && record.exit === 0);
+  });
+  return { gated: true, unaudited };
+}
+
+// Built-in gate checks the CLI executes itself — no shell, no PATH, no typed
+// evidence. Registry of check name → validator(attempt folder) returning
+// { ok, output }.
+export function runBuiltinCheck(slug, idOrName, check) {
+  const attempt = getAttempt(slug, idOrName);
+  const validators = {
+    "review-json": validateAttemptReviewJson,
+  };
+  const validator = validators[check];
+  if (!validator) throw new Error(`Unknown built-in check ${JSON.stringify(check)} — known: ${Object.keys(validators).join(", ")}`);
+  return validator(join(attempt.folder));
+}
+
+// The pr-review playbook's verify gate: review.json must exist in the attempt
+// folder, parse, carry the required fields, and stay internally consistent
+// (a PASS verdict cannot carry unresolved findings).
+function validateAttemptReviewJson(attemptFolder) {
+  const path = join(attemptFolder, "review.json");
+  if (!existsSync(path)) return { ok: false, output: `review.json not found at ${path}` };
+  let review;
+  try {
+    review = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    return { ok: false, output: `review.json is not valid JSON: ${error.message}` };
+  }
+  const problems = [];
+  for (const field of ["pr_url", "base", "head_reviewed", "verdict", "evidence", "findings"]) {
+    if (!(field in review)) problems.push(`missing field "${field}"`);
+  }
+  if (!problems.length) {
+    if (!["PASS", "CONDITIONAL", "FAIL"].includes(review.verdict)) problems.push(`verdict ${JSON.stringify(review.verdict)} is not PASS, CONDITIONAL, or FAIL`);
+    if (!Array.isArray(review.evidence) || !review.evidence.length) problems.push("evidence must be a non-empty array");
+    if (!Array.isArray(review.findings)) problems.push("findings must be an array");
+    else if (review.verdict === "PASS" && review.findings.some((f) => f && f.disposition && !["resolved_local", "dismissed", "invalid", "duplicate"].includes(f.disposition))) {
+      problems.push("PASS verdict with open findings — reclassify or change the verdict");
+    }
+    if (review.head_reviewed && !/^[0-9a-f]{40}$/.test(review.head_reviewed)) problems.push("head_reviewed must be a full 40-hex commit SHA");
+  }
+  return problems.length
+    ? { ok: false, output: `review.json invalid:\n- ${problems.join("\n- ")}` }
+    : { ok: true, output: `review.json valid: verdict ${review.verdict}, ${review.findings.length} finding(s), ${review.evidence.length} evidence item(s)` };
+}
+
 // Why a phase may not be advanced past yet, or null when it can.
 function gateRequirement(gates, records, evidence, attempt, phase, strict = false) {
   const gate = gates[phase];
   if (!gate) return null;
   const kind = gate.kind || "verify";
+  // A built-in check gate is satisfied only by the check the CLI itself ran
+  // and recorded (--run text or shell evidence can never open it).
+  if (gate.check) {
+    const record = evidence[phase];
+    if (!record || record.mode !== "builtin" || record.check !== gate.check || record.ok !== true) {
+      return { kind, reason: `Phase "${phase}" requires its built-in check "${gate.check}" — the CLI records it automatically when the check passes; typed evidence cannot satisfy it` };
+    }
+    return null;
+  }
   if (kind === "decision") {
     if (records[phase]?.status !== "accepted") {
       return { kind, reason: `Phase "${phase}" is a decision gate — record the decision first (dirf attempt gate ... accept|deny --comment "...")` };
@@ -531,10 +606,13 @@ function gateRequirement(gates, records, evidence, attempt, phase, strict = fals
     }
     const declared = String(gate.verify || "").trim();
     if (declared && !evidence[phase]) {
-      return { kind, reason: `Phase "${phase}" also requires verification evidence — pass --evidence ${JSON.stringify(declared)} when advancing or completing it` };
+      return { kind, reason: `Phase "${phase}" also requires verification evidence — pass --run ${JSON.stringify(declared)} when advancing or completing it` };
     }
     if (declared && evidence[phase].command !== declared) {
       return { kind, reason: `Phase "${phase}" evidence command must match its declared verify command: ${JSON.stringify(declared)}` };
+    }
+    if (declared && evidence[phase].exit !== undefined && evidence[phase].exit !== 0) {
+      return { kind, reason: `Phase "${phase}" recorded run exited ${evidence[phase].exit} — gates open only on exit 0` };
     }
     return null;
   }
@@ -542,6 +620,9 @@ function gateRequirement(gates, records, evidence, attempt, phase, strict = fals
     const declared = String(gate.verify || "").trim();
     if (declared && evidence[phase].command !== declared) {
       return { kind, reason: `Phase "${phase}" evidence command must match its declared verify command: ${JSON.stringify(declared)}` };
+    }
+    if (evidence[phase].exit !== undefined && evidence[phase].exit !== 0) {
+      return { kind, reason: `Phase "${phase}" recorded run exited ${evidence[phase].exit} — gates open only on exit 0` };
     }
     const governing = gate.artifact_type ? governingAttemptArtifact(attempt, gate.artifact_type) : null;
     if (gate.artifact_type && !governing) {
@@ -553,7 +634,7 @@ function gateRequirement(gates, records, evidence, attempt, phase, strict = fals
     return null;
   }
   if (kind === "soft" && !strict) return null;
-  return { kind, reason: `Phase "${phase}" is a ${kind} gate — pass --evidence "<command>" when advancing or completing it` };
+  return { kind, reason: `Phase "${phase}" is a ${kind} gate — pass --run "<command>" when advancing or completing it` };
 }
 
 // All gate declarations for an attempt with their current record status,
@@ -577,8 +658,15 @@ export function attemptGateState(slug, attempt) {
       const record = records[phase] || null;
       const kind = gates[phase].kind || "verify";
       const declaredVerify = String(gates[phase].verify || "").trim();
-      const evidenceMatches = Boolean(evidence[phase]) &&
-        (!declaredVerify || evidence[phase].command === declaredVerify);
+      const phaseEvidenceRaw = evidence[phase] || null;
+      // Built-in check gates are satisfied only by their own recorded check;
+      // captured runs additionally require exit 0; legacy text stays compatible.
+      const evidenceMatches = Boolean(phaseEvidenceRaw) && (
+        gates[phase].check
+          ? phaseEvidenceRaw.mode === "builtin" && phaseEvidenceRaw.check === gates[phase].check && phaseEvidenceRaw.ok === true
+          : (phaseEvidenceRaw.exit === undefined || phaseEvidenceRaw.exit === 0) &&
+            (!declaredVerify || phaseEvidenceRaw.command === declaredVerify)
+      );
       const satisfied = kind !== "decision" && evidenceMatches;
       const crossedSoftGate = kind === "soft" && (
         attempt.status === "done" || (currentIndex >= 0 && phaseIndex < currentIndex)
@@ -597,15 +685,22 @@ export function attemptGateState(slug, attempt) {
       else if (satisfied) status = "satisfied";
       else if (crossedSoftGate) status = "passed";
       if (artifactPending || decisionEvidencePending) status = "pending";
+      const phaseEvidence = evidence[phase] || null;
       return {
         phase,
         kind,
         verify: gates[phase].verify || null,
+        ...(gates[phase].check ? { check: gates[phase].check } : {}),
         ...(artifactType ? { artifact_type: artifactType, artifact_id: governingArtifact?.id || null } : {}),
         status,
         comment: record?.comment || null,
         by: record?.by || null,
+        recorded_by: record?.recorded_by || null,
         at: record?.at || null,
+        // Deterministic verification facts: exit is present only when the CLI
+        // itself ran the command; built-in checks record ok instead.
+        run_exit: phaseEvidence && phaseEvidence.exit !== undefined ? phaseEvidence.exit : null,
+        check_ok: phaseEvidence && phaseEvidence.mode === "builtin" ? phaseEvidence.ok === true : null,
       };
     }),
   };
@@ -1039,7 +1134,10 @@ function updateAttemptLifecycleLocked(slug, idOrName, action, options = {}, now 
     if (options.evidence) {
       const command = String(options.evidence.command || "").trim();
       if (!command) throw new Error("evidence command must not be empty");
-      evidence[leaving] = { command, output: options.evidence.output ? String(options.evidence.output) : null, at: timestamp };
+      // Spread the whole captured record: --run carries exit and an output
+      // digest, built-in checks carry mode/check/ok. The gate logic reads
+      // those facts; stripping them here would erase the verification.
+      evidence[leaving] = { ...options.evidence, command, output: options.evidence.output ? String(options.evidence.output) : null, at: timestamp };
     }
     const requirement = gateRequirement(workflowGates(slug, attempt.id), attempt.gates || {}, evidence, attempt, leaving, options.strict === true);
     if (requirement) throw new Error(requirement.reason);
@@ -1067,7 +1165,10 @@ function updateAttemptLifecycleLocked(slug, idOrName, action, options = {}, now 
     if (decision === "deny" && !comment) throw new Error("denial requires a comment (revise-and-retry feedback)");
     const gates = {
       ...(attempt.gates || {}),
-      [phase]: { status: decision === "accept" ? "accepted" : "denied", comment: comment || null, by: attempt.worker || options.worker || null, at: timestamp },
+      // by = the human the decision belongs to; recorded_by = the agent
+      // harness that typed the command (captured from the environment by the
+      // CLI). Keeping them separate keeps Decision Ownership honest.
+      [phase]: { status: decision === "accept" ? "accepted" : "denied", comment: comment || null, by: attempt.worker || options.worker || null, recorded_by: options.recordedBy || null, at: timestamp },
     };
     attempt = { ...attempt, gates };
   } else if (action === "reopen") {
@@ -1107,7 +1208,7 @@ function updateAttemptLifecycleLocked(slug, idOrName, action, options = {}, now 
     if (options.evidence) {
       const command = String(options.evidence.command || "").trim();
       if (!command) throw new Error("evidence command must not be empty");
-      evidence[finalPhase] = { command, output: options.evidence.output ? String(options.evidence.output) : null, at: timestamp };
+      evidence[finalPhase] = { ...options.evidence, command, output: options.evidence.output ? String(options.evidence.output) : null, at: timestamp };
     }
     const requirement = gateRequirement(
       workflowGates(slug, attempt.id),
@@ -1118,6 +1219,34 @@ function updateAttemptLifecycleLocked(slug, idOrName, action, options = {}, now 
       options.strict === true,
     );
     if (requirement) throw new Error(requirement.reason);
+    // A gated workflow declares a verification contract: completion is
+    // deterministic about it. Every gate must carry captured facts (a run the
+    // CLI executed with exit 0, or a built-in check that passed), and the
+    // canonical handoff must be at least as fresh as the last phase write —
+    // Handoff-Before-Switch, checked instead of remembered.
+    const gatesMap = workflowGates(slug, attempt.id);
+    if (Object.keys(gatesMap).length > 0) {
+      // The check must see the evidence from THIS completion call, so read
+      // the gate state through the merged attempt, not the stale one.
+      const state = attemptGateState(slug, { ...attempt, evidence });
+      for (const gate of state.gates) {
+        // Decision gates without declared verification are pure records — the
+        // audit derivation exempts them, and so does completion.
+        const needsCapture = gate.check || gate.kind !== "decision" || gate.verify;
+        if (needsCapture && gate.run_exit === null && gate.check_ok === null) {
+          throw new Error(`Gate "${gate.phase}" has no captured verification (run it with --run so the CLI records the exit code); typed evidence cannot complete a gated attempt`);
+        }
+      }
+      const handoffPath = join(storeProjectDir(slug), "HANDOFF.md");
+      if (!existsSync(handoffPath)) {
+        throw new Error(`Write the canonical handoff before completing (dirf save the handoff --file F): ${handoffPath} does not exist`);
+      }
+      const handoffMtime = statSync(handoffPath).mtimeMs;
+      const lastWrite = Date.parse(attempt.updated_at || attempt.created_at);
+      if (handoffMtime < lastWrite) {
+        throw new Error(`Canonical handoff is older than the last phase write (${new Date(handoffMtime).toISOString()} < ${attempt.updated_at}) — re-save the handoff (dirf save the handoff --file F) before completing`);
+      }
+    }
     const governingPlan = governingAttemptArtifact(attempt, "plan");
     if (governingPlan && !governingAttemptArtifact(attempt, "plan_delta")) {
       throw new Error(`Attempt with governing plan "${governingPlan.id}" requires an accepted governing plan_delta before completion`);
@@ -1467,16 +1596,23 @@ function syncLifecycleFromProgressLocked(slug, idOrName, phase, now = new Date()
     return updateAttemptLifecycleLocked(slug, attempt.id, "start", {}, now);
   }
   if (attempt.status === "in_progress" && phase && phases.includes(phase)) {
-    let current = attempt;
-    let steps = 0;
-    const gates = workflowGates(slug, attempt.id);
-    while (current.current_phase !== phase && steps < phases.length) {
-      // Stop at unsatisfied gates — the lifecycle must never cross one.
-      if (gateRequirement(gates, current.gates || {}, current.evidence || {}, current, current.current_phase, false)) break;
-      current = updateAttemptLifecycleLocked(slug, attempt.id, "advance", {}, now);
-      steps += 1;
+    // Deterministic adjacency: a checkpoint may name the current phase or the
+    // immediate next one — never a later phase. Multi-hop jumps would let a
+    // retroactive handoff pretend earlier phases happened in order.
+    const currentIndex = phases.indexOf(attempt.current_phase);
+    const targetIndex = phases.indexOf(phase);
+    if (targetIndex !== currentIndex && targetIndex !== currentIndex + 1) {
+      throw new Error(`recorded phase ${JSON.stringify(phase)} is not the current phase (${JSON.stringify(attempt.current_phase)}) or its immediate successor — phases cannot be backfilled out of order`);
     }
-    return current.current_phase === phase ? current : null;
+    if (targetIndex === currentIndex + 1) {
+      const gates = workflowGates(slug, attempt.id);
+      const blocker = gateRequirement(gates, attempt.gates || {}, attempt.evidence || {}, attempt, attempt.current_phase, false);
+      if (blocker) {
+        throw new Error(`cannot record phase ${JSON.stringify(phase)} — the gate on ${JSON.stringify(attempt.current_phase)} is unsatisfied: ${blocker.reason}`);
+      }
+      return updateAttemptLifecycleLocked(slug, attempt.id, "advance", {}, now);
+    }
+    return attempt;
   }
   return null;
 }

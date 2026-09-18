@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildFlow, findCapabilityGaps, reconcile, validateAgentContracts } from "../src/flow.js";
+import { buildFlow, findCapabilityGaps, reconcile, validateAgentContracts, validateWorkflowGates } from "../src/flow.js";
 import { bundledSkills } from "../src/skills.js";
 import { validatePlaybookAgentReferences, validateSnapshot } from "../src/validate.js";
 import { recommend } from "../src/router.js";
@@ -1009,4 +1009,16 @@ test("validateSnapshot accepts safe model advice and rejects operational or inco
       recommendations: [{ ...advice.recommendations[0], stages: ["build"] }],
     },
   }, "demo").includes("demo: model_advice recommendation 1 stages must match its workflow capabilities"));
+});
+
+test("built-in checks are only valid on verify gates", () => {
+  const errors = validateWorkflowGates(
+    { phases: ["a", "b"], gates: { a: { kind: "decision", check: "review-json" } } },
+    "test",
+  );
+  assert.ok(errors.some((e) => /check is only valid on verify gates/.test(e)));
+  assert.deepEqual(
+    validateWorkflowGates({ phases: ["a"], gates: { a: { kind: "verify", check: "review-json" } } }, "test"),
+    [],
+  );
 });

@@ -469,6 +469,28 @@ export function discoverAgents(projectRoot) {
   return index;
 }
 
+// Harness detection reads the same dot-folders the skill scan reads, at both
+// levels — project and global — so harness identity is discovered from what
+// is actually installed, never assumed. Sorted; callers decide how to join.
+const HARNESS_FOLDER_NAMES = [
+  [".claude", "claude"],
+  [".codex", "codex"],
+  [".cursor", "cursor"],
+  [".zcode", "zcode"],
+  [".opencode", "opencode"],
+];
+// .agents is deliberately absent: it is a shared convention several tools
+// read, not a harness — naming it as one would put a folder where the record
+// expects an identity.
+
+export function detectHarnesses(projectRoot, home = homedir()) {
+  const scan = (base) => HARNESS_FOLDER_NAMES
+    .filter(([folder]) => isDir(join(base, folder)))
+    .map(([, name]) => name)
+    .sort();
+  return { project: scan(projectRoot || ""), global: scan(home || "") };
+}
+
 export function providerForPath(path) {
   const normalized = String(path || "").replace(/\\/g, "/");
   const markers = [["/.agents/", "agents"], ["/.claude/", "claude"], ["/.codex/", "codex"], ["/.zcode/", "zcode"]];
