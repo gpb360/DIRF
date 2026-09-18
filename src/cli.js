@@ -1282,10 +1282,20 @@ function cmdArtifact(args) {
 // CLI captured, not on a claim the model typed. Built-in check gates execute
 // inside DIRF (no shell at all). Legacy --evidence text stays compatible but
 // marks the attempt unaudited (derived in state.js attemptAudit).
+const RUN_OUTPUT_STORED_CHARS = 4000;
+
 function captureRun(command) {
   const result = spawnSync(command, { shell: true, encoding: "utf8", windowsHide: true, timeout: 120_000 });
   const output = `${result.stdout || ""}${result.stderr || ""}`;
-  return { exit: result.status === null ? 1 : result.status, output, output_sha256: createHash("sha256").update(output).digest("hex") };
+  // The digest always covers the full capture; the stored tail is bounded so
+  // a chatty command cannot bloat attempt.json.
+  const stored = output.length > RUN_OUTPUT_STORED_CHARS ? output.slice(-RUN_OUTPUT_STORED_CHARS) : output;
+  return {
+    exit: result.status === null ? 1 : result.status,
+    output: stored,
+    output_sha256: createHash("sha256").update(output).digest("hex"),
+    ...(output.length > RUN_OUTPUT_STORED_CHARS ? { truncated: true } : {}),
+  };
 }
 
 function gateEvidenceForPhase(slug, id, phase, args) {
@@ -1300,7 +1310,7 @@ function gateEvidenceForPhase(slug, id, phase, args) {
     if (captured.exit !== 0) {
       throw new Error(`Recorded run exited ${captured.exit} — the gate stays pending: ${args.run}\n${captured.output.slice(-800)}`);
     }
-    return { command: args.run, mode: "run", exit: captured.exit, output: captured.output, output_sha256: captured.output_sha256 };
+    return { ...captured, command: args.run, mode: "run" };
   }
   return args.evidence ? { command: args.evidence, output: args.output } : undefined;
 }
@@ -1359,6 +1369,9 @@ function cmdAttempt(args) {
       strict: args.strict,
       evidence: args.evidence ? { command: args.evidence, output: args.output } : undefined,
     });
+    if (args.run) {
+      throw new Error(`--run cannot be combined with --auto: auto-advance cannot capture a per-phase run. Advance the gated phase once with --run, then use --auto.`);
+    }
     result = outcome.attempt;
     extra = { advanced: outcome.advanced, stopped_at_gate: outcome.stopped_at_gate };
   } else {

@@ -64,6 +64,26 @@ test("--run with a failing command refuses to cross the gate", () => {
   assert.equal(attemptGates(slug, attempt.id).find((g) => g.phase === "build").status, "pending");
 });
 
+test("stored run output is bounded; the digest covers the full capture", () => {
+  const { home, root, slug, attempt } = gatedAttempt({ build: { kind: "verify" } });
+  cli(home, root, "attempt", "start", attempt.id, "--path", root);
+  cli(home, root, "attempt", "advance", attempt.id, "--run", "node -e \"console.log('z'.repeat(500000))\"", "--path", root);
+  const record = getAttempt(slug, attempt.id).evidence.build;
+  assert.ok(record.output.length <= 4000, `stored output bounded (${record.output.length})`);
+  assert.equal(record.truncated, true);
+  assert.match(record.output_sha256, /^[0-9a-f]{64}$/);
+});
+
+test("--auto refuses --run instead of silently ignoring it", () => {
+  const { home, root, slug, attempt } = gatedAttempt({ build: { kind: "verify" } });
+  cli(home, root, "attempt", "start", attempt.id, "--path", root);
+  assert.throws(
+    () => cli(home, root, "attempt", "advance", attempt.id, "--auto", "--run", "node -e \"process.exit(1)\"", "--path", root),
+    /--run cannot be combined with --auto/,
+  );
+  assert.equal(getAttempt(slug, attempt.id).current_phase, "build");
+});
+
 test("built-in check gates run inside DIRF and cannot be satisfied by --run or typed evidence", () => {
   const { home, root, slug, attempt } = gatedAttempt({
     approve: { kind: "verify", check: "review-json" },
