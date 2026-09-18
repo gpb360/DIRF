@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { ROOT, REGISTRY, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, fileHash, folderHash, loadJson } from "./paths.js";
 import { collectRoutingFacts, loadPlaybooks, recommend } from "./router.js";
-import { bundledSkills, discover, discoverAgents, enrichDiscovered, lintSkillMetadata, loadRegistry, loadTrustedSources, missingSkillFiles, providerForPath, resolveAgentSkills, skillIsIncomplete, tokenBudget } from "./skills.js";
+import { bundledSkills, detectHarnesses, discover, discoverAgents, enrichDiscovered, lintSkillMetadata, loadRegistry, loadTrustedSources, missingSkillFiles, providerForPath, resolveAgentSkills, skillIsIncomplete, tokenBudget } from "./skills.js";
 import { FOCUSED_OUTPUT_RULES, buildInstructions, buildHtml } from "./renderer.js";
 import { main as validateMain, validateSnapshot } from "./validate.js";
 import { inspect, detectStackProfile } from "./inspect.js";
@@ -835,6 +835,8 @@ function cmdSetup(args) {
   const discovered = enrichDiscovered(discover(result.root));
   const gaps = findCapabilityGaps(loadPlaybooks(), discovered);
   console.log(`Detected ${Object.keys(discovered).length} installed skills; no skills were installed.`);
+  const harnesses = detectHarnesses(result.root);
+  console.log(`Harnesses detected: project ${harnesses.project.join(", ") || "none"}; global ${harnesses.global.join(", ") || "none"}.`);
   if (gaps.length) console.log(`Capability gaps: ${gaps.map((gap) => gap.capability).join(", ")}`);
   else console.log("Capability gaps: none.");
   console.log("Host hint: run `dirf host setup` once to make future agent sessions DIRF-aware (SessionStart hook + global dirf skill).");
@@ -1319,12 +1321,23 @@ function gateEvidenceForPhase(slug, id, phase, args) {
 // executed the command. Sourced from the same environment attempt observe
 // trusts (DIRF_HARNESS / DIRF_SESSION_ID / CODEX_THREAD_ID), plus DIRF_MODEL
 // when the host exports it. Null when the host provides nothing.
-function recorderIdentityFromEnv(env) {
-  const harness = env.DIRF_HARNESS || (env.CODEX_THREAD_ID ? "codex" : null);
+// Resolution order is explicit-over-detected: DIRF_HARNESS wins, then known
+// harness env markers, then the dot-folder scan (project + global). Model and
+// session come from env only — DIRF never guesses them.
+function envHarnessMarker(env) {
+  if (env.CODEX_THREAD_ID || env.CODEX_HOME) return "codex";
+  if (env.CLAUDECODE || env.CLAUDE_CODE_ENTRYPOINT) return "claude";
+  if (env.CURSOR_AGENT || env.CURSOR_TRACE_ID) return "cursor";
+  return null;
+}
+
+function recorderIdentityFromEnv(env, detected = { project: [], global: [] }) {
+  const installed = [...new Set([...(detected.project || []), ...(detected.global || [])])].sort();
+  const harness = env.DIRF_HARNESS || envHarnessMarker(env) || (installed.length ? installed.join("+") : null);
   const sessionId = env.DIRF_SESSION_ID || env.CODEX_THREAD_ID || null;
-  const model = env.DIRF_MODEL || null;
+  const model = env.DIRF_MODEL || env.ANTHROPIC_MODEL || null;
   if (!harness && !sessionId && !model) return null;
-  const who = `${harness || "unknown"}/${sessionId || "unknown"}`;
+  const who = `${harness || "unknown"}${sessionId ? `/${sessionId}` : ""}`;
   return model ? `${who} on ${model}` : who;
 }
 
@@ -1376,7 +1389,8 @@ function cmdAttempt(args) {
     const phase = args._[2];
     const decision = args._[3];
     if (!phase || !decision) throw new Error('usage: dirf attempt gate <id> <phase> accept|deny [--comment "..."]');
-    result = updateAttemptLifecycle(slug, id, "gate", { phase, decision, comment: args.comment, worker: args.worker, recordedBy: recorderIdentityFromEnv(process.env) });
+    const detected = detectHarnesses(projectRoot(args.path || "."));
+    result = updateAttemptLifecycle(slug, id, "gate", { phase, decision, comment: args.comment, worker: args.worker, recordedBy: recorderIdentityFromEnv(process.env, detected) });
   } else if (action === "advance" && args.auto) {
     const outcome = autoAdvance(slug, id, {
       strict: args.strict,

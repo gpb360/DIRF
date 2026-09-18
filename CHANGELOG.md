@@ -24,9 +24,12 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   completes without a recorded human accept.
 - **Gate records carry the recorder identity.** Decision gate records now
   capture `recorded_by` — the agent harness and session that executed the
-  command (`DIRF_HARNESS` / `DIRF_SESSION_ID` / `CODEX_THREAD_ID`, plus
-  `DIRF_MODEL` when the host exports it) — kept separate from `by`, the human
-  the decision belongs to.
+  command — kept separate from `by`, the human the decision belongs to.
+  Resolution is explicit-over-detected: `DIRF_HARNESS` / `DIRF_SESSION_ID` /
+  `DIRF_MODEL` win, then known harness env markers, then the same dot-folder
+  scan the skill discovery uses (project and global: `.claude`, `.codex`,
+  `.cursor`, `.zcode`, `.opencode`, `.agents`). `dirf setup` prints what it
+  detected.
 
 ## [0.30.0] — 2026-09-12
 

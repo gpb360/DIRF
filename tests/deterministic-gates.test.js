@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { attemptAudit, attemptGates, createAttemptInStore, getAttempt, registerProject, updateAttemptLifecycle, writeHandoff } from "../src/state.js";
@@ -230,13 +230,43 @@ test("decision gate records capture the agent that recorded them", () => {
   assert.equal(gate.recorded_by, "zcode/sess_test on test-model");
 });
 
-test("gate records leave recorded_by null when the host exports no identity", () => {
+test("recorded_by is derived from the detected environment (project + global dot-folders)", () => {
   const { home, root, slug, attempt } = gatedAttempt({ approve: { kind: "decision" } });
-  const env = { ...process.env, DIRF_HOME: home };
-  delete env.DIRF_HARNESS;
-  delete env.DIRF_SESSION_ID;
-  delete env.CODEX_THREAD_ID;
-  delete env.DIRF_MODEL;
+  // Fixture home with no harness folders and a project that has one.
+  const emptyHome = mkdtempSync(join(tmpdir(), "dirf-no-harness-"));
+  mkdirSync(join(emptyHome, "empty-home"), { recursive: true });
+  const isolatedHome = join(emptyHome, "empty-home");
+  mkdirSync(join(root, ".claude"), { recursive: true });
+  const env = {
+    ...process.env, DIRF_HOME: home,
+    HOME: isolatedHome, USERPROFILE: isolatedHome,
+  };
+  delete env.DIRF_HARNESS; delete env.DIRF_SESSION_ID; delete env.CODEX_THREAD_ID;
+  delete env.DIRF_MODEL; delete env.ANTHROPIC_MODEL;
+  delete env.CLAUDECODE; delete env.CLAUDE_CODE_ENTRYPOINT;
+  delete env.CURSOR_AGENT; delete env.CURSOR_TRACE_ID;
+  const run = (...args) => execFileSync(process.execPath, [CLI, ...args], {
+    cwd: root, encoding: "utf8", timeout: 30000, env,
+  });
+  run("attempt", "start", attempt.id, "--path", root);
+  run("attempt", "gate", attempt.id, "approve", "accept", "--comment", "ok", "--path", root);
+  const gate = attemptGates(slug, attempt.id).find((g) => g.phase === "approve");
+  assert.equal(gate.recorded_by, "claude", `detected from the project dot-folder, got ${gate.recorded_by}`);
+});
+
+test("recorded_by is null only when nothing is installed and nothing is exported", () => {
+  const { home, root, slug, attempt } = gatedAttempt({ approve: { kind: "decision" } });
+  const emptyHome = mkdtempSync(join(tmpdir(), "dirf-no-harness-"));
+  const isolatedHome = join(emptyHome, "home");
+  mkdirSync(isolatedHome, { recursive: true });
+  const env = {
+    ...process.env, DIRF_HOME: home,
+    HOME: isolatedHome, USERPROFILE: isolatedHome,
+  };
+  delete env.DIRF_HARNESS; delete env.DIRF_SESSION_ID; delete env.CODEX_THREAD_ID;
+  delete env.DIRF_MODEL; delete env.ANTHROPIC_MODEL;
+  delete env.CLAUDECODE; delete env.CLAUDE_CODE_ENTRYPOINT;
+  delete env.CURSOR_AGENT; delete env.CURSOR_TRACE_ID;
   const run = (...args) => execFileSync(process.execPath, [CLI, ...args], {
     cwd: root, encoding: "utf8", timeout: 30000, env,
   });
