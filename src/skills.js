@@ -478,8 +478,10 @@ const HARNESS_FOLDER_NAMES = [
   [".cursor", "cursor"],
   [".zcode", "zcode"],
   [".opencode", "opencode"],
-  [".agents", "agents"],
 ];
+// .agents is deliberately absent: it is a shared convention several tools
+// read, not a harness — naming it as one would put a folder where the record
+// expects an identity.
 
 export function detectHarnesses(projectRoot, home = homedir()) {
   const scan = (base) => HARNESS_FOLDER_NAMES

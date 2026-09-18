@@ -237,6 +237,7 @@ test("recorded_by is derived from the detected environment (project + global dot
   mkdirSync(join(emptyHome, "empty-home"), { recursive: true });
   const isolatedHome = join(emptyHome, "empty-home");
   mkdirSync(join(root, ".claude"), { recursive: true });
+  mkdirSync(join(root, ".agents"), { recursive: true }); // shared convention — never a harness
   const env = {
     ...process.env, DIRF_HOME: home,
     HOME: isolatedHome, USERPROFILE: isolatedHome,
