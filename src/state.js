@@ -695,6 +695,7 @@ export function attemptGateState(slug, attempt) {
         status,
         comment: record?.comment || null,
         by: record?.by || null,
+        recorded_by: record?.recorded_by || null,
         at: record?.at || null,
         // Deterministic verification facts: exit is present only when the CLI
         // itself ran the command; built-in checks record ok instead.
@@ -1164,7 +1165,10 @@ function updateAttemptLifecycleLocked(slug, idOrName, action, options = {}, now 
     if (decision === "deny" && !comment) throw new Error("denial requires a comment (revise-and-retry feedback)");
     const gates = {
       ...(attempt.gates || {}),
-      [phase]: { status: decision === "accept" ? "accepted" : "denied", comment: comment || null, by: attempt.worker || options.worker || null, at: timestamp },
+      // by = the human the decision belongs to; recorded_by = the agent
+      // harness that typed the command (captured from the environment by the
+      // CLI). Keeping them separate keeps Decision Ownership honest.
+      [phase]: { status: decision === "accept" ? "accepted" : "denied", comment: comment || null, by: attempt.worker || options.worker || null, recorded_by: options.recordedBy || null, at: timestamp },
     };
     attempt = { ...attempt, gates };
   } else if (action === "reopen") {

@@ -22,6 +22,11 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   playbooks (and their conditional and non-interview contract variants) now
   declare a decision gate on their final phase, so no DIRF-governed attempt
   completes without a recorded human accept.
+- **Gate records carry the recorder identity.** Decision gate records now
+  capture `recorded_by` — the agent harness and session that executed the
+  command (`DIRF_HARNESS` / `DIRF_SESSION_ID` / `CODEX_THREAD_ID`, plus
+  `DIRF_MODEL` when the host exports it) — kept separate from `by`, the human
+  the decision belongs to.
 
 ## [0.30.0] — 2026-09-12
 

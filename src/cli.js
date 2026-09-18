@@ -1315,6 +1315,19 @@ function gateEvidenceForPhase(slug, id, phase, args) {
   return args.evidence ? { command: args.evidence, output: args.output } : undefined;
 }
 
+// Deterministic recorder identity for gate records: the agent harness that
+// executed the command. Sourced from the same environment attempt observe
+// trusts (DIRF_HARNESS / DIRF_SESSION_ID / CODEX_THREAD_ID), plus DIRF_MODEL
+// when the host exports it. Null when the host provides nothing.
+function recorderIdentityFromEnv(env) {
+  const harness = env.DIRF_HARNESS || (env.CODEX_THREAD_ID ? "codex" : null);
+  const sessionId = env.DIRF_SESSION_ID || env.CODEX_THREAD_ID || null;
+  const model = env.DIRF_MODEL || null;
+  if (!harness && !sessionId && !model) return null;
+  const who = `${harness || "unknown"}/${sessionId || "unknown"}`;
+  return model ? `${who} on ${model}` : who;
+}
+
 function cmdAttempt(args) {
   const slug = resolveStateSlug(args);
   const action = args._[0];
@@ -1363,7 +1376,7 @@ function cmdAttempt(args) {
     const phase = args._[2];
     const decision = args._[3];
     if (!phase || !decision) throw new Error('usage: dirf attempt gate <id> <phase> accept|deny [--comment "..."]');
-    result = updateAttemptLifecycle(slug, id, "gate", { phase, decision, comment: args.comment, worker: args.worker });
+    result = updateAttemptLifecycle(slug, id, "gate", { phase, decision, comment: args.comment, worker: args.worker, recordedBy: recorderIdentityFromEnv(process.env) });
   } else if (action === "advance" && args.auto) {
     const outcome = autoAdvance(slug, id, {
       strict: args.strict,

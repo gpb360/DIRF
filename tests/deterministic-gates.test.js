@@ -211,3 +211,36 @@ test("record-progress rejects phases beyond the immediate successor", () => {
   cli(home, root, "record-progress", "stepped forward", "--attempt", attempt.id, "--phase", "approve", "--path", root);
   assert.equal(getAttempt(slug, attempt.id).current_phase, "approve");
 });
+
+test("decision gate records capture the agent that recorded them", () => {
+  const { home, root, slug, attempt } = gatedAttempt({ approve: { kind: "decision" } });
+  const env = {
+    ...process.env, DIRF_HOME: home,
+    DIRF_HARNESS: "zcode", DIRF_SESSION_ID: "sess_test", DIRF_MODEL: "test-model",
+  };
+  const run = (...args) => execFileSync(process.execPath, [CLI, ...args], {
+    cwd: root, encoding: "utf8", timeout: 30000, env,
+  });
+  run("attempt", "start", attempt.id, "--path", root);
+  run("attempt", "advance", attempt.id, "--run", "node -e \"process.exit(0)\"", "--path", root);
+  run("attempt", "gate", attempt.id, "approve", "accept", "--comment", "ok", "--worker", "lead developer", "--path", root);
+  const gate = attemptGates(slug, attempt.id).find((g) => g.phase === "approve");
+  assert.equal(gate.status, "accepted");
+  assert.equal(gate.by, "lead developer");
+  assert.equal(gate.recorded_by, "zcode/sess_test on test-model");
+});
+
+test("gate records leave recorded_by null when the host exports no identity", () => {
+  const { home, root, slug, attempt } = gatedAttempt({ approve: { kind: "decision" } });
+  const env = { ...process.env, DIRF_HOME: home };
+  delete env.DIRF_HARNESS;
+  delete env.DIRF_SESSION_ID;
+  delete env.CODEX_THREAD_ID;
+  delete env.DIRF_MODEL;
+  const run = (...args) => execFileSync(process.execPath, [CLI, ...args], {
+    cwd: root, encoding: "utf8", timeout: 30000, env,
+  });
+  run("attempt", "start", attempt.id, "--path", root);
+  run("attempt", "gate", attempt.id, "approve", "accept", "--comment", "ok", "--path", root);
+  assert.equal(attemptGates(slug, attempt.id).find((g) => g.phase === "approve").recorded_by, null);
+});
