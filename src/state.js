@@ -296,6 +296,7 @@ export function createAttemptInStore(slug, name, now = new Date()) {
 }
 
 export function listAttempts(slug) {
+  recoverPendingProgress(slug);
   const base = join(storeProjectDir(slug), "attempts");
   if (!existsSync(base)) return [];
   return readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name)).flatMap((entry) => {
@@ -1587,12 +1588,16 @@ export function syncAttemptFromHandoff(slug, idOrName) {
 // → advance until current_phase matches the reported phase (unknown phases are
 // left alone — conservative). Returns the updated attempt, or null when
 // nothing changed.
-function syncLifecycleFromProgressLocked(slug, idOrName, phase, now = new Date()) {
+function syncLifecycleFromProgressLocked(slug, idOrName, phase, now = new Date(), validateOnly = false) {
   const attempt = getAttempt(slug, idOrName);
   if (!attempt?.tracked) return null;
   const phases = attemptPhases(slug, attempt.id);
   if (attempt.status === "planned") {
     if (!phases.length) return null;
+    if (phase && phases.includes(phase) && phase !== phases[0]) {
+      throw new Error(`recorded phase ${JSON.stringify(phase)} must be the first phase for a planned attempt — phases cannot be backfilled out of order`);
+    }
+    if (validateOnly) return null;
     return updateAttemptLifecycleLocked(slug, attempt.id, "start", {}, now);
   }
   if (attempt.status === "in_progress" && phase && phases.includes(phase)) {
@@ -1610,6 +1615,7 @@ function syncLifecycleFromProgressLocked(slug, idOrName, phase, now = new Date()
       if (blocker) {
         throw new Error(`cannot record phase ${JSON.stringify(phase)} — the gate on ${JSON.stringify(attempt.current_phase)} is unsatisfied: ${blocker.reason}`);
       }
+      if (validateOnly) return null;
       return updateAttemptLifecycleLocked(slug, attempt.id, "advance", {}, now);
     }
     return attempt;
@@ -1755,12 +1761,14 @@ export function removeArchivedWorktree(slug, worktreePath, { approved = false } 
 }
 
 export function readHandoff(slug) {
+  recoverPendingProgress(slug);
   const path = join(storeProjectDir(slug), "HANDOFF.md");
   if (!existsSync(path)) return null;
   return readFileSync(path, "utf8");
 }
 
 export function writeHandoff(slug, markdown) {
+  recoverPendingProgress(slug);
   atomicWrite(join(storeProjectDir(slug), "HANDOFF.md"), markdown);
 }
 
@@ -1867,6 +1875,29 @@ function reclaimDeadProgressLock(lockPath, expectedOwner, claimantToken) {
   }
 }
 
+const heldProgressLocks = new Set();
+
+function pendingProgressPath(slug) {
+  return join(storeProjectDir(slug), ".pending-progress.json");
+}
+
+function recoverPendingProgress(slug) {
+  if (!heldProgressLocks.has(storeProjectDir(slug)) && existsSync(pendingProgressPath(slug))) {
+    withProgressLock(slug, () => {});
+  }
+}
+
+function replayPendingProgressLocked(slug) {
+  const path = pendingProgressPath(slug);
+  if (!existsSync(path)) return;
+  const pending = JSON.parse(readFileSync(path, "utf8"));
+  if (pending.schema_version !== 1 || !pending.update || typeof pending.update.message !== "string") {
+    throw new Error("Invalid pending progress checkpoint; preserve it for recovery.");
+  }
+  const result = recordProgressLocked(slug, pending.update);
+  if (!result.recorded) throw new Error(`Pending progress could not be recovered: ${result.reason}`);
+}
+
 function withProgressLock(slug, action) {
   const lockPath = join(storeProjectDir(slug), ".record-progress.lock");
   const token = randomUUID();
@@ -1898,9 +1929,12 @@ function withProgressLock(slug, action) {
       Atomics.wait(LOCK_WAIT_ARRAY, 0, 0, 25);
     }
   }
+  heldProgressLocks.add(storeProjectDir(slug));
   try {
+    replayPendingProgressLocked(slug);
     return action();
   } finally {
+    heldProgressLocks.delete(storeProjectDir(slug));
     const owner = readProgressLockOwner(lockPath);
     if (owner?.token === token) {
       // Detach the owned directory before deleting its contents. Otherwise a
@@ -1996,7 +2030,10 @@ function attemptProgressAcceptance(slug, handoffBase, update, establishedWorkIte
 // canonical handoff so the canonical view never claims an unrecorded attempt.
 export function recordProgress(slug, { message, timestamp, phase, next, files, attemptId, workItem, reviewRevision }) {
   if (!getProject(slug)) throw new Error(`Unknown DIRF project ${slug}`);
-  return withProgressLock(slug, () => {
+  return withProgressLock(slug, () => recordProgressLocked(slug, { message, timestamp, phase, next, files, attemptId, workItem, reviewRevision }));
+}
+
+function recordProgressLocked(slug, { message, timestamp, phase, next, files, attemptId, workItem, reviewRevision }) {
     const attempt = progressAttempt(slug, attemptId);
     const attemptHandoff = attempt ? readAttemptHandoffFile(slug, attempt.id) : null;
     const fallback = "# DIRF Handoff\n\n## Objective\n\n(Work in progress)\n";
@@ -2015,7 +2052,9 @@ export function recordProgress(slug, { message, timestamp, phase, next, files, a
     const attemptBase = attempt ? attemptHandoff || canonicalBase : null;
     const canonicalDecision = progressAcceptance(slug, canonicalBase, draftUpdate);
     const attemptDecision = attempt
-      ? attemptProgressAcceptance(slug, attemptBase, draftUpdate, recordedAttemptContext.workItem)
+      ? attempt.status === "abandoned"
+        ? { accepted: false, reason: "attempt_abandoned" }
+        : attemptProgressAcceptance(slug, attemptBase, draftUpdate, recordedAttemptContext.workItem)
       : null;
     // An explicit attempt is the assignment authority for its checkpoint. If
     // that scoped handoff rejects a delayed revision, do not let an unrelated
@@ -2041,9 +2080,37 @@ export function recordProgress(slug, { message, timestamp, phase, next, files, a
       };
     }
 
+    // Reject invalid phase transitions before changing any persisted checkpoint.
+    // Both validation and the eventual transition run under this same lock.
+    if (attemptDecision?.accepted) {
+      syncLifecycleFromProgressLocked(slug, attempt.id, phase || null, new Date(), true);
+    }
+    // Rendering validates timestamp and file inputs. Do this before persisting
+    // intent so invalid input cannot become a permanently failing recovery.
+    if (canonicalAccepted) updateProgressSection(canonicalBase, draftUpdate);
+    if (attemptDecision?.accepted) updateProgressSection(attemptBase, draftUpdate);
+    // Persist the validated intent before changing its multiple projections.
+    // Recovery reuses this operation; repeated history entries are deduplicated.
+    if (attemptDecision?.accepted) {
+      atomicWrite(pendingProgressPath(slug), JSON.stringify({ schema_version: 1, update: draftUpdate }) + "\n");
+    }
     const update = { ...draftUpdate, updateNumber: nextProgressUpdateNumber(slug) };
+    // A process can exit after saving the attempt but before projecting it to
+    // the project handoff. Preserve that same attempt's newer durable history
+    // on the next accepted write, without replacing project-specific sections.
+    let canonicalProgressBase = canonicalBase;
+    const canonicalContext = parseCurrentHandoff(canonicalBase);
+    if (canonicalAccepted && attemptDecision?.accepted
+      && canonicalContext.attemptId === attempt.id
+      && recordedAttemptContext.updateNumber > (canonicalContext.updateNumber || 0)) {
+      for (const message of recordedAttemptContext.completedSteps) {
+        canonicalProgressBase = updateProgressSection(canonicalProgressBase, {
+          message, files: recordedAttemptContext.changedFiles,
+        });
+      }
+    }
     const updatedHandoff = canonicalAccepted
-      ? updateProgressSection(canonicalBase, update)
+      ? updateProgressSection(canonicalProgressBase, update)
       : canonicalBase;
     const updatedAttemptHandoff = attemptDecision?.accepted
       ? updateProgressSection(attemptBase, update)
@@ -2056,6 +2123,7 @@ export function recordProgress(slug, { message, timestamp, phase, next, files, a
     const lifecycle = attemptDecision?.accepted
       ? syncLifecycleFromProgressLocked(slug, attempt.id, phase || null)
       : null;
+    if (attemptDecision?.accepted) rmSync(pendingProgressPath(slug));
     return {
       handoff: updatedHandoff,
       attempt_handoff: updatedAttemptHandoff,
@@ -2067,7 +2135,6 @@ export function recordProgress(slug, { message, timestamp, phase, next, files, a
       attempt_accepted: attemptDecision?.accepted ?? null,
       attempt_reason: attemptDecision?.reason ?? null,
     };
-  });
 }
 
 // Detect whether a target has migratable legacy state.
