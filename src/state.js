@@ -17,6 +17,11 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { resolveGoverningArtifact, validateArtifactGraph, validatePlanDelta } from "./artifacts.js";
 import { parseCurrentHandoff, updateProgressSection } from "./handoff-update.js";
+// The review-json built-in check enforces the real review artifact schema —
+// the one the pr-review playbook's declared validation (`dirf review ready
+// review.json`) already enforces through this module. Verdicts are derived
+// from findings/verification/confidence, never stored.
+import { deriveVerdict } from "../skills/code-review/scripts/review-report.mjs";
 
 const GIT_TIMEOUT = 30_000;
 const LIVE_OBSERVATION_TTL_MS = 5 * 60_000;
@@ -519,9 +524,11 @@ export function workflowGates(slug, idOrName) {
 // carries no captured verification (a CLI-run exit-0 or a passed built-in
 // check). Gateless workflows declare no verification contract and are never
 // flagged. Derived on read — it cannot be edited into or out of existence.
-export function attemptAudit(slug, idOrName) {
-  const attempt = getAttempt(slug, idOrName);
-  const gates = workflowGates(slug, idOrName);
+// Accepts an already-loaded attempt (projections hold one) or an id/name —
+// the same object-or-id contract as attemptGateState.
+export function attemptAudit(slug, idOrAttempt) {
+  const attempt = idOrAttempt !== null && typeof idOrAttempt === "object" ? idOrAttempt : getAttempt(slug, idOrAttempt);
+  const gates = attemptWorkflow(slug, attempt).gates;
   const gated = Object.keys(gates).length > 0;
   if (!gated) return { gated: false, unaudited: false };
   const evidence = attempt.evidence || {};
@@ -551,8 +558,11 @@ export function runBuiltinCheck(slug, idOrName, check) {
 }
 
 // The pr-review playbook's verify gate: review.json must exist in the attempt
-// folder, parse, carry the required fields, and stay internally consistent
-// (a PASS verdict cannot carry unresolved findings).
+// folder, parse, and satisfy the real review-report schema (the exact
+// validation `dirf review validate|ready review.json` performs — one schema,
+// one enforcer). The verdict is derived by that schema's own rule, so a PASS
+// can never carry findings: any published finding forces CONDITIONAL or FAIL,
+// which replaces the old hand-rolled "closed disposition" list.
 function validateAttemptReviewJson(attemptFolder) {
   const path = join(attemptFolder, "review.json");
   if (!existsSync(path)) return { ok: false, output: `review.json not found at ${path}` };
@@ -562,22 +572,12 @@ function validateAttemptReviewJson(attemptFolder) {
   } catch (error) {
     return { ok: false, output: `review.json is not valid JSON: ${error.message}` };
   }
-  const problems = [];
-  for (const field of ["pr_url", "base", "head_reviewed", "verdict", "evidence", "findings"]) {
-    if (!(field in review)) problems.push(`missing field "${field}"`);
+  try {
+    const verdict = deriveVerdict(review);
+    return { ok: true, output: `review.json valid: verdict ${verdict}, ${review.findings.length} finding(s), ${review.verification.length} verification item(s)` };
+  } catch (error) {
+    return { ok: false, output: `review.json invalid: ${error.message}` };
   }
-  if (!problems.length) {
-    if (!["PASS", "CONDITIONAL", "FAIL"].includes(review.verdict)) problems.push(`verdict ${JSON.stringify(review.verdict)} is not PASS, CONDITIONAL, or FAIL`);
-    if (!Array.isArray(review.evidence) || !review.evidence.length) problems.push("evidence must be a non-empty array");
-    if (!Array.isArray(review.findings)) problems.push("findings must be an array");
-    else if (review.verdict === "PASS" && review.findings.some((f) => f && f.disposition && !["resolved_local", "dismissed", "invalid", "duplicate"].includes(f.disposition))) {
-      problems.push("PASS verdict with open findings — reclassify or change the verdict");
-    }
-    if (review.head_reviewed && !/^[0-9a-f]{40}$/.test(review.head_reviewed)) problems.push("head_reviewed must be a full 40-hex commit SHA");
-  }
-  return problems.length
-    ? { ok: false, output: `review.json invalid:\n- ${problems.join("\n- ")}` }
-    : { ok: true, output: `review.json valid: verdict ${review.verdict}, ${review.findings.length} finding(s), ${review.evidence.length} evidence item(s)` };
 }
 
 // Why a phase may not be advanced past yet, or null when it can.
@@ -1235,7 +1235,7 @@ function updateAttemptLifecycleLocked(slug, idOrName, action, options = {}, now 
         // audit derivation exempts them, and so does completion.
         const needsCapture = gate.check || gate.kind !== "decision" || gate.verify;
         if (needsCapture && gate.run_exit === null && gate.check_ok === null) {
-          throw new Error(`Gate "${gate.phase}" has no captured verification (run it with --run so the CLI records the exit code); typed evidence cannot complete a gated attempt`);
+          throw new Error(`Gate "${gate.phase}" has no captured verification; typed evidence cannot complete a gated attempt. No command can re-capture a gate after the fact — this attempt cannot be completed: abandon it (dirf attempt abandon ${attempt.id} --reason "...") and start a new attempt whose gates are crossed only by a recorded run (--run) or a passed built-in check`);
         }
       }
       const handoffPath = join(storeProjectDir(slug), "HANDOFF.md");
@@ -1588,7 +1588,11 @@ export function syncAttemptFromHandoff(slug, idOrName) {
 // → advance until current_phase matches the reported phase (unknown phases are
 // left alone — conservative). Returns the updated attempt, or null when
 // nothing changed.
-function syncLifecycleFromProgressLocked(slug, idOrName, phase, now = new Date(), validateOnly = false) {
+// The decision half (progressLifecyclePlanLocked) is separated from the
+// mutation half so recordProgress can validate adjacency and gate
+// satisfaction BEFORE it writes any handoff or consumes an update number —
+// a rejected checkpoint must leave nothing to duplicate on retry.
+function progressLifecyclePlanLocked(slug, idOrName, phase) {
   const attempt = getAttempt(slug, idOrName);
   if (!attempt?.tracked) return null;
   const phases = attemptPhases(slug, attempt.id);
@@ -1597,8 +1601,7 @@ function syncLifecycleFromProgressLocked(slug, idOrName, phase, now = new Date()
     if (phase && phases.includes(phase) && phase !== phases[0]) {
       throw new Error(`recorded phase ${JSON.stringify(phase)} must be the first phase for a planned attempt — phases cannot be backfilled out of order`);
     }
-    if (validateOnly) return null;
-    return updateAttemptLifecycleLocked(slug, attempt.id, "start", {}, now);
+    return { action: "start" };
   }
   if (attempt.status === "in_progress" && phase && phases.includes(phase)) {
     // Deterministic adjacency: a checkpoint may name the current phase or the
@@ -1615,12 +1618,22 @@ function syncLifecycleFromProgressLocked(slug, idOrName, phase, now = new Date()
       if (blocker) {
         throw new Error(`cannot record phase ${JSON.stringify(phase)} — the gate on ${JSON.stringify(attempt.current_phase)} is unsatisfied: ${blocker.reason}`);
       }
-      if (validateOnly) return null;
-      return updateAttemptLifecycleLocked(slug, attempt.id, "advance", {}, now);
+      return { action: "advance" };
     }
-    return attempt;
+    return { unchanged: attempt };
   }
   return null;
+}
+
+function applyProgressLifecyclePlanLocked(slug, idOrName, plan, now = new Date()) {
+  if (!plan) return null;
+  if (plan.action) return updateAttemptLifecycleLocked(slug, idOrName, plan.action, {}, now);
+  return plan.unchanged;
+}
+
+function syncLifecycleFromProgressLocked(slug, idOrName, phase, now = new Date()) {
+  const plan = progressLifecyclePlanLocked(slug, idOrName, phase);
+  return applyProgressLifecyclePlanLocked(slug, idOrName, plan, now);
 }
 
 export function syncLifecycleFromProgress(slug, idOrName, phase, now = new Date()) {
@@ -2086,11 +2099,13 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
       };
     }
 
-    // Reject invalid phase transitions before changing any persisted checkpoint.
-    // Both validation and the eventual transition run under this same lock.
-    if (attemptDecision?.accepted) {
-      syncLifecycleFromProgressLocked(slug, attempt.id, phase || null, new Date(), true);
-    }
+    // Validate-then-write: the lifecycle decision (adjacency + gate
+    // enforcement) is computed BEFORE any handoff write or update-number
+    // consumption, so a rejected checkpoint appends no progress section and
+    // consumes no update number — a corrected retry cannot duplicate an entry.
+    const lifecyclePlan = attemptDecision?.accepted
+      ? progressLifecyclePlanLocked(slug, attempt.id, phase || null)
+      : null;
     // Rendering validates timestamp and file inputs. Do this before persisting
     // intent so invalid input cannot become a permanently failing recovery.
     if (canonicalAccepted) updateProgressSection(canonicalBase, draftUpdate);
@@ -2126,9 +2141,7 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
       atomicWrite(join(storeAttemptDir(slug, attempt.id), "HANDOFF.md"), updatedAttemptHandoff);
     }
     if (canonicalAccepted) writeHandoff(slug, updatedHandoff);
-    const lifecycle = attemptDecision?.accepted
-      ? syncLifecycleFromProgressLocked(slug, attempt.id, phase || null)
-      : null;
+    const lifecycle = applyProgressLifecyclePlanLocked(slug, attempt.id, lifecyclePlan);
     if (attemptDecision?.accepted) rmSync(pendingProgressPath(slug));
     return {
       handoff: updatedHandoff,

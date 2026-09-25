@@ -26,10 +26,35 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   capture `recorded_by` — the agent harness and session that executed the
   command — kept separate from `by`, the human the decision belongs to.
   Resolution is explicit-over-detected: `DIRF_HARNESS` / `DIRF_SESSION_ID` /
-  `DIRF_MODEL` win, then known harness env markers, then the same dot-folder
-  scan the skill discovery uses (project and global: `.claude`, `.codex`,
-  `.cursor`, `.zcode`, `.opencode`, `.agents`). `dirf setup` prints what it
-  detected.
+  `DIRF_MODEL` win, then known session-scoped harness env markers
+  (`CODEX_THREAD_ID`, `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CURSOR_AGENT`,
+  `CURSOR_TRACE_ID`; `ANTHROPIC_MODEL` fills in the model when exported),
+  then the dot-folder scan (project and global: `.claude`, `.codex`,
+  `.cursor`, `.zcode`, `.opencode` — `.agents` is a shared convention, not a
+  harness). When a session or model resolves but no harness does, the harness
+  is recorded as `unknown`. `dirf setup` prints what it detected.
+
+### Fixed
+- **`unaudited` now actually appears on the CLI surface.** Public attempt
+  views (`dirf list --json`, attempt JSON) passed an attempt object where an
+  id/name was expected, so the audit derivation threw on every attempt and
+  every gated attempt projected as audited with a bogus `gate_error`.
+  `attemptAudit` now accepts an attempt object or an id/name.
+- **The `review-json` gate enforces the real review artifact schema.** The
+  built-in check demanded a stored verdict in a homemade shape that the
+  playbook's own validation (`dirf review ready review.json`) rejects — no
+  artifact could satisfy both. The check now reuses `validateReview`/
+  `deriveVerdict` from the review-report script; the verdict is derived, so
+  closed/open findings follow the schema's own rule instead of a hand-rolled
+  disposition list.
+- **A rejected `record-progress` no longer writes first.** The lifecycle
+  adjacency/gate decision now runs before any handoff write or update-number
+  consumption, so a rejected checkpoint leaves no progress section and no
+  consumed sequence number to duplicate on retry.
+- `dirf attempt advance --auto --run` rejects the combination before
+  auto-advance mutates state, and the completion error for gates crossed only
+  with typed evidence now says the attempt must be abandoned and restarted
+  (no command can re-capture the evidence).
 
 ## [0.30.0] — 2026-09-12
 

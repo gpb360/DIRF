@@ -9,9 +9,27 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { attemptAudit, attemptGates, createAttemptInStore, getAttempt, registerProject, updateAttemptLifecycle, writeHandoff } from "../src/state.js";
+import { parseCurrentHandoff } from "../src/handoff-update.js";
+import { attemptAudit, attemptGates, createAttemptInStore, getAttempt, readAttemptHandoff, readHandoff, registerProject, runBuiltinCheck, updateAttemptLifecycle, writeHandoff } from "../src/state.js";
 
 const CLI = join(process.cwd(), "src", "cli.js");
+
+// A review.json in the real review-report schema (skills/code-review), the
+// shape `dirf review validate|ready review.json` enforces. Verdict is derived,
+// never stored.
+function validReviewArtifact() {
+  return {
+    schema_version: 2,
+    target: { repository: "https://github.com/o/r", pr_number: 69, base_sha: "a".repeat(40), head_sha: "b".repeat(40), mode: "full" },
+    walkthrough: [{ area: "gates", summary: "Deterministic gate enforcement.", files: ["src/state.js"] }],
+    axes: Object.fromEntries(["spec", "correctness", "concurrency", "security", "data", "frontend", "testing", "standards"].map((axis) => [axis, { status: "checked", evidence: "reviewed the changed behavior" }])),
+    confidence: { quality: 95, evidence: 95 },
+    findings: [],
+    verification: [{ command: "node --test", status: "passed", result: "all tests pass" }],
+    limitations: [],
+    completion: { review_complete: true, required_checks: "passed", unresolved_threads: 0 },
+  };
+}
 
 function repo() {
   const root = mkdtempSync(join(tmpdir(), "dirf-det-repo-"));
@@ -99,51 +117,63 @@ test("built-in check gates run inside DIRF and cannot be satisfied by --run or t
     () => updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "whatever", exit: 0 } }),
     /built-in check "review-json"/i,
   );
-  // A valid review.json satisfies the check automatically.
-  writeFileSync(join(attempt.folder, "review.json"), JSON.stringify({
-    pr_url: "https://github.com/o/r/pull/1",
-    base: "a".repeat(40),
-    head_reviewed: "b".repeat(40),
-    verdict: "PASS",
-    evidence: ["ran checks"],
-    findings: [{ id: 1, disposition: "resolved_local" }],
-  }));
+  // A review.json that passes the playbook's own validation (the real
+  // review-report schema) satisfies the check automatically.
+  writeFileSync(join(attempt.folder, "review.json"), JSON.stringify(validReviewArtifact()));
   const current = JSON.parse(cli(home, root,
     "attempt", "advance", attempt.id, "--path", root, "--json"));
   assert.equal(current.current_phase, "post");
   assert.equal(attemptGates(slug, attempt.id).find((g) => g.phase === "approve").check_ok, true);
 });
 
-test("an invalid review.json fails the built-in check with the reason", () => {
+test("an artifact the review playbook rejects fails the gate with the same reason", () => {
   const { home, root, attempt } = gatedAttempt({
     approve: { kind: "verify", check: "review-json" },
   });
   cli(home, root, "attempt", "start", attempt.id, "--path", root);
   cli(home, root, "attempt", "advance", attempt.id, "--path", root);
-  writeFileSync(join(attempt.folder, "review.json"), JSON.stringify({
-    pr_url: "https://github.com/o/r/pull/1", verdict: "PASS", evidence: ["x"], findings: [],
-    base: "a".repeat(40), head_reviewed: "not-a-sha",
-  }));
+  writeFileSync(join(attempt.folder, "review.json"), JSON.stringify({ ...validReviewArtifact(), findings: [{ id: "f1" }] }));
   assert.throws(
     () => cli(home, root, "attempt", "advance", attempt.id, "--path", root),
-    /head_reviewed must be a full 40-hex/,
+    /findings\[0\]\.priority must be P0, P1, P2, or P3/,
   );
 });
 
-test("PASS verdicts with open findings fail the built-in check", () => {
+test("the gate check and `dirf review validate` agree on the same artifact", () => {
+  const { home, root, slug, attempt } = gatedAttempt({
+    approve: { kind: "verify", check: "review-json" },
+  });
+  cli(home, root, "attempt", "start", attempt.id, "--path", root);
+  cli(home, root, "attempt", "advance", attempt.id, "--path", root);
+  const reviewPath = join(home, "review.json");
+  writeFileSync(reviewPath, JSON.stringify(validReviewArtifact()));
+  // The playbook's declared validation (`dirf review ready review.json`
+  // shares this validator) accepts exactly this artifact.
+  assert.match(cli(home, root, "review", "validate", reviewPath), /Valid DIRF review artifact: PASS/);
+  writeFileSync(join(attempt.folder, "review.json"), readFileSync(reviewPath, "utf8"));
+  assert.equal(runBuiltinCheck(slug, attempt.id, "review-json").ok, true);
+
+  const brokenPath = join(home, "broken-review.json");
+  writeFileSync(brokenPath, JSON.stringify({ ...validReviewArtifact(), target: { ...validReviewArtifact().target, head_sha: "nope" } }));
+  let playbookError = "";
+  try { cli(home, root, "review", "validate", brokenPath); } catch (error) { playbookError = error.message; }
+  assert.match(playbookError, /target\.head_sha must be a 40-character Git SHA/);
+  writeFileSync(join(attempt.folder, "review.json"), readFileSync(brokenPath, "utf8"));
+  const rejected = runBuiltinCheck(slug, attempt.id, "review-json");
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.output, /target\.head_sha must be a 40-character Git SHA/);
+});
+
+test("a stored verdict fails the built-in check — the verdict is derived, not stored", () => {
   const { home, root, attempt } = gatedAttempt({
     approve: { kind: "verify", check: "review-json" },
   });
   cli(home, root, "attempt", "start", attempt.id, "--path", root);
   cli(home, root, "attempt", "advance", attempt.id, "--path", root);
-  writeFileSync(join(attempt.folder, "review.json"), JSON.stringify({
-    pr_url: "https://github.com/o/r/pull/1", base: "a".repeat(40), head_reviewed: "b".repeat(40),
-    verdict: "PASS", evidence: ["x"],
-    findings: [{ id: 1, disposition: "fix_now" }],
-  }));
+  writeFileSync(join(attempt.folder, "review.json"), JSON.stringify({ ...validReviewArtifact(), verdict: "PASS" }));
   assert.throws(
     () => cli(home, root, "attempt", "advance", attempt.id, "--path", root),
-    /PASS verdict with open findings/,
+    /verdict is derived and must not be stored/,
   );
 });
 
@@ -184,9 +214,21 @@ test("attempts whose gates carry only typed evidence cannot complete and project
   writeHandoff(slug, "# Handoff\n");
   assert.throws(
     () => updateAttemptLifecycle(slug, attempt.id, "complete", { confirm: true }),
-    /no captured verification/,
+    // No command can re-capture a gate crossed only with typed evidence: the
+    // error must say the attempt cannot be completed and must be restarted.
+    /no captured verification[\s\S]*abandon/,
   );
   assert.deepEqual(attemptAudit(slug, attempt.id), { gated: true, unaudited: true });
+});
+
+test("public attempt views derive unaudited from stored facts without a gate error", () => {
+  const { home, root, slug, attempt } = gatedAttempt({ build: { kind: "verify" } });
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "node --test", output: "typed claim" } });
+  const listed = JSON.parse(cli(home, root, "list", "--path", root, "--json"));
+  const view = listed.find((entry) => entry.id === attempt.id);
+  assert.deepEqual({ gated: view.gated, unaudited: view.unaudited }, { gated: true, unaudited: true });
+  assert.equal(view.gate_error, undefined);
 });
 
 test("gate-free attempts keep their legacy completion behavior", () => {
@@ -196,6 +238,44 @@ test("gate-free attempts keep their legacy completion behavior", () => {
   updateAttemptLifecycle(slug, attempt.id, "advance");
   const done = updateAttemptLifecycle(slug, attempt.id, "complete", { confirm: true });
   assert.equal(done.status, "done");
+});
+
+test("--auto refuses --run before auto-advance mutates anything", () => {
+  const { home, root, slug, attempt } = gatedAttempt({});
+  cli(home, root, "attempt", "start", attempt.id, "--path", root);
+  assert.throws(
+    () => cli(home, root, "attempt", "advance", attempt.id, "--auto", "--run", "node -e \"process.exit(1)\"", "--path", root),
+    /--run cannot be combined with --auto/,
+  );
+  const after = getAttempt(slug, attempt.id);
+  assert.equal(after.current_phase, "build", "auto-advance must not run before the guard");
+  assert.equal(after.evidence, undefined);
+});
+
+test("a rejected record-progress appends no section and consumes no update number", () => {
+  const { home, root, slug, attempt } = gatedAttempt({ build: { kind: "verify" } });
+  cli(home, root, "attempt", "start", attempt.id, "--path", root);
+  assert.throws(
+    () => cli(home, root, "record-progress", "jump", "--attempt", attempt.id, "--phase", "post", "--path", root),
+    /immediate successor/,
+  );
+  assert.equal(readAttemptHandoff(slug, attempt.id), null, "no attempt handoff section after rejection");
+  assert.equal(readHandoff(slug), null, "canonical handoff untouched after rejection");
+  // The corrected retry numbers its section as if the rejected call never ran.
+  cli(home, root, "record-progress", "steady", "--attempt", attempt.id, "--phase", "build", "--path", root);
+  const handoff = parseCurrentHandoff(readAttemptHandoff(slug, attempt.id));
+  assert.equal(handoff.updateNumber, 1);
+  assert.deepEqual(handoff.completedSteps, ["steady"]);
+});
+
+test("an unsatisfied gate rejects record-progress before any write", () => {
+  const { home, root, slug, attempt } = gatedAttempt({ build: { kind: "verify" } });
+  cli(home, root, "attempt", "start", attempt.id, "--path", root);
+  assert.throws(
+    () => cli(home, root, "record-progress", "hop", "--attempt", attempt.id, "--phase", "approve", "--path", root),
+    /gate on "build" is unsatisfied/,
+  );
+  assert.equal(readAttemptHandoff(slug, attempt.id), null);
 });
 
 test("record-progress rejects phases beyond the immediate successor", () => {
@@ -243,6 +323,7 @@ test("recorded_by is derived from the detected environment (project + global dot
     HOME: isolatedHome, USERPROFILE: isolatedHome,
   };
   delete env.DIRF_HARNESS; delete env.DIRF_SESSION_ID; delete env.CODEX_THREAD_ID;
+  delete env.CODEX_HOME; // persistent configuration, not a session marker
   delete env.DIRF_MODEL; delete env.ANTHROPIC_MODEL;
   delete env.CLAUDECODE; delete env.CLAUDE_CODE_ENTRYPOINT;
   delete env.CURSOR_AGENT; delete env.CURSOR_TRACE_ID;
@@ -265,6 +346,7 @@ test("recorded_by is null only when nothing is installed and nothing is exported
     HOME: isolatedHome, USERPROFILE: isolatedHome,
   };
   delete env.DIRF_HARNESS; delete env.DIRF_SESSION_ID; delete env.CODEX_THREAD_ID;
+  delete env.CODEX_HOME; // persistent configuration, not a session marker
   delete env.DIRF_MODEL; delete env.ANTHROPIC_MODEL;
   delete env.CLAUDECODE; delete env.CLAUDE_CODE_ENTRYPOINT;
   delete env.CURSOR_AGENT; delete env.CURSOR_TRACE_ID;
@@ -274,4 +356,31 @@ test("recorded_by is null only when nothing is installed and nothing is exported
   run("attempt", "start", attempt.id, "--path", root);
   run("attempt", "gate", attempt.id, "approve", "accept", "--comment", "ok", "--path", root);
   assert.equal(attemptGates(slug, attempt.id).find((g) => g.phase === "approve").recorded_by, null);
+});
+
+test("CODEX_HOME is persistent configuration, not a session marker", () => {
+  const { home, root, slug, attempt } = gatedAttempt({ approve: { kind: "decision" } });
+  const emptyHome = mkdtempSync(join(tmpdir(), "dirf-no-harness-"));
+  const isolatedHome = join(emptyHome, "home");
+  mkdirSync(isolatedHome, { recursive: true });
+  // A human exporting CODEX_HOME in a shell profile must not be recorded as
+  // the codex harness: presence of a config marker is not the executor.
+  const env = {
+    ...process.env, DIRF_HOME: home,
+    HOME: isolatedHome, USERPROFILE: isolatedHome,
+    CODEX_HOME: join(emptyHome, "codex-config"),
+  };
+  delete env.DIRF_HARNESS; delete env.DIRF_SESSION_ID; delete env.CODEX_THREAD_ID;
+  // CODEX_HOME stays set on purpose — the point under test.
+  delete env.DIRF_MODEL; delete env.ANTHROPIC_MODEL;
+  delete env.CLAUDECODE; delete env.CLAUDE_CODE_ENTRYPOINT;
+  delete env.CURSOR_AGENT; delete env.CURSOR_TRACE_ID;
+  const run = (...args) => execFileSync(process.execPath, [CLI, ...args], {
+    cwd: root, encoding: "utf8", timeout: 30000, env,
+  });
+  run("attempt", "start", attempt.id, "--path", root);
+  run("attempt", "gate", attempt.id, "approve", "accept", "--comment", "ok", "--path", root);
+  const gate = attemptGates(slug, attempt.id).find((g) => g.phase === "approve");
+  assert.notEqual(gate.recorded_by, "codex", `CODEX_HOME alone must not attribute the decision to codex, got ${gate.recorded_by}`);
+  assert.equal(gate.recorded_by, null);
 });

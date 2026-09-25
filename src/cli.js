@@ -1318,14 +1318,19 @@ function gateEvidenceForPhase(slug, id, phase, args) {
 }
 
 // Deterministic recorder identity for gate records: the agent harness that
-// executed the command. Sourced from the same environment attempt observe
-// trusts (DIRF_HARNESS / DIRF_SESSION_ID / CODEX_THREAD_ID), plus DIRF_MODEL
-// when the host exports it. Null when the host provides nothing.
+// executed the command. Sourced from the explicit DIRF_* overrides
+// (DIRF_HARNESS / DIRF_SESSION_ID / DIRF_MODEL — a superset of what attempt
+// observe trusts) and session-scoped harness env markers: CODEX_THREAD_ID
+// for codex; CLAUDECODE or CLAUDE_CODE_ENTRYPOINT for claude; CURSOR_AGENT
+// or CURSOR_TRACE_ID for cursor. ANTHROPIC_MODEL fills the model when the
+// host exports it. Persistent configuration variables (e.g. CODEX_HOME) are
+// deliberately not markers: a machine's setup is not the executor. Null when
+// the host provides nothing.
 // Resolution order is explicit-over-detected: DIRF_HARNESS wins, then known
 // harness env markers, then the dot-folder scan (project + global). Model and
 // session come from env only — DIRF never guesses them.
 function envHarnessMarker(env) {
-  if (env.CODEX_THREAD_ID || env.CODEX_HOME) return "codex";
+  if (env.CODEX_THREAD_ID) return "codex";
   if (env.CLAUDECODE || env.CLAUDE_CODE_ENTRYPOINT) return "claude";
   if (env.CURSOR_AGENT || env.CURSOR_TRACE_ID) return "cursor";
   return null;
@@ -1392,13 +1397,15 @@ function cmdAttempt(args) {
     const detected = detectHarnesses(projectRoot(args.path || "."));
     result = updateAttemptLifecycle(slug, id, "gate", { phase, decision, comment: args.comment, worker: args.worker, recordedBy: recorderIdentityFromEnv(process.env, detected) });
   } else if (action === "advance" && args.auto) {
+    // Guard before autoAdvance runs: throwing after it would leave the
+    // auto-advanced lifecycle writes in place behind a failed command.
+    if (args.run) {
+      throw new Error(`--run cannot be combined with --auto: auto-advance cannot capture a per-phase run. Advance the gated phase once with --run, then use --auto.`);
+    }
     const outcome = autoAdvance(slug, id, {
       strict: args.strict,
       evidence: args.evidence ? { command: args.evidence, output: args.output } : undefined,
     });
-    if (args.run) {
-      throw new Error(`--run cannot be combined with --auto: auto-advance cannot capture a per-phase run. Advance the gated phase once with --run, then use --auto.`);
-    }
     result = outcome.attempt;
     extra = { advanced: outcome.advanced, stopped_at_gate: outcome.stopped_at_gate };
   } else {
