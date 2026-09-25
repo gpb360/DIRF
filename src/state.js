@@ -1230,7 +1230,7 @@ function updateAttemptLifecycleLocked(slug, idOrName, action, options = {}, now 
         // audit derivation exempts them, and so does completion.
         const needsCapture = gate.check || gate.kind !== "decision" || gate.verify;
         if (needsCapture && gate.run_exit === null && gate.check_ok === null) {
-          throw new Error(`Gate "${gate.phase}" has no captured verification (run it with --run so the CLI records the exit code); typed evidence cannot complete a gated attempt`);
+          throw new Error(`Gate "${gate.phase}" has no captured verification; typed evidence cannot complete a gated attempt. No command can re-capture a gate after the fact — this attempt cannot be completed: abandon it (dirf attempt abandon ${attempt.id} --reason "...") and start a new attempt whose gates are crossed only by a recorded run (--run) or a passed built-in check`);
         }
       }
       const handoffPath = join(storeProjectDir(slug), "HANDOFF.md");

@@ -214,7 +214,9 @@ test("attempts whose gates carry only typed evidence cannot complete and project
   writeHandoff(slug, "# Handoff\n");
   assert.throws(
     () => updateAttemptLifecycle(slug, attempt.id, "complete", { confirm: true }),
-    /no captured verification/,
+    // No command can re-capture a gate crossed only with typed evidence: the
+    // error must say the attempt cannot be completed and must be restarted.
+    /no captured verification[\s\S]*abandon/,
   );
   assert.deepEqual(attemptAudit(slug, attempt.id), { gated: true, unaudited: true });
 });
