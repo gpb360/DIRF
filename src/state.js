@@ -518,9 +518,11 @@ export function workflowGates(slug, idOrName) {
 // carries no captured verification (a CLI-run exit-0 or a passed built-in
 // check). Gateless workflows declare no verification contract and are never
 // flagged. Derived on read — it cannot be edited into or out of existence.
-export function attemptAudit(slug, idOrName) {
-  const attempt = getAttempt(slug, idOrName);
-  const gates = workflowGates(slug, idOrName);
+// Accepts an already-loaded attempt (projections hold one) or an id/name —
+// the same object-or-id contract as attemptGateState.
+export function attemptAudit(slug, idOrAttempt) {
+  const attempt = idOrAttempt !== null && typeof idOrAttempt === "object" ? idOrAttempt : getAttempt(slug, idOrAttempt);
+  const gates = attemptWorkflow(slug, attempt).gates;
   const gated = Object.keys(gates).length > 0;
   if (!gated) return { gated: false, unaudited: false };
   const evidence = attempt.evidence || {};

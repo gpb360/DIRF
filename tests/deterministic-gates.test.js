@@ -9,7 +9,8 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { attemptAudit, attemptGates, createAttemptInStore, getAttempt, registerProject, updateAttemptLifecycle, writeHandoff } from "../src/state.js";
+import { parseCurrentHandoff } from "../src/handoff-update.js";
+import { attemptAudit, attemptGates, createAttemptInStore, getAttempt, readAttemptHandoff, readHandoff, registerProject, updateAttemptLifecycle, writeHandoff } from "../src/state.js";
 
 const CLI = join(process.cwd(), "src", "cli.js");
 
@@ -187,6 +188,16 @@ test("attempts whose gates carry only typed evidence cannot complete and project
     /no captured verification/,
   );
   assert.deepEqual(attemptAudit(slug, attempt.id), { gated: true, unaudited: true });
+});
+
+test("public attempt views derive unaudited from stored facts without a gate error", () => {
+  const { home, root, slug, attempt } = gatedAttempt({ build: { kind: "verify" } });
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "node --test", output: "typed claim" } });
+  const listed = JSON.parse(cli(home, root, "list", "--path", root, "--json"));
+  const view = listed.find((entry) => entry.id === attempt.id);
+  assert.deepEqual({ gated: view.gated, unaudited: view.unaudited }, { gated: true, unaudited: true });
+  assert.equal(view.gate_error, undefined);
 });
 
 test("gate-free attempts keep their legacy completion behavior", () => {
