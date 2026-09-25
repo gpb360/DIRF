@@ -1891,11 +1891,17 @@ function replayPendingProgressLocked(slug) {
   const path = pendingProgressPath(slug);
   if (!existsSync(path)) return;
   const pending = JSON.parse(readFileSync(path, "utf8"));
+  // A replay failure must name the journal file: it survives until a read
+  // succeeds, so without the path every operation for the project fails with
+  // no indication of where the blocking artifact lives or how to clear it.
+  const escapeHatch = `Inspect or remove ${path} to clear this error.`;
   if (pending.schema_version !== 1 || !pending.update || typeof pending.update.message !== "string") {
-    throw new Error("Invalid pending progress checkpoint; preserve it for recovery.");
+    throw new Error(`Invalid pending progress checkpoint in ${path}; preserve it for recovery. ${escapeHatch}`);
   }
   const result = recordProgressLocked(slug, pending.update);
-  if (!result.recorded) throw new Error(`Pending progress could not be recovered: ${result.reason}`);
+  if (!result.recorded) {
+    throw new Error(`Pending progress could not be recovered (${result.reason}); journal: ${path}. ${escapeHatch}`);
+  }
 }
 
 function withProgressLock(slug, action) {
