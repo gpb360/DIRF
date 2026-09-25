@@ -238,6 +238,18 @@ test("gate-free attempts keep their legacy completion behavior", () => {
   assert.equal(done.status, "done");
 });
 
+test("--auto refuses --run before auto-advance mutates anything", () => {
+  const { home, root, slug, attempt } = gatedAttempt({});
+  cli(home, root, "attempt", "start", attempt.id, "--path", root);
+  assert.throws(
+    () => cli(home, root, "attempt", "advance", attempt.id, "--auto", "--run", "node -e \"process.exit(1)\"", "--path", root),
+    /--run cannot be combined with --auto/,
+  );
+  const after = getAttempt(slug, attempt.id);
+  assert.equal(after.current_phase, "build", "auto-advance must not run before the guard");
+  assert.equal(after.evidence, undefined);
+});
+
 test("a rejected record-progress appends no section and consumes no update number", () => {
   const { home, root, slug, attempt } = gatedAttempt({ build: { kind: "verify" } });
   cli(home, root, "attempt", "start", attempt.id, "--path", root);
