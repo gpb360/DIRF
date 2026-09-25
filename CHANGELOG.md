@@ -26,10 +26,13 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   capture `recorded_by` — the agent harness and session that executed the
   command — kept separate from `by`, the human the decision belongs to.
   Resolution is explicit-over-detected: `DIRF_HARNESS` / `DIRF_SESSION_ID` /
-  `DIRF_MODEL` win, then known harness env markers, then the same dot-folder
-  scan the skill discovery uses (project and global: `.claude`, `.codex`,
-  `.cursor`, `.zcode`, `.opencode`, `.agents`). `dirf setup` prints what it
-  detected.
+  `DIRF_MODEL` win, then known session-scoped harness env markers
+  (`CODEX_THREAD_ID`, `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CURSOR_AGENT`,
+  `CURSOR_TRACE_ID`; `ANTHROPIC_MODEL` fills in the model when exported),
+  then the dot-folder scan (project and global: `.claude`, `.codex`,
+  `.cursor`, `.zcode`, `.opencode` — `.agents` is a shared convention, not a
+  harness). When a session or model resolves but no harness does, the harness
+  is recorded as `unknown`. `dirf setup` prints what it detected.
 
 ## [0.30.0] — 2026-09-12
 
