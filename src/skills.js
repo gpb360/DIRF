@@ -469,9 +469,12 @@ export function discoverAgents(projectRoot) {
   return index;
 }
 
-// Harness detection reads the same dot-folders the skill scan reads, at both
-// levels — project and global — so harness identity is discovered from what
-// is actually installed, never assumed. Sorted; callers decide how to join.
+// Harness detection scans its own dot-folder set — .claude, .codex, .cursor,
+// .zcode, .opencode — at both levels, project and global, so harness identity
+// is discovered from what is actually installed, never assumed. It overlaps
+// with the skill scan's roots but is not the same list: the skill scan also
+// reads .agents/skills (and a plain skills/), and has no .cursor or .opencode
+// roots. Sorted; callers decide how to join.
 const HARNESS_FOLDER_NAMES = [
   [".claude", "claude"],
   [".codex", "codex"],
