@@ -246,8 +246,22 @@ test("a mixed Grill Me request continues into the requested PR review", () => {
     "--comment", "review scope confirmed", "--path", target, "--json",
   ], env, target);
   const continued = JSON.parse(run(["attempt", "advance", built.attempt.id, "--auto", "--path", target, "--json"], env, target));
-  assert.equal(continued.current_phase, "confirm no issues or checks remain");
-  assert.equal(continued.gates.find((gate) => gate.phase === "define verification gates").status, "passed");
+  // improve-plan's final phase is a user-owned decision gate: auto-advance
+  // stops there until the plan is accepted.
+  assert.equal(continued.stopped_at_gate, "define verification gates");
+  run([
+    "attempt", "gate", built.attempt.id, "define verification gates", "accept",
+    "--comment", "plan accepted", "--path", target, "--json",
+  ], env, target);
+  const continued2 = JSON.parse(run(["attempt", "advance", built.attempt.id, "--auto", "--path", target, "--json"], env, target));
+  // The pr-review continuation declares gates: auto-advance stops at the
+  // review-artifact verify gate instead of walking past it.
+  assert.equal(continued2.stopped_at_gate, "review the updated PR again");
+  assert.equal(continued2.current_phase, "review the updated PR again");
+  const reviewGate = continued2.gates.find((gate) => gate.phase === "review the updated PR again");
+  assert.equal(reviewGate.kind, "verify");
+  assert.equal(reviewGate.check, "review-json");
+  assert.equal(continued2.gates.find((gate) => gate.phase === "define verification gates").status, "accepted");
 });
 
 test("negated and action-first interview requests stay coherent end to end", () => {

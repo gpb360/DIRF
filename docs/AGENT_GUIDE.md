@@ -149,10 +149,17 @@ user-owned, per the Decision Ownership policy), `soft` (tracked; enforced only
 with `--strict`). Record them explicitly:
 
 ```bash
-dirf attempt advance <id> --evidence "<verify command>" [--output F]   # verify gates
-dirf attempt gate <id> "<phase>" accept|deny --comment "…"             # decision gates (deny requires a comment)
-dirf attempt advance <id> --auto [--strict]                            # cross covered phases, stop at gates
+dirf attempt advance <id> --run "<verify command>"   # verify gates — the CLI runs the command and records the exit code
+dirf attempt gate <id> "<phase>" accept|deny --comment "…"   # decision gates (deny requires a comment)
+dirf attempt advance <id> --auto [--strict]          # cross covered phases, stop at gates
 ```
+
+Gates are deterministic: a verify gate opens only on a run the CLI executed
+with exit 0 (or a built-in `check` the CLI ran itself), and completing a gated
+attempt additionally requires the canonical handoff to be at least as fresh as
+the last phase write. Legacy `--evidence "text"` still crosses mid-flow gates
+for in-flight attempts, but it can never complete a gated attempt, and such
+attempts project as `unaudited`.
 
 `dirf resume` lists any **pending gates** first so you reconcile them before
 continuing, and replays recorded evidence for completed phases instead of

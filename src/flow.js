@@ -23,8 +23,19 @@ export function validateWorkflowGates(workflow = {}, label = "workflow") {
     if (!["verify", "decision", "soft"].includes(spec.kind)) {
       errors.push(`${label}: workflow.gates.${phase}.kind must be verify, decision, or soft`);
     }
-    if (spec.kind === "verify" && (typeof spec.verify !== "string" || !spec.verify.trim())) {
-      errors.push(`${label}: workflow.gates.${phase}.verify must be a non-empty string for verify gates`);
+    if (spec.check !== undefined && (typeof spec.check !== "string" || !spec.check.trim())) {
+      errors.push(`${label}: workflow.gates.${phase}.check must be a non-empty string (a built-in check name)`);
+    }
+    if (spec.check && spec.kind && spec.kind !== "verify") {
+      // A check bypasses the decision record in gateRequirement, so a
+      // "decision" gate with a check would open without any human accept.
+      errors.push(`${label}: workflow.gates.${phase}.check is only valid on verify gates`);
+    }
+    if (spec.check && spec.verify) {
+      errors.push(`${label}: workflow.gates.${phase} cannot declare both check and verify — a gate is satisfied by one mechanism`);
+    }
+    if (spec.kind === "verify" && !spec.check && (typeof spec.verify !== "string" || !spec.verify.trim())) {
+      errors.push(`${label}: workflow.gates.${phase}.verify must be a non-empty string for verify gates (or declare a built-in "check")`);
     } else if (spec.verify !== undefined && (typeof spec.verify !== "string" || !spec.verify.trim())) {
       errors.push(`${label}: workflow.gates.${phase}.verify must be a non-empty string`);
     }
