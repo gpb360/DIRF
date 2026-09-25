@@ -1583,13 +1583,17 @@ export function syncAttemptFromHandoff(slug, idOrName) {
 // → advance until current_phase matches the reported phase (unknown phases are
 // left alone — conservative). Returns the updated attempt, or null when
 // nothing changed.
-function syncLifecycleFromProgressLocked(slug, idOrName, phase, now = new Date()) {
+// The decision half (progressLifecyclePlanLocked) is separated from the
+// mutation half so recordProgress can validate adjacency and gate
+// satisfaction BEFORE it writes any handoff or consumes an update number —
+// a rejected checkpoint must leave nothing to duplicate on retry.
+function progressLifecyclePlanLocked(slug, idOrName, phase) {
   const attempt = getAttempt(slug, idOrName);
   if (!attempt?.tracked) return null;
   const phases = attemptPhases(slug, attempt.id);
   if (attempt.status === "planned") {
     if (!phases.length) return null;
-    return updateAttemptLifecycleLocked(slug, attempt.id, "start", {}, now);
+    return { action: "start" };
   }
   if (attempt.status === "in_progress" && phase && phases.includes(phase)) {
     // Deterministic adjacency: a checkpoint may name the current phase or the
@@ -1606,11 +1610,22 @@ function syncLifecycleFromProgressLocked(slug, idOrName, phase, now = new Date()
       if (blocker) {
         throw new Error(`cannot record phase ${JSON.stringify(phase)} — the gate on ${JSON.stringify(attempt.current_phase)} is unsatisfied: ${blocker.reason}`);
       }
-      return updateAttemptLifecycleLocked(slug, attempt.id, "advance", {}, now);
+      return { action: "advance" };
     }
-    return attempt;
+    return { unchanged: attempt };
   }
   return null;
+}
+
+function applyProgressLifecyclePlanLocked(slug, idOrName, plan, now = new Date()) {
+  if (!plan) return null;
+  if (plan.action) return updateAttemptLifecycleLocked(slug, idOrName, plan.action, {}, now);
+  return plan.unchanged;
+}
+
+function syncLifecycleFromProgressLocked(slug, idOrName, phase, now = new Date()) {
+  const plan = progressLifecyclePlanLocked(slug, idOrName, phase);
+  return applyProgressLifecyclePlanLocked(slug, idOrName, plan, now);
 }
 
 export function syncLifecycleFromProgress(slug, idOrName, phase, now = new Date()) {
@@ -2037,6 +2052,13 @@ export function recordProgress(slug, { message, timestamp, phase, next, files, a
       };
     }
 
+    // Validate-then-write: the lifecycle decision (adjacency + gate
+    // enforcement) is computed BEFORE any handoff write or update-number
+    // consumption, so a rejected checkpoint appends no progress section and
+    // consumes no update number — a corrected retry cannot duplicate an entry.
+    const lifecyclePlan = attemptDecision?.accepted
+      ? progressLifecyclePlanLocked(slug, attempt.id, phase || null)
+      : null;
     const update = { ...draftUpdate, updateNumber: nextProgressUpdateNumber(slug) };
     const updatedHandoff = canonicalAccepted
       ? updateProgressSection(canonicalBase, update)
@@ -2049,9 +2071,7 @@ export function recordProgress(slug, { message, timestamp, phase, next, files, a
       atomicWrite(join(storeAttemptDir(slug, attempt.id), "HANDOFF.md"), updatedAttemptHandoff);
     }
     if (canonicalAccepted) writeHandoff(slug, updatedHandoff);
-    const lifecycle = attemptDecision?.accepted
-      ? syncLifecycleFromProgressLocked(slug, attempt.id, phase || null)
-      : null;
+    const lifecycle = applyProgressLifecyclePlanLocked(slug, attempt.id, lifecyclePlan);
     return {
       handoff: updatedHandoff,
       attempt_handoff: updatedAttemptHandoff,

@@ -238,6 +238,32 @@ test("gate-free attempts keep their legacy completion behavior", () => {
   assert.equal(done.status, "done");
 });
 
+test("a rejected record-progress appends no section and consumes no update number", () => {
+  const { home, root, slug, attempt } = gatedAttempt({ build: { kind: "verify" } });
+  cli(home, root, "attempt", "start", attempt.id, "--path", root);
+  assert.throws(
+    () => cli(home, root, "record-progress", "jump", "--attempt", attempt.id, "--phase", "post", "--path", root),
+    /immediate successor/,
+  );
+  assert.equal(readAttemptHandoff(slug, attempt.id), null, "no attempt handoff section after rejection");
+  assert.equal(readHandoff(slug), null, "canonical handoff untouched after rejection");
+  // The corrected retry numbers its section as if the rejected call never ran.
+  cli(home, root, "record-progress", "steady", "--attempt", attempt.id, "--phase", "build", "--path", root);
+  const handoff = parseCurrentHandoff(readAttemptHandoff(slug, attempt.id));
+  assert.equal(handoff.updateNumber, 1);
+  assert.deepEqual(handoff.completedSteps, ["steady"]);
+});
+
+test("an unsatisfied gate rejects record-progress before any write", () => {
+  const { home, root, slug, attempt } = gatedAttempt({ build: { kind: "verify" } });
+  cli(home, root, "attempt", "start", attempt.id, "--path", root);
+  assert.throws(
+    () => cli(home, root, "record-progress", "hop", "--attempt", attempt.id, "--phase", "approve", "--path", root),
+    /gate on "build" is unsatisfied/,
+  );
+  assert.equal(readAttemptHandoff(slug, attempt.id), null);
+});
+
 test("record-progress rejects phases beyond the immediate successor", () => {
   const { home, root, slug, attempt } = gatedAttempt({ build: { kind: "verify" } });
   cli(home, root, "attempt", "start", attempt.id, "--path", root);
