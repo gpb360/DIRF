@@ -1397,13 +1397,15 @@ function cmdAttempt(args) {
     const detected = detectHarnesses(projectRoot(args.path || "."));
     result = updateAttemptLifecycle(slug, id, "gate", { phase, decision, comment: args.comment, worker: args.worker, recordedBy: recorderIdentityFromEnv(process.env, detected) });
   } else if (action === "advance" && args.auto) {
+    // Guard before autoAdvance runs: throwing after it would leave the
+    // auto-advanced lifecycle writes in place behind a failed command.
+    if (args.run) {
+      throw new Error(`--run cannot be combined with --auto: auto-advance cannot capture a per-phase run. Advance the gated phase once with --run, then use --auto.`);
+    }
     const outcome = autoAdvance(slug, id, {
       strict: args.strict,
       evidence: args.evidence ? { command: args.evidence, output: args.output } : undefined,
     });
-    if (args.run) {
-      throw new Error(`--run cannot be combined with --auto: auto-advance cannot capture a per-phase run. Advance the gated phase once with --run, then use --auto.`);
-    }
     result = outcome.attempt;
     extra = { advanced: outcome.advanced, stopped_at_gate: outcome.stopped_at_gate };
   } else {
