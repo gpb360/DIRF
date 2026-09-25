@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseCurrentHandoff } from "../src/handoff-update.js";
@@ -290,4 +290,97 @@ test("record-progress rejects phases beyond the immediate successor", () => {
   cli(home, root, "attempt", "advance", attempt.id, "--run", "node -e \"process.exit(0)\"", "--path", root);
   cli(home, root, "record-progress", "stepped forward", "--attempt", attempt.id, "--phase", "approve", "--path", root);
   assert.equal(getAttempt(slug, attempt.id).current_phase, "approve");
+});
+
+test("decision gate records capture the agent that recorded them", () => {
+  const { home, root, slug, attempt } = gatedAttempt({ approve: { kind: "decision" } });
+  const env = {
+    ...process.env, DIRF_HOME: home,
+    DIRF_HARNESS: "zcode", DIRF_SESSION_ID: "sess_test", DIRF_MODEL: "test-model",
+  };
+  const run = (...args) => execFileSync(process.execPath, [CLI, ...args], {
+    cwd: root, encoding: "utf8", timeout: 30000, env,
+  });
+  run("attempt", "start", attempt.id, "--path", root);
+  run("attempt", "advance", attempt.id, "--run", "node -e \"process.exit(0)\"", "--path", root);
+  run("attempt", "gate", attempt.id, "approve", "accept", "--comment", "ok", "--worker", "lead developer", "--path", root);
+  const gate = attemptGates(slug, attempt.id).find((g) => g.phase === "approve");
+  assert.equal(gate.status, "accepted");
+  assert.equal(gate.by, "lead developer");
+  assert.equal(gate.recorded_by, "zcode/sess_test on test-model");
+});
+
+test("recorded_by is derived from the detected environment (project + global dot-folders)", () => {
+  const { home, root, slug, attempt } = gatedAttempt({ approve: { kind: "decision" } });
+  // Fixture home with no harness folders and a project that has one.
+  const emptyHome = mkdtempSync(join(tmpdir(), "dirf-no-harness-"));
+  mkdirSync(join(emptyHome, "empty-home"), { recursive: true });
+  const isolatedHome = join(emptyHome, "empty-home");
+  mkdirSync(join(root, ".claude"), { recursive: true });
+  mkdirSync(join(root, ".agents"), { recursive: true }); // shared convention — never a harness
+  const env = {
+    ...process.env, DIRF_HOME: home,
+    HOME: isolatedHome, USERPROFILE: isolatedHome,
+  };
+  delete env.DIRF_HARNESS; delete env.DIRF_SESSION_ID; delete env.CODEX_THREAD_ID;
+  delete env.CODEX_HOME; // persistent configuration, not a session marker
+  delete env.DIRF_MODEL; delete env.ANTHROPIC_MODEL;
+  delete env.CLAUDECODE; delete env.CLAUDE_CODE_ENTRYPOINT;
+  delete env.CURSOR_AGENT; delete env.CURSOR_TRACE_ID;
+  const run = (...args) => execFileSync(process.execPath, [CLI, ...args], {
+    cwd: root, encoding: "utf8", timeout: 30000, env,
+  });
+  run("attempt", "start", attempt.id, "--path", root);
+  run("attempt", "gate", attempt.id, "approve", "accept", "--comment", "ok", "--path", root);
+  const gate = attemptGates(slug, attempt.id).find((g) => g.phase === "approve");
+  assert.equal(gate.recorded_by, "claude", `detected from the project dot-folder, got ${gate.recorded_by}`);
+});
+
+test("recorded_by is null only when nothing is installed and nothing is exported", () => {
+  const { home, root, slug, attempt } = gatedAttempt({ approve: { kind: "decision" } });
+  const emptyHome = mkdtempSync(join(tmpdir(), "dirf-no-harness-"));
+  const isolatedHome = join(emptyHome, "home");
+  mkdirSync(isolatedHome, { recursive: true });
+  const env = {
+    ...process.env, DIRF_HOME: home,
+    HOME: isolatedHome, USERPROFILE: isolatedHome,
+  };
+  delete env.DIRF_HARNESS; delete env.DIRF_SESSION_ID; delete env.CODEX_THREAD_ID;
+  delete env.CODEX_HOME; // persistent configuration, not a session marker
+  delete env.DIRF_MODEL; delete env.ANTHROPIC_MODEL;
+  delete env.CLAUDECODE; delete env.CLAUDE_CODE_ENTRYPOINT;
+  delete env.CURSOR_AGENT; delete env.CURSOR_TRACE_ID;
+  const run = (...args) => execFileSync(process.execPath, [CLI, ...args], {
+    cwd: root, encoding: "utf8", timeout: 30000, env,
+  });
+  run("attempt", "start", attempt.id, "--path", root);
+  run("attempt", "gate", attempt.id, "approve", "accept", "--comment", "ok", "--path", root);
+  assert.equal(attemptGates(slug, attempt.id).find((g) => g.phase === "approve").recorded_by, null);
+});
+
+test("CODEX_HOME is persistent configuration, not a session marker", () => {
+  const { home, root, slug, attempt } = gatedAttempt({ approve: { kind: "decision" } });
+  const emptyHome = mkdtempSync(join(tmpdir(), "dirf-no-harness-"));
+  const isolatedHome = join(emptyHome, "home");
+  mkdirSync(isolatedHome, { recursive: true });
+  // A human exporting CODEX_HOME in a shell profile must not be recorded as
+  // the codex harness: presence of a config marker is not the executor.
+  const env = {
+    ...process.env, DIRF_HOME: home,
+    HOME: isolatedHome, USERPROFILE: isolatedHome,
+    CODEX_HOME: join(emptyHome, "codex-config"),
+  };
+  delete env.DIRF_HARNESS; delete env.DIRF_SESSION_ID; delete env.CODEX_THREAD_ID;
+  // CODEX_HOME stays set on purpose — the point under test.
+  delete env.DIRF_MODEL; delete env.ANTHROPIC_MODEL;
+  delete env.CLAUDECODE; delete env.CLAUDE_CODE_ENTRYPOINT;
+  delete env.CURSOR_AGENT; delete env.CURSOR_TRACE_ID;
+  const run = (...args) => execFileSync(process.execPath, [CLI, ...args], {
+    cwd: root, encoding: "utf8", timeout: 30000, env,
+  });
+  run("attempt", "start", attempt.id, "--path", root);
+  run("attempt", "gate", attempt.id, "approve", "accept", "--comment", "ok", "--path", root);
+  const gate = attemptGates(slug, attempt.id).find((g) => g.phase === "approve");
+  assert.notEqual(gate.recorded_by, "codex", `CODEX_HOME alone must not attribute the decision to codex, got ${gate.recorded_by}`);
+  assert.equal(gate.recorded_by, null);
 });

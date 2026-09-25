@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { ROOT, REGISTRY, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, fileHash, folderHash, loadJson } from "./paths.js";
 import { collectRoutingFacts, loadPlaybooks, recommend } from "./router.js";
-import { bundledSkills, discover, discoverAgents, enrichDiscovered, lintSkillMetadata, loadRegistry, loadTrustedSources, missingSkillFiles, providerForPath, resolveAgentSkills, skillIsIncomplete, tokenBudget } from "./skills.js";
+import { bundledSkills, detectHarnesses, discover, discoverAgents, enrichDiscovered, lintSkillMetadata, loadRegistry, loadTrustedSources, missingSkillFiles, providerForPath, resolveAgentSkills, skillIsIncomplete, tokenBudget } from "./skills.js";
 import { FOCUSED_OUTPUT_RULES, buildInstructions, buildHtml } from "./renderer.js";
 import { main as validateMain, validateSnapshot } from "./validate.js";
 import { inspect, detectStackProfile } from "./inspect.js";
@@ -835,6 +835,8 @@ function cmdSetup(args) {
   const discovered = enrichDiscovered(discover(result.root));
   const gaps = findCapabilityGaps(loadPlaybooks(), discovered);
   console.log(`Detected ${Object.keys(discovered).length} installed skills; no skills were installed.`);
+  const harnesses = detectHarnesses(result.root);
+  console.log(`Harnesses detected: project ${harnesses.project.join(", ") || "none"}; global ${harnesses.global.join(", ") || "none"}.`);
   if (gaps.length) console.log(`Capability gaps: ${gaps.map((gap) => gap.capability).join(", ")}`);
   else console.log("Capability gaps: none.");
   console.log("Host hint: run `dirf host setup` once to make future agent sessions DIRF-aware (SessionStart hook + global dirf skill).");
@@ -1315,6 +1317,35 @@ function gateEvidenceForPhase(slug, id, phase, args) {
   return args.evidence ? { command: args.evidence, output: args.output } : undefined;
 }
 
+// Deterministic recorder identity for gate records: the agent harness that
+// executed the command. Sourced from the explicit DIRF_* overrides
+// (DIRF_HARNESS / DIRF_SESSION_ID / DIRF_MODEL — a superset of what attempt
+// observe trusts) and session-scoped harness env markers: CODEX_THREAD_ID
+// for codex; CLAUDECODE or CLAUDE_CODE_ENTRYPOINT for claude; CURSOR_AGENT
+// or CURSOR_TRACE_ID for cursor. ANTHROPIC_MODEL fills the model when the
+// host exports it. Persistent configuration variables (e.g. CODEX_HOME) are
+// deliberately not markers: a machine's setup is not the executor. Null when
+// the host provides nothing.
+// Resolution order is explicit-over-detected: DIRF_HARNESS wins, then known
+// harness env markers, then the dot-folder scan (project + global). Model and
+// session come from env only — DIRF never guesses them.
+function envHarnessMarker(env) {
+  if (env.CODEX_THREAD_ID) return "codex";
+  if (env.CLAUDECODE || env.CLAUDE_CODE_ENTRYPOINT) return "claude";
+  if (env.CURSOR_AGENT || env.CURSOR_TRACE_ID) return "cursor";
+  return null;
+}
+
+function recorderIdentityFromEnv(env, detected = { project: [], global: [] }) {
+  const installed = [...new Set([...(detected.project || []), ...(detected.global || [])])].sort();
+  const harness = env.DIRF_HARNESS || envHarnessMarker(env) || (installed.length ? installed.join("+") : null);
+  const sessionId = env.DIRF_SESSION_ID || env.CODEX_THREAD_ID || null;
+  const model = env.DIRF_MODEL || env.ANTHROPIC_MODEL || null;
+  if (!harness && !sessionId && !model) return null;
+  const who = `${harness || "unknown"}${sessionId ? `/${sessionId}` : ""}`;
+  return model ? `${who} on ${model}` : who;
+}
+
 function cmdAttempt(args) {
   const slug = resolveStateSlug(args);
   const action = args._[0];
@@ -1363,7 +1394,8 @@ function cmdAttempt(args) {
     const phase = args._[2];
     const decision = args._[3];
     if (!phase || !decision) throw new Error('usage: dirf attempt gate <id> <phase> accept|deny [--comment "..."]');
-    result = updateAttemptLifecycle(slug, id, "gate", { phase, decision, comment: args.comment, worker: args.worker });
+    const detected = detectHarnesses(projectRoot(args.path || "."));
+    result = updateAttemptLifecycle(slug, id, "gate", { phase, decision, comment: args.comment, worker: args.worker, recordedBy: recorderIdentityFromEnv(process.env, detected) });
   } else if (action === "advance" && args.auto) {
     // Guard before autoAdvance runs: throwing after it would leave the
     // auto-advanced lifecycle writes in place behind a failed command.
