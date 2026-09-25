@@ -17,6 +17,11 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { resolveGoverningArtifact, validateArtifactGraph, validatePlanDelta } from "./artifacts.js";
 import { parseCurrentHandoff, updateProgressSection } from "./handoff-update.js";
+// The review-json built-in check enforces the real review artifact schema —
+// the one the pr-review playbook's declared validation (`dirf review ready
+// review.json`) already enforces through this module. Verdicts are derived
+// from findings/verification/confidence, never stored.
+import { deriveVerdict } from "../skills/code-review/scripts/review-report.mjs";
 
 const GIT_TIMEOUT = 30_000;
 const LIVE_OBSERVATION_TTL_MS = 5 * 60_000;
@@ -552,8 +557,11 @@ export function runBuiltinCheck(slug, idOrName, check) {
 }
 
 // The pr-review playbook's verify gate: review.json must exist in the attempt
-// folder, parse, carry the required fields, and stay internally consistent
-// (a PASS verdict cannot carry unresolved findings).
+// folder, parse, and satisfy the real review-report schema (the exact
+// validation `dirf review validate|ready review.json` performs — one schema,
+// one enforcer). The verdict is derived by that schema's own rule, so a PASS
+// can never carry findings: any published finding forces CONDITIONAL or FAIL,
+// which replaces the old hand-rolled "closed disposition" list.
 function validateAttemptReviewJson(attemptFolder) {
   const path = join(attemptFolder, "review.json");
   if (!existsSync(path)) return { ok: false, output: `review.json not found at ${path}` };
@@ -563,22 +571,12 @@ function validateAttemptReviewJson(attemptFolder) {
   } catch (error) {
     return { ok: false, output: `review.json is not valid JSON: ${error.message}` };
   }
-  const problems = [];
-  for (const field of ["pr_url", "base", "head_reviewed", "verdict", "evidence", "findings"]) {
-    if (!(field in review)) problems.push(`missing field "${field}"`);
+  try {
+    const verdict = deriveVerdict(review);
+    return { ok: true, output: `review.json valid: verdict ${verdict}, ${review.findings.length} finding(s), ${review.verification.length} verification item(s)` };
+  } catch (error) {
+    return { ok: false, output: `review.json invalid: ${error.message}` };
   }
-  if (!problems.length) {
-    if (!["PASS", "CONDITIONAL", "FAIL"].includes(review.verdict)) problems.push(`verdict ${JSON.stringify(review.verdict)} is not PASS, CONDITIONAL, or FAIL`);
-    if (!Array.isArray(review.evidence) || !review.evidence.length) problems.push("evidence must be a non-empty array");
-    if (!Array.isArray(review.findings)) problems.push("findings must be an array");
-    else if (review.verdict === "PASS" && review.findings.some((f) => f && f.disposition && !["resolved_local", "dismissed", "invalid", "duplicate"].includes(f.disposition))) {
-      problems.push("PASS verdict with open findings — reclassify or change the verdict");
-    }
-    if (review.head_reviewed && !/^[0-9a-f]{40}$/.test(review.head_reviewed)) problems.push("head_reviewed must be a full 40-hex commit SHA");
-  }
-  return problems.length
-    ? { ok: false, output: `review.json invalid:\n- ${problems.join("\n- ")}` }
-    : { ok: true, output: `review.json valid: verdict ${review.verdict}, ${review.findings.length} finding(s), ${review.evidence.length} evidence item(s)` };
 }
 
 // Why a phase may not be advanced past yet, or null when it can.
