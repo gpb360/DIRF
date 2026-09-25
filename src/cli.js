@@ -1325,7 +1325,7 @@ function gateEvidenceForPhase(slug, id, phase, args) {
 // harness env markers, then the dot-folder scan (project + global). Model and
 // session come from env only — DIRF never guesses them.
 function envHarnessMarker(env) {
-  if (env.CODEX_THREAD_ID || env.CODEX_HOME) return "codex";
+  if (env.CODEX_THREAD_ID) return "codex";
   if (env.CLAUDECODE || env.CLAUDE_CODE_ENTRYPOINT) return "claude";
   if (env.CURSOR_AGENT || env.CURSOR_TRACE_ID) return "cursor";
   return null;

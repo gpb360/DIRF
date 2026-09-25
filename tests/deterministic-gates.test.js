@@ -243,6 +243,7 @@ test("recorded_by is derived from the detected environment (project + global dot
     HOME: isolatedHome, USERPROFILE: isolatedHome,
   };
   delete env.DIRF_HARNESS; delete env.DIRF_SESSION_ID; delete env.CODEX_THREAD_ID;
+  delete env.CODEX_HOME; // persistent configuration, not a session marker
   delete env.DIRF_MODEL; delete env.ANTHROPIC_MODEL;
   delete env.CLAUDECODE; delete env.CLAUDE_CODE_ENTRYPOINT;
   delete env.CURSOR_AGENT; delete env.CURSOR_TRACE_ID;
@@ -265,6 +266,7 @@ test("recorded_by is null only when nothing is installed and nothing is exported
     HOME: isolatedHome, USERPROFILE: isolatedHome,
   };
   delete env.DIRF_HARNESS; delete env.DIRF_SESSION_ID; delete env.CODEX_THREAD_ID;
+  delete env.CODEX_HOME; // persistent configuration, not a session marker
   delete env.DIRF_MODEL; delete env.ANTHROPIC_MODEL;
   delete env.CLAUDECODE; delete env.CLAUDE_CODE_ENTRYPOINT;
   delete env.CURSOR_AGENT; delete env.CURSOR_TRACE_ID;
@@ -274,4 +276,31 @@ test("recorded_by is null only when nothing is installed and nothing is exported
   run("attempt", "start", attempt.id, "--path", root);
   run("attempt", "gate", attempt.id, "approve", "accept", "--comment", "ok", "--path", root);
   assert.equal(attemptGates(slug, attempt.id).find((g) => g.phase === "approve").recorded_by, null);
+});
+
+test("CODEX_HOME is persistent configuration, not a session marker", () => {
+  const { home, root, slug, attempt } = gatedAttempt({ approve: { kind: "decision" } });
+  const emptyHome = mkdtempSync(join(tmpdir(), "dirf-no-harness-"));
+  const isolatedHome = join(emptyHome, "home");
+  mkdirSync(isolatedHome, { recursive: true });
+  // A human exporting CODEX_HOME in a shell profile must not be recorded as
+  // the codex harness: presence of a config marker is not the executor.
+  const env = {
+    ...process.env, DIRF_HOME: home,
+    HOME: isolatedHome, USERPROFILE: isolatedHome,
+    CODEX_HOME: join(emptyHome, "codex-config"),
+  };
+  delete env.DIRF_HARNESS; delete env.DIRF_SESSION_ID; delete env.CODEX_THREAD_ID;
+  // CODEX_HOME stays set on purpose — the point under test.
+  delete env.DIRF_MODEL; delete env.ANTHROPIC_MODEL;
+  delete env.CLAUDECODE; delete env.CLAUDE_CODE_ENTRYPOINT;
+  delete env.CURSOR_AGENT; delete env.CURSOR_TRACE_ID;
+  const run = (...args) => execFileSync(process.execPath, [CLI, ...args], {
+    cwd: root, encoding: "utf8", timeout: 30000, env,
+  });
+  run("attempt", "start", attempt.id, "--path", root);
+  run("attempt", "gate", attempt.id, "approve", "accept", "--comment", "ok", "--path", root);
+  const gate = attemptGates(slug, attempt.id).find((g) => g.phase === "approve");
+  assert.notEqual(gate.recorded_by, "codex", `CODEX_HOME alone must not attribute the decision to codex, got ${gate.recorded_by}`);
+  assert.equal(gate.recorded_by, null);
 });
