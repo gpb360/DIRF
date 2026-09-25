@@ -23,6 +23,28 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   declare a decision gate on their final phase, so no DIRF-governed attempt
   completes without a recorded human accept.
 
+### Fixed
+- **`unaudited` now actually appears on the CLI surface.** Public attempt
+  views (`dirf list --json`, attempt JSON) passed an attempt object where an
+  id/name was expected, so the audit derivation threw on every attempt and
+  every gated attempt projected as audited with a bogus `gate_error`.
+  `attemptAudit` now accepts an attempt object or an id/name.
+- **The `review-json` gate enforces the real review artifact schema.** The
+  built-in check demanded a stored verdict in a homemade shape that the
+  playbook's own validation (`dirf review ready review.json`) rejects — no
+  artifact could satisfy both. The check now reuses `validateReview`/
+  `deriveVerdict` from the review-report script; the verdict is derived, so
+  closed/open findings follow the schema's own rule instead of a hand-rolled
+  disposition list.
+- **A rejected `record-progress` no longer writes first.** The lifecycle
+  adjacency/gate decision now runs before any handoff write or update-number
+  consumption, so a rejected checkpoint leaves no progress section and no
+  consumed sequence number to duplicate on retry.
+- `dirf attempt advance --auto --run` rejects the combination before
+  auto-advance mutates state, and the completion error for gates crossed only
+  with typed evidence now says the attempt must be abandoned and restarted
+  (no command can re-capture the evidence).
+
 ## [0.30.0] — 2026-09-12
 
 ### Added
