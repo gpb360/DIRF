@@ -128,6 +128,41 @@ implemented, added, omitted, and unverifiable scope. See the
 [Agent Guide](AGENT_GUIDE.md#typed-artifacts) for the metadata
 and plan-delta shapes.
 
+### Workflow gates
+
+Playbooks declare gates per phase. A `verify` gate needs recorded verification
+evidence; a `decision` gate needs a recorded user-owned accept; a `soft` gate
+is tracked and enforced only with `--strict`. Verify gates name either a
+built-in `check` the CLI executes itself, with no shell (the `pr-review`
+playbook gates its review phase on `review-json` schema validation), or a
+command the CLI runs on demand:
+
+```bash
+dirf attempt advance <id> --run "<verify command>"          # the CLI executes it and records exit code + output digest
+dirf attempt complete <id> --confirm --run "<verify cmd>"   # same capture for the final phase
+dirf attempt gate <id> "<phase>" accept|deny --comment "…"  # decision gates; deny requires a comment
+```
+
+A gate opens on a fact the CLI captured — a run it executed with exit code 0,
+or a passed built-in check — not on a typed claim. Legacy `--evidence "text"`
+still crosses mid-flow gates, but it can never complete a gated attempt: the
+completion error says the attempt must be abandoned and restarted. Completing
+a gated attempt also requires the canonical handoff to be at least as fresh as
+the last phase write. Attempts whose gates lack captured verification project
+as `unaudited` in `dirf list --json` and attempt JSON. Every shipped playbook
+ends its final phase in a user-owned decision gate, so no governed attempt
+completes without a recorded human accept.
+
+Decision records keep `by` — the human the decision belongs to — separate from
+`recorded_by` — the agent harness and session that executed the command.
+Identity resolution is explicit-over-detected: `DIRF_HARNESS`,
+`DIRF_SESSION_ID`, and `DIRF_MODEL` win; then session-scoped harness markers
+(`CODEX_THREAD_ID`, `CLAUDECODE`/`CLAUDE_CODE_ENTRYPOINT`,
+`CURSOR_AGENT`/`CURSOR_TRACE_ID`; `ANTHROPIC_MODEL` fills the model); then the
+dot-folder scan (`.claude`, `.codex`, `.cursor`, `.zcode`, `.opencode`, project
+and global). When a session or model resolves but no harness does, the harness
+is recorded as `unknown`. `dirf setup` prints what it detects.
+
 Status updates, validation summaries, and handoffs use **focused output** by
 default: result first, concrete evidence, at most five list items, and one next
 action. Disable it for a run with `--no-focused-output`. Hosts that expose
@@ -408,12 +443,18 @@ dirf attempt sync-from-handoff <id>         # or one attempt
 And to keep the lifecycle honest going forward: `dirf resume` auto-starts a
 planned attempt, and `dirf record-progress "what changed" --attempt <id> --phase X --next "next step"`
 advances that attempt to the reported phase (start → in_progress, in_progress →
-advance). You may omit `--attempt` only when the project has zero or one attempt;
-when a name is reused, pass the full attempt ID. Completion still requires the
-explicit `dirf attempt complete` gate.
-Final-phase gates are enforced too: use `--confirm`, include
-`--evidence "<exact command>" [--output "<result>"]` when the final phase
-declares verification, and satisfy any final decision or artifact requirement.
+advance). A checkpoint may name only the current phase or its immediate
+successor, and the current phase's gate must already be satisfied before the
+successor is recorded. A rejected checkpoint writes nothing — no progress
+section, no consumed update number — and an interrupted one journals to
+`.pending-progress.json` in the store, replays under the progress lock, and
+names that journal file when a replay fails. You may omit `--attempt` only when
+the project has zero or one attempt; when a name is reused, pass the full
+attempt ID. Completion still requires the explicit `dirf attempt complete`
+gate. Final-phase gates are enforced too: use `--confirm`, cross a declared
+verify command with `--run "<exact command>"` so the CLI captures it (typed
+evidence cannot complete a gated attempt), and satisfy any final decision or
+artifact requirement.
 
 ### Obsidian export
 

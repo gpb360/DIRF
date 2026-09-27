@@ -126,8 +126,11 @@ dirf record-progress "Implemented and tested the change" \
   --files "src/example.js" --next "Review the current diff"
 ```
 
-Use the phase from that attempt's workflow. A later session follows the saved
-next action and checks current repository facts before continuing.
+Use the phase from that attempt's workflow: only the current phase or its
+immediate successor is accepted, and a rejected checkpoint writes nothing — no
+progress section and no consumed update number to duplicate on retry. A later
+session follows the saved next action and checks current repository facts
+before continuing.
 
 ## Updates and team use
 
@@ -152,7 +155,9 @@ them manually if obsolete. Installing this change does not alter host settings.
   `dirf doctor` after fixing the global installation.
 - MCP unavailable: verify the command/path, Node version, and host logs. The
   server waits for JSON-RPC input; silence at a terminal is not a startup failure.
-- Progress not advancing: check `dirf state active`, the attempt ID, and its
-  allowed phases. Do not use another attempt merely because it is newer.
+- Progress not advancing: check `dirf state active`, the attempt ID, and that
+  the named phase is the attempt's current phase or its immediate successor —
+  an unsatisfied gate on the current phase also blocks the advance. Do not use
+  another attempt merely because it is newer.
 
 See the [reference](reference.md) for the complete command and state contracts.
