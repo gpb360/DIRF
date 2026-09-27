@@ -7,6 +7,10 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+Nothing yet.
+
+## [0.31.0] — 2026-09-27
+
 ### Added
 - **Deterministic gate enforcement.** `dirf attempt advance --run "CMD"` makes
   the CLI execute the command itself and record the exit code and an output

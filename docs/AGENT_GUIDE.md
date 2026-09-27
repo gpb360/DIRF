@@ -149,17 +149,29 @@ user-owned, per the Decision Ownership policy), `soft` (tracked; enforced only
 with `--strict`). Record them explicitly:
 
 ```bash
-dirf attempt advance <id> --run "<verify command>"   # verify gates — the CLI runs the command and records the exit code
+dirf attempt advance <id> --run "<verify command>"   # verify gates — the CLI runs the command and records exit code + output digest
 dirf attempt gate <id> "<phase>" accept|deny --comment "…"   # decision gates (deny requires a comment)
-dirf attempt advance <id> --auto [--strict]          # cross covered phases, stop at gates
+dirf attempt advance <id> --auto [--strict]          # cross covered phases, stop at gates (--run cannot combine with --auto)
 ```
 
 Gates are deterministic: a verify gate opens only on a run the CLI executed
 with exit 0 (or a built-in `check` the CLI ran itself), and completing a gated
 attempt additionally requires the canonical handoff to be at least as fresh as
 the last phase write. Legacy `--evidence "text"` still crosses mid-flow gates
-for in-flight attempts, but it can never complete a gated attempt, and such
-attempts project as `unaudited`.
+for in-flight attempts, but it can never complete a gated attempt — the error
+says to abandon and restart — and such attempts project as `unaudited`. Every
+shipped playbook ends its final phase in a user-owned decision gate, so a
+gated attempt cannot complete without a recorded human accept.
+
+Decision gate records keep `by` — the human the decision belongs to — separate
+from `recorded_by` — the harness and session that executed the command.
+Identity resolves explicit-over-detected: `DIRF_HARNESS` / `DIRF_SESSION_ID` /
+`DIRF_MODEL` win, then session-scoped harness markers (`CODEX_THREAD_ID`,
+`CLAUDECODE`/`CLAUDE_CODE_ENTRYPOINT`, `CURSOR_AGENT`/`CURSOR_TRACE_ID`;
+`ANTHROPIC_MODEL` fills the model), then the dot-folder scan (`.claude`,
+`.codex`, `.cursor`, `.zcode`, `.opencode`). When a session or model resolves
+but no harness does, the harness is recorded as `unknown`. `dirf setup` prints
+what it detects.
 
 `dirf resume` lists any **pending gates** first so you reconcile them before
 continuing, and replays recorded evidence for completed phases instead of
@@ -242,7 +254,8 @@ Reference existing specs/tickets/decisions rather than restating them.
 | `dirf build <name> "<task>"` | route a task → instruction set in the store |
 | `dirf learn [URL\|FILE\|TEXT]` | ingest one authorized source; a connected agent continues through read-only analysis to the decision gate without another user command |
 | `dirf resume <name-or-id>` | load one attempt's workflow + handoff (lists pending gates) |
-| `dirf attempt advance <id> [--evidence "CMD"] [--output F] [--strict] [--auto]` | advance one phase (gates enforced); `--auto` crosses covered phases and stops at gates |
+| `dirf attempt advance <id> [--run "CMD" \| --evidence "TEXT"] [--strict] [--auto]` | advance one phase (gates enforced); `--run` makes the CLI execute the command and record exit code + output digest; `--auto` crosses covered phases and stops at gates |
+| `dirf attempt complete <id> --confirm [--run "CMD"]` | complete from the final phase; gated attempts require captured evidence and a canonical handoff at least as fresh as the last phase write |
 | `dirf attempt gate <id> <phase> accept\|deny [--comment "…"]` | record a user-owned decision on a decision-gated phase (deny requires a comment) |
 | `dirf attempt block <id> --reason R [--wait input\|blocker]` | block an attempt; `--wait input` marks it as awaiting user input |
 | `dirf attempt observe <id> [--execution-status active\|idle\|unknown] [--file SNAPSHOT]` | trusted harness adapter refreshes the orchestrator-owned execution snapshot; requires `DIRF_ORCHESTRATOR_TOKEN` |
@@ -423,12 +436,20 @@ dirf attempt sync-from-handoff            # backfill done status from handoff ev
 And keep it honest going forward — `dirf resume` auto-starts a planned attempt,
 and `dirf record-progress "what changed" --attempt <id> --phase X --next "next step"`
 advances that attempt's lifecycle to match the phase being reported (start →
-in_progress → advance). `--attempt` may be omitted only when the project has zero
+in_progress → advance). A checkpoint may name only the current phase or its
+immediate successor, and a rejected checkpoint writes nothing — no progress
+section, no consumed update number — so a corrected retry cannot duplicate an
+entry. `--attempt` may be omitted only when the project has zero
 or one attempt; use the full attempt ID when a name is reused. Explicit
 completion (`dirf attempt complete --confirm`) stays a deliberate final gate.
-If the final phase declares a verify command, pass its evidence with
-`--evidence "<exact command>" [--output "<result>"]`; final decision and
-artifact gates must also be satisfied before completion.
+If the final phase declares a verify command, cross it with
+`--run "<exact command>"` so the CLI captures the exit code — typed
+`--evidence` text cannot complete a gated attempt. Final decision and
+artifact gates must also be satisfied, and the canonical handoff must be at
+least as fresh as the last phase write, before completion succeeds. If a
+process dies mid-checkpoint, the update journals to `.pending-progress.json`
+in the store and replays under the progress lock on the next handoff read or
+write; a replay failure names that journal file.
 
 To hand the portfolio to a human: `dirf export obsidian` writes notes + a
 color-coded `.canvas` dashboard into the active Obsidian vault, and `dirf export

@@ -54,12 +54,14 @@ file that names the store path.
 
 - Keep the work minimal: reuse what the codebase already has, standard library
   before a new dependency, the smallest correct change, delete before you add.
-- Advance one phase at a time with evidence:
-  `dirf attempt advance <id> --evidence "<what you ran / verified>"`
-  Record evidence, not claims. `--auto` crosses covered phases and **stops at
-  gates**.
+- Advance one phase at a time with captured evidence:
+  `dirf attempt advance <id> --run "<command>"` — the CLI executes the command
+  and records the exit code and output digest; built-in `check` gates record
+  themselves. Record facts, not claims. `--auto` crosses covered phases and
+  **stops at gates** (it cannot combine with `--run`).
 - Decision gates: stop and ask the user.
   `dirf attempt gate <id> <phase> accept|deny --comment "..."` — never bypass.
+  Every shipped playbook ends in one.
 - Track progress: `dirf record-progress "<message>" --attempt <id> --phase
   <phase> --next "<exact next action>"`.
 - Typed artifacts: `dirf artifact record <id> --file meta.json`, then
@@ -92,10 +94,10 @@ dirf state which | read-handoff | list-attempts   # diagnosis and recovery
 dirf resume <id>                                   # continue exactly where it stopped
 dirf build|plan|create <name> "<task>" [--playbooks DIR]
 dirf learn <url|file|text>                         # provenance-bound study
-dirf attempt advance <id> --evidence "..."         # one phase, with evidence
+dirf attempt advance <id> --run "<command>"        # one phase, evidence the CLI captured
 dirf attempt gate <id> <phase> accept|deny --comment "..."
 dirf artifact record|accept|list <id> [--file F]
-dirf record-progress "<msg>" --attempt <id> --phase P --next "..."
+dirf record-progress "<msg>" --attempt <id> --phase P --next "..."   # P = current or next phase
 dirf status | portfolio | list
 ```
 
