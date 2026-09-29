@@ -1,28 +1,18 @@
 import { randomUUID } from "node:crypto";
 
-const SAFE_ARGUMENTS = new Map([
-  ["attempt", "dirf.attempt_id"],
-  ["workItem", "dirf.work_item"],
-  ["reviewRevision", "dirf.review_revision"],
-]);
-
-function safeAttributes(toolName, args, outcome) {
+function safeAttributes(toolName, outcome) {
   const attributes = {
     "dirf.tool_id": toolName,
     "dirf.execution_outcome": outcome,
   };
-  for (const [argument, attribute] of SAFE_ARGUMENTS) {
-    if (typeof args[argument] === "string" && args[argument].trim()) {
-      attributes[attribute] = args[argument].trim();
-    }
-  }
+  // Request arguments are untrusted content, even when named like identifiers.
   return attributes;
 }
 
 function emit(traceSink, span) {
   if (typeof traceSink !== "function") return;
   try {
-    traceSink(span);
+    Promise.resolve(traceSink(span)).catch(() => {});
   } catch {
     // Observability is evidence-only and must never affect tool execution.
   }
@@ -47,7 +37,7 @@ export function traceMcpToolCall(toolName, args, run, options = {}) {
   }
 
   const outcome = didThrow ? "error" : result?.recorded === false ? "rejected" : "success";
-  const attributes = safeAttributes(toolName, args, outcome);
+  const attributes = safeAttributes(toolName, outcome);
   emit(traceSink, {
     name: toolName,
     kind: "TOOL",

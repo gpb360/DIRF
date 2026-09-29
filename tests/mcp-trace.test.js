@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { traceMcpToolCall } from "../src/mcp-trace.js";
+import { PassThrough } from "node:stream";
 
 const FIXTURE = join(process.cwd(), "tests", "fixtures", "mcp-trace-server.js");
 const CLI = join(process.cwd(), "src", "cli.js");
@@ -23,7 +24,7 @@ function send(child, message) {
 function nextLine(stream) {
   return new Promise((resolve, reject) => {
     let buffer = "";
-    const timer = setTimeout(() => reject(new Error("timeout")), 5000);
+    const timer = setTimeout(() => { stream.off("data", onData); reject(new Error("timeout")); }, 5000);
     const onData = chunk => {
       buffer += chunk.toString();
       const newline = buffer.indexOf("\n");
@@ -39,14 +40,18 @@ function nextLine(stream) {
 function nextLines(stream, count) {
   return new Promise((resolve, reject) => {
     let buffer = "";
-    const timer = setTimeout(() => reject(new Error("timeout")), 5000);
+    const timer = setTimeout(() => { stream.off("data", onData); reject(new Error("timeout")); }, 5000);
     const onData = chunk => {
       buffer += chunk.toString();
-      const lines = buffer.split("\n").filter(Boolean);
+      const lines = buffer.split("\n").slice(0, -1).filter(Boolean);
       if (lines.length < count) return;
       clearTimeout(timer);
       stream.off("data", onData);
-      resolve(lines.slice(0, count).map(line => JSON.parse(line)));
+      try {
+        resolve(lines.slice(0, count).map(line => JSON.parse(line)));
+      } catch (error) {
+        reject(error);
+      }
     };
     stream.on("data", onData);
   });
@@ -95,9 +100,6 @@ test("records a parent request span and child TOOL span with allowlisted DIRF at
   assert.deepEqual(tool.attributes, {
     "dirf.tool_id": "dirf_record_progress",
     "dirf.execution_outcome": "success",
-    "dirf.attempt_id": "attempt-1",
-    "dirf.work_item": "pr:66",
-    "dirf.review_revision": "abc123",
   });
   assert.doesNotMatch(JSON.stringify(spans), /secret prompt-like content|private handoff body|private path/);
 });
@@ -153,7 +155,7 @@ test("real MCP process emits correlated spans for a local project tool call", as
   try {
     await initialize(child);
     send(child, { jsonrpc: "2.0", id: 2, method: "tools/call", params: {
-      name: "dirf_read_handoff", arguments: { project },
+      name: "dirf_read_handoff", arguments: { project, attempt: "PRIVATE-PATH", workItem: "SECRET-SENTINEL", reviewRevision: "PRIVATE-PROMPT" },
     } });
     const response = await nextLine(child.stdout);
     const [tool, request] = await nextLines(child.stdio[3], 2);
@@ -162,17 +164,18 @@ test("real MCP process emits correlated spans for a local project tool call", as
     assert.equal(request.kind, "CHAIN");
     assert.equal(tool.traceId, request.traceId);
     assert.equal(tool.parentSpanId, request.spanId);
+    assert.doesNotMatch(JSON.stringify([tool, request]), /PRIVATE-PATH|SECRET-SENTINEL|PRIVATE-PROMPT/);
     assert.doesNotMatch(JSON.stringify([tool, request]), new RegExp(project.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   } finally {
     child.kill();
   }
 });
 
-test("failing trace sink cannot change a real MCP write result or canonical bytes", async () => {
+for (const mode of ["fail", "async-fail"]) test(`${mode} sink cannot change a real MCP write result or canonical bytes`, async () => {
   const home = mkdtempSync(join(tmpdir(), "dirf-mcp-home-"));
   const project = setupProject(home);
   const content = "# Boundary proof\n\nExpected canonical bytes.\n";
-  const child = startBoundary(home, "fail");
+  const child = startBoundary(home, mode);
   try {
     await initialize(child);
     send(child, { jsonrpc: "2.0", id: 2, method: "tools/call", params: {
@@ -184,7 +187,31 @@ test("failing trace sink cannot change a real MCP write result or canonical byte
       cwd: project, env: { ...process.env, DIRF_HOME: home }, encoding: "utf8",
     });
     assert.equal(handoff, content);
+    // A second request proves a rejected promise did not terminate the server.
+    send(child, { jsonrpc: "2.0", id: 3, method: "tools/call", params: {
+      name: "dirf_read_handoff", arguments: { project },
+    } });
+    const second = await nextLine(child.stdout);
+    assert.equal(JSON.parse(second.result.content[0].text).content, content);
   } finally {
     child.kill();
   }
+});
+
+test("span reader waits for a newline across split pipe chunks", async () => {
+  const stream = new PassThrough();
+  const pending = nextLines(stream, 2);
+  stream.write('{"kind":"TOOL"}\n{"kind":');
+  stream.write('"CHAIN"}');
+  stream.write('\n');
+  assert.deepEqual(await pending, [{ kind: "TOOL" }, { kind: "CHAIN" }]);
+  stream.destroy();
+});
+
+test("span reader rejects malformed complete JSON through its promise", async () => {
+  const stream = new PassThrough();
+  const pending = nextLines(stream, 1);
+  stream.write('invalid\n');
+  await assert.rejects(pending, SyntaxError);
+  stream.destroy();
 });
