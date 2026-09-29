@@ -37,14 +37,16 @@ export function traceMcpToolCall(toolName, args, run, options = {}) {
   const toolSpanId = idFactory();
   let result;
   let error;
+  let didThrow = false;
 
   try {
     result = run();
   } catch (caught) {
+    didThrow = true;
     error = caught;
   }
 
-  const outcome = error ? "error" : result?.recorded === false ? "rejected" : "success";
+  const outcome = didThrow ? "error" : result?.recorded === false ? "rejected" : "success";
   const attributes = safeAttributes(toolName, args, outcome);
   emit(traceSink, {
     name: toolName,
@@ -63,6 +65,6 @@ export function traceMcpToolCall(toolName, args, run, options = {}) {
     attributes,
   });
 
-  if (error) throw error;
+  if (didThrow) throw error;
   return result;
 }
