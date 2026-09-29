@@ -10,6 +10,7 @@ import {
   writeHandoff, listAttempts, getAttempt, readAttemptAssignment, storeProjectDir, recordProgress, projectHandoffContextState,
 } from "./state.js";
 import { resolve } from "node:path";
+import { traceMcpToolCall } from "./mcp-trace.js";
 
 const PROTOCOL_VERSION = "2024-11-05";
 const MODERN_VERSION = "2026-07-28";
@@ -216,7 +217,7 @@ rl.on("line", (line) => {
     try {
       const args = params.arguments || {};
       validateArguments(tool, args);
-      const result = callTool(params.name, args);
+      const result = traceMcpToolCall(params.name, args, () => callTool(params.name, args));
       reply({ content: [{ type: "text", text: JSON.stringify(result) }],
         ...(modern ? { structuredContent: result, isError: result.recorded === false } : {}) });
     } catch (e) {
