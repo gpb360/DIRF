@@ -7,7 +7,14 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+## [0.31.0] - 2026-09-29
+
 ### Added
+- **MCP trace experiment.** A dependency-free injectable trace sink records
+  correlated request and tool spans. Request content and request-derived
+  identifiers are excluded. Tests exercise a real MCP process and verify that
+  synchronous and asynchronous sink failures preserve tool responses and
+  handoff bytes. No production sink or telemetry exporter is enabled.
 - **Deterministic gate enforcement.** `dirf attempt advance --run "CMD"` makes
   the CLI execute the command itself and record the exit code and an output
   digest; verify gates open on that captured fact, not on typed evidence
