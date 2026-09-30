@@ -10,6 +10,8 @@ import {
   writeHandoff, listAttempts, getAttempt, readAttemptAssignment, storeProjectDir, recordProgress, projectHandoffContextState,
 } from "./state.js";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { traceMcpToolCall } from "./mcp-trace.js";
 
 const PROTOCOL_VERSION = "2024-11-05";
 const MODERN_VERSION = "2026-07-28";
@@ -108,11 +110,11 @@ function callTool(name, args) {
   }
 }
 
-function respond(id, result) {
-  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
+function respond(output, id, result) {
+  output.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
 }
-function respondError(id, code, message, data) {
-  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message, ...(data ? { data } : {}) } }) + "\n");
+function respondError(output, id, code, message, data) {
+  output.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message, ...(data ? { data } : {}) } }) + "\n");
 }
 
 const object = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -135,57 +137,58 @@ function validateArguments(tool, args) {
   }
 }
 
-let legacyInitialized = false;
-const rl = createInterface({ input: process.stdin });
-rl.on("line", (line) => {
+export function startMcpServer({ input = process.stdin, output = process.stdout, traceSink = null } = {}) {
+  let legacyInitialized = false;
+  const rl = createInterface({ input });
+  rl.on("line", (line) => {
   let msg;
   try { msg = JSON.parse(line); } catch {
-    respondError(undefined, -32700, "Parse error");
+    respondError(output, undefined, -32700, "Parse error");
     return;
   }
   const validId = object(msg) && (typeof msg.id === "string" || Number.isSafeInteger(msg.id));
   if (!object(msg) || msg.jsonrpc !== "2.0" || typeof msg.method !== "string" ||
       (Object.hasOwn(msg, "id") && !validId)) {
-    respondError(validId ? msg.id : undefined, -32600, "Invalid request");
+    respondError(output, validId ? msg.id : undefined, -32600, "Invalid request");
     return;
   }
   // Notifications have no response, and cannot invoke state-changing tools.
   // Operations are synchronous, so cancellation cannot interrupt an in-flight call.
   if (!Object.hasOwn(msg, "id")) return;
   if (msg.params !== undefined && !object(msg.params)) {
-    respondError(msg.id, -32602, "params must be an object");
+    respondError(output, msg.id, -32602, "params must be an object");
     return;
   }
   const params = msg.params || {};
   if (params._meta !== undefined && !object(params._meta)) {
-    respondError(msg.id, -32602, "_meta must be an object");
+    respondError(output, msg.id, -32602, "_meta must be an object");
     return;
   }
   const meta = params._meta || {};
   const modern = Object.hasOwn(meta, VERSION_KEY);
   if (modern && typeof meta[VERSION_KEY] !== "string") {
-    respondError(msg.id, -32602, "Protocol version must be a string");
+    respondError(output, msg.id, -32602, "Protocol version must be a string");
     return;
   }
   if (modern && meta[VERSION_KEY] !== MODERN_VERSION) {
-    respondError(msg.id, -32022, "Unsupported protocol version", { supported: [MODERN_VERSION], requested: meta[VERSION_KEY] });
+    respondError(output, msg.id, -32022, "Unsupported protocol version", { supported: [MODERN_VERSION], requested: meta[VERSION_KEY] });
     return;
   }
   if ((modern && !object(meta[CAPABILITIES_KEY])) ||
       (!modern && (Object.hasOwn(meta, CAPABILITIES_KEY) || msg.method === "server/discover"))) {
-    respondError(msg.id, -32602, "Modern requests require protocolVersion and clientCapabilities in _meta");
+    respondError(output, msg.id, -32602, "Modern requests require protocolVersion and clientCapabilities in _meta");
     return;
   }
   const info = meta["io.modelcontextprotocol/clientInfo"];
   if (modern && info !== undefined && (!object(info) || typeof info.name !== "string" || typeof info.version !== "string")) {
-    respondError(msg.id, -32602, "clientInfo must include name and version strings");
+    respondError(output, msg.id, -32602, "clientInfo must include name and version strings");
     return;
   }
-  const reply = (result) => respond(msg.id, modern ? modernResult(result) : result);
+  const reply = (result) => respond(output, msg.id, modern ? modernResult(result) : result);
   if (msg.method === "initialize" && !modern) {
     if (typeof params.protocolVersion !== "string" || !object(params.capabilities) ||
         !object(params.clientInfo) || typeof params.clientInfo.name !== "string" || typeof params.clientInfo.version !== "string") {
-      respondError(msg.id, -32602, "Invalid initialize parameters");
+      respondError(output, msg.id, -32602, "Invalid initialize parameters");
       return;
     }
     // A legacy client may accept this supported version or disconnect.
@@ -194,7 +197,7 @@ rl.on("line", (line) => {
     return;
   }
   if (!modern && !legacyInitialized) {
-    respondError(msg.id, -32602, "Supply modern request metadata or initialize a legacy session first");
+    respondError(output, msg.id, -32602, "Supply modern request metadata or initialize a legacy session first");
     return;
   }
   if (msg.method === "server/discover") {
@@ -203,27 +206,33 @@ rl.on("line", (line) => {
   }
   if (msg.method === "ping" && !modern) { reply({}); return; }
   if (msg.method === "tools/list") {
-    if (params.cursor !== undefined) { respondError(msg.id, -32602, "Invalid cursor: this tool list fits on one page"); return; }
+    if (params.cursor !== undefined) { respondError(output, msg.id, -32602, "Invalid cursor: this tool list fits on one page"); return; }
     reply({ tools: TOOLS, ...(modern ? cache : {}) });
     return;
   }
   if (msg.method === "tools/call") {
     const tool = TOOLS.find(tool => tool.name === params.name);
     if (!tool || (params.arguments !== undefined && !object(params.arguments))) {
-      respondError(msg.id, -32602, "Unknown tool or invalid tools/call parameters");
+      respondError(output, msg.id, -32602, "Unknown tool or invalid tools/call parameters");
       return;
     }
     try {
       const args = params.arguments || {};
       validateArguments(tool, args);
-      const result = callTool(params.name, args);
+      const result = traceMcpToolCall(params.name, args, () => callTool(params.name, args), { traceSink });
       reply({ content: [{ type: "text", text: JSON.stringify(result) }],
         ...(modern ? { structuredContent: result, isError: result.recorded === false } : {}) });
     } catch (e) {
       if (modern) reply({ content: [{ type: "text", text: e.message }], isError: true });
-      else respondError(msg.id, -32603, e.message);
+      else respondError(output, msg.id, -32603, e.message);
     }
     return;
   }
-  respondError(msg.id, -32601, `method not found: ${msg.method}`);
-});
+  respondError(output, msg.id, -32601, `method not found: ${msg.method}`);
+  });
+  return rl;
+}
+
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  startMcpServer();
+}
