@@ -7,6 +7,22 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+## [0.31.1] - 2026-10-01
+
+### Added
+- An offline experiment compares one shorter startup paragraph with real DIRF
+  instruction packs. Six fixtures retain complete original and candidate text,
+  SHA-256 hashes, exact task constraints, and UTF-8 byte counts.
+- Negative controls reject changed objectives, restrictions, approvals, commands,
+  phase order, and execution-receipt requirements. Unknown or ambiguous layouts
+  remain unchanged and earn no size benefit.
+
+The measured saving is 696 bytes: 3.14% across fixture READMEs and 0.58% across
+complete instruction packs. This does not prove better routing, model
+understanding, execution outcomes, token savings, or lower costs. The experiment
+is not enabled in the CLI or renderer; production defaults and dependencies are
+unchanged. See `docs/experiments/assignment-size.md` for reproduction and limits.
+
 ## [0.31.0] - 2026-09-29
 
 ### Added
