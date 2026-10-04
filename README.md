@@ -57,6 +57,11 @@ dirf record-progress "What changed and what passed" \
   --attempt <attempt-id> --phase "<workflow phase>" --next "One concrete action"
 ```
 
+Gated phases record facts, not claims: a verify gate opens on a command the
+CLI executed itself (`dirf attempt advance <attempt-id> --run "<command>"`),
+and every shipped playbook ends in a decision gate you accept or deny
+(`dirf attempt gate <attempt-id> "<phase>" accept|deny --comment "..."`).
+
 Coordination state lives in `~/.dirf/projects/<slug>/`. Worktrees of the same
 repository share that store, while each attempt keeps its own handoff and
 checkout responsibility.
