@@ -109,7 +109,14 @@ try {
   status = run(["status", "--path", TARGET]);
   assertContains(status, "Attempts: 5");
   assertContains(status, "Latest:");
-  assertContains(run(["resume", attemptId, "--path", TARGET]), "## Exact next action");
+  const resume = run(["resume", attemptId, "--path", TARGET]);
+  assertContains(resume, "Stage:");
+  assertContains(resume, "Next:");
+  assertContains(resume, "Load attempt handoff:");
+  if (resume.includes("## Exact next action") || resume.trim().split(/\r?\n/).length > 10) {
+    throw new Error("default resume must show a brief task summary");
+  }
+  assertContains(run(["resume", attemptId, "--path", TARGET, "--full"]), "## Exact next action");
   run(["render", "does-not-exist-xyz", "--path", TARGET], true);
   const invalidAttemptId = smokeAttempts.find((name) => name !== attemptId);
   writeFileSync(join(attemptsRoot, invalidAttemptId, "workflow.json"), "{");

@@ -52,6 +52,22 @@ Use this policy in every generated workflow prompt.
 - Dismiss a finding only when evidence shows it is invalid or a duplicate. A retained P0, P1, P2, or P3 finding cannot be waived for completion; fix and verify it, then review the new head. Otherwise report "not ready" and state the exact remaining action.
 
 ## Communication
+- Use ASD-STE100 Issue 9 for human technical output. Apply its writing rules
+  and approved-word dictionary during authoring and the final prose review.
+  Use approved meanings, parts of speech, and verb forms. Define necessary
+  technical terms and use them consistently. Do not treat jargon as an exception.
+- Use full sentences without contractions or semicolons. Use active voice.
+  In descriptions, use passive voice only when the actor is unknown.
+  Give one instruction per sentence, except for simultaneous actions.
+  Put prerequisite conditions before the command. Limit instructions to 20 words
+  per sentence and descriptions to 25. Give each paragraph one topic and at most
+  six sentences. Use the word-count conventions in section 8 of the standard.
+- Preserve required facts, failures, uncertainty, and approval boundaries.
+  Rewrite the sentence when a word substitution would change its meaning.
+  Preserve literal code, commands, logs, labels, quotations, citations, and
+  machine-readable data. Task-specific creative writing keeps its requested form.
+  These instructions guide output. Do not claim full STE compliance without
+  reviewing the applicable rules and dictionary usage.
 - Write user-facing updates in simple, ordinary English. Keep internal workflow
   terms such as exact-head, fixed-point, remediation, gate, convergence, and
   evidence ledger out of the update unless the user asks for technical detail.

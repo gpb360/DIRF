@@ -940,12 +940,17 @@ function checkpointIsNewer(current, candidate) {
 }
 
 function contextForAttempt(entry, entries, repositoryPath, relationFor = revisionRelation) {
+  const relations = new Map();
   const newerRelated = entries
     .filter((candidate) => candidate !== entry
       && (candidate.id === entry.id
         || [...entry.references].some((reference) => candidate.references.has(reference))))
     .map((candidate) => {
-      const relation = relationFor(repositoryPath, entry.reviewRevision, candidate.reviewRevision);
+      const revision = candidate.reviewRevision || "";
+      if (!relations.has(revision)) {
+        relations.set(revision, relationFor(repositoryPath, entry.reviewRevision, candidate.reviewRevision));
+      }
+      const relation = relations.get(revision);
       return {
         ...candidate,
         relation,
@@ -1223,7 +1228,7 @@ function updateAttemptLifecycleLocked(slug, idOrName, action, options = {}, now 
     // A gated workflow declares a verification contract: completion is
     // deterministic about it. Every gate must carry captured facts (a run the
     // CLI executed with exit 0, or a built-in check that passed), and the
-    // canonical handoff must be at least as fresh as the last phase write —
+    // task handoff must be at least as fresh as the last phase write —
     // Handoff-Before-Switch, checked instead of remembered.
     const gatesMap = workflowGates(slug, attempt.id);
     if (Object.keys(gatesMap).length > 0) {
@@ -1238,14 +1243,39 @@ function updateAttemptLifecycleLocked(slug, idOrName, action, options = {}, now 
           throw new Error(`Gate "${gate.phase}" has no captured verification; typed evidence cannot complete a gated attempt. No command can re-capture a gate after the fact — this attempt cannot be completed: abandon it (dirf attempt abandon ${attempt.id} --reason "...") and start a new attempt whose gates are crossed only by a recorded run (--run) or a passed built-in check`);
         }
       }
-      const handoffPath = join(storeProjectDir(slug), "HANDOFF.md");
+      const scopedPath = join(storeAttemptDir(slug, attempt.id), "HANDOFF.md");
+      const scoped = parseCurrentHandoff(readAttemptHandoffFile(slug, attempt.id) || "");
+      if (scoped.attemptId && scoped.attemptId !== attempt.id) {
+        throw new Error(`Task handoff belongs to ${scoped.attemptId}, not ${attempt.id}`);
+      }
+      const hasScopedCheckpoint = scoped.attemptId === attempt.id;
+      if (hasScopedCheckpoint) {
+        if (scoped.currentPhase !== attempt.current_phase) {
+          throw new Error(`Task handoff phase does not match ${attempt.current_phase}; record the current result before completing`);
+        }
+        const context = attemptContextState(slug, attempt.id, { bounded: true });
+        if (context.needs_refresh) {
+          throw new Error(`${context.attention} Read ${context.related_handoff_path} before completing`);
+        }
+      }
+      // Legacy handoffs without a task identity retain the shared-summary
+      // check. A saved scoped checkpoint never requires overwriting another
+      // task's project summary, and a stale scoped checkpoint cannot fall back.
+      const handoffPath = hasScopedCheckpoint ? scopedPath : join(storeProjectDir(slug), "HANDOFF.md");
+      const label = hasScopedCheckpoint ? "Task handoff" : "Canonical handoff";
       if (!existsSync(handoffPath)) {
-        throw new Error(`Write the canonical handoff before completing (dirf save the handoff --file F): ${handoffPath} does not exist`);
+        throw new Error(`Write the ${label.toLowerCase()} before completing: ${handoffPath} does not exist`);
+      }
+      if (!hasScopedCheckpoint) {
+        const canonical = parseCurrentHandoff(readHandoff(slug) || "");
+        if (canonical.attemptId && canonical.attemptId !== attempt.id) {
+          throw new Error(`Record a task checkpoint before completing; the canonical handoff belongs to ${canonical.attemptId}`);
+        }
       }
       const handoffMtime = statSync(handoffPath).mtimeMs;
       const lastWrite = Date.parse(attempt.updated_at || attempt.created_at);
       if (handoffMtime < lastWrite) {
-        throw new Error(`Canonical handoff is older than the last phase write (${new Date(handoffMtime).toISOString()} < ${attempt.updated_at}) — re-save the handoff (dirf save the handoff --file F) before completing`);
+        throw new Error(`${label} is older than the last phase write (${new Date(handoffMtime).toISOString()} < ${attempt.updated_at}) — record a current handoff before completing`);
       }
     }
     const governingPlan = governingAttemptArtifact(attempt, "plan");
@@ -1325,7 +1355,11 @@ function claimAttemptCheckoutLocked(slug, idOrName, worktreePath, now = new Date
   const resolvedPath = resolve(String(worktreePath || ""));
   const branch = git(resolvedPath, ["branch", "--show-current"], { allowFailure: true }) || null;
   const key = normalizeIdentityKey(resolvedPath);
-  const match = inspectProjectWorktrees(slug, now).some((entry) => normalizeIdentityKey(entry.path) === key);
+  const project = getProject(slug);
+  // Claim needs membership, not cleanup details from status/log in every
+  // worktree. Git's registered worktree list preserves the same boundary.
+  const match = parseWorktreeList(git(project.main_path, ["worktree", "list", "--porcelain"]))
+    .some((entry) => normalizeIdentityKey(entry.path) === key);
   if (!match) throw new Error("checkout must belong to the attempt's registered project");
   const owner = listAttempts(slug).find((candidate) =>
     candidate.id !== attempt.id &&
@@ -2106,6 +2140,7 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
     const lifecyclePlan = attemptDecision?.accepted
       ? progressLifecyclePlanLocked(slug, attempt.id, phase || null)
       : null;
+    const lifecycleTime = new Date();
     // Rendering validates timestamp and file inputs. Do this before persisting
     // intent so invalid input cannot become a permanently failing recovery.
     if (canonicalAccepted) updateProgressSection(canonicalBase, draftUpdate);
@@ -2141,7 +2176,7 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
       atomicWrite(join(storeAttemptDir(slug, attempt.id), "HANDOFF.md"), updatedAttemptHandoff);
     }
     if (canonicalAccepted) writeHandoff(slug, updatedHandoff);
-    const lifecycle = applyProgressLifecyclePlanLocked(slug, attempt.id, lifecyclePlan);
+    const lifecycle = applyProgressLifecyclePlanLocked(slug, attempt.id, lifecyclePlan, lifecycleTime);
     if (attemptDecision?.accepted) rmSync(pendingProgressPath(slug));
     return {
       handoff: updatedHandoff,
