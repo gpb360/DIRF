@@ -7,6 +7,30 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+## [0.31.2] - 2026-10-06
+
+### Fixed
+- A finished task can use its current task handoff without changing a shared
+  summary owned by another task. Identity, phase, decision, and proof checks
+  remain enforced.
+- A checkpoint that advances the phase remains fresh for completion.
+- Brief resume checks current guidance without reading unrelated handoffs
+  when the task has no shared work reference.
+
+### Changed
+- Resume shows the task, stage, handoff paths, and next action. Use `--full`
+  for the detailed view. JSON output keeps its existing form.
+- Checkout claims check Git membership without checking every worktree's
+  status and history. Repeated revision comparisons are reused within each call.
+- In a local Windows test with 11 worktrees and 102 tasks, median resume time
+  fell from 3.01 seconds to 1.19 seconds across five runs per version.
+  Git calls fell from 38 to 11. The test used a minimal workflow without
+  generated-workflow rendering. These timings apply to that test setup.
+- Output guidance uses ASD-STE100 Issue 9 writing rules. This guidance does
+  not certify full compliance. Partial-save messages now say when task progress
+  was saved, and the [Windows command guide](docs/windows-commands.md) includes
+  tested examples.
+
 ## [0.31.1] - 2026-10-01
 
 ### Added
