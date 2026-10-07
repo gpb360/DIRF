@@ -155,9 +155,9 @@ dirf attempt advance <id> --auto [--strict]          # cross covered phases, sto
 ```
 
 Gates are deterministic: a verify gate opens only on a run the CLI executed
-with exit 0 (or a built-in `check` the CLI ran itself), and completing a gated
-attempt additionally requires the canonical handoff to be at least as fresh as
-the last phase write. Legacy `--evidence "text"` still crosses mid-flow gates
+with exit 0 (or a built-in `check` the CLI ran itself). Completion also requires
+a current task handoff with the matching task ID and phase. Legacy handoffs
+without a task ID use the canonical handoff freshness check. Legacy `--evidence "text"` still crosses mid-flow gates
 for in-flight attempts, but it can never complete a gated attempt — the error
 says to abandon and restart — and such attempts project as `unaudited`. Every
 shipped playbook ends its final phase in a user-owned decision gate, so a
@@ -173,9 +173,10 @@ Identity resolves explicit-over-detected: `DIRF_HARNESS` / `DIRF_SESSION_ID` /
 but no harness does, the harness is recorded as `unknown`. `dirf setup` prints
 what it detects.
 
-`dirf resume` lists any **pending gates** first so you reconcile them before
-continuing, and replays recorded evidence for completed phases instead of
-re-running them. A soft gate crossed without evidence is reported as `passed`;
+`dirf resume` shows the current task, stage, next action, file paths, and pending
+check count. Use `--full` to read project context, the gate list, and recorded
+evidence. The JSON view retains its complete contract. A soft gate crossed
+without evidence is reported as `passed`;
 it is history, not a pending blocker. Use `--strict` when soft gates must require
 evidence before they can be crossed.
 
@@ -220,26 +221,29 @@ bound as evidence exactly like an accepted experiment.
 To resume an attempt later:
 
 ```bash
-dirf resume <name-or-id>     # prints that attempt's workflow + handoff
+dirf resume <name-or-id>          # claim the task and show its next action
+dirf resume <name-or-id> --full   # include project context and evidence
 ```
 
-### 4. Write the canonical handoff back (end of session)
+### 4. Save the task handoff (end of session)
 
-This is the step that prevents drift for the next agent. When you stop, capture
-the current state into the **canonical project handoff** so whoever (or whatever)
-runs next — in this checkout, a worktree, or a fresh session — starts from
-reality. Write it **before** switching sessions, agents, or worktrees — the
-handoff comes first, the switch after (workflow policy: Handoff-Before-Switch):
+Before you stop or switch sessions, save the result and next action for the
+task you own. Use the existing task ID and current phase:
 
 ```bash
-# Write your updated handoff to a file, then promote it to the canonical store:
-dirf state write-handoff --file new-handoff.md
+dirf record-progress "Result and evidence" --attempt <id> --phase "<current phase>" --next "<one next action>"
 ```
 
 The handoff should contain: objective, current phase, what you completed this
 session (with file refs, not duplicated content), decisions/assumptions,
 changed files, validation status, blockers, and the **exact next action**.
 Reference existing specs/tickets/decisions rather than restating them.
+
+If DIRF says the task was saved but the shared summary was unchanged, keep the
+saved checkpoint. Do not repeat it or overwrite another task's summary to
+finish your task. The command still exits with code 1 for this partial result.
+Use `state write-handoff --file F` only when you intend to replace the shared
+summary and have reconciled its existing owner and content.
 
 ## Commands at a glance
 
@@ -253,9 +257,9 @@ Reference existing specs/tickets/decisions rather than restating them.
 | `dirf state active [--json\|--hook]` | checkout-scoped idle, active, or conflict state |
 | `dirf build <name> "<task>"` | route a task → instruction set in the store |
 | `dirf learn [URL\|FILE\|TEXT]` | ingest one authorized source; a connected agent continues through read-only analysis to the decision gate without another user command |
-| `dirf resume <name-or-id>` | load one attempt's workflow + handoff (lists pending gates) |
+| `dirf resume <name-or-id> [--full]` | show the task and next action; `--full` includes project context and evidence |
 | `dirf attempt advance <id> [--run "CMD" \| --evidence "TEXT"] [--strict] [--auto]` | advance one phase (gates enforced); `--run` makes the CLI execute the command and record exit code + output digest; `--auto` crosses covered phases and stops at gates |
-| `dirf attempt complete <id> --confirm [--run "CMD"]` | complete from the final phase; gated attempts require captured evidence and a canonical handoff at least as fresh as the last phase write |
+| `dirf attempt complete <id> --confirm [--run "CMD"]` | complete from the final phase after accepted decisions, required captured checks, and a current task handoff |
 | `dirf attempt gate <id> <phase> accept\|deny [--comment "…"]` | record a user-owned decision on a decision-gated phase (deny requires a comment) |
 | `dirf attempt block <id> --reason R [--wait input\|blocker]` | block an attempt; `--wait input` marks it as awaiting user input |
 | `dirf attempt observe <id> [--execution-status active\|idle\|unknown] [--file SNAPSHOT]` | trusted harness adapter refreshes the orchestrator-owned execution snapshot; requires `DIRF_ORCHESTRATOR_TOKEN` |

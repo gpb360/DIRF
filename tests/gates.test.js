@@ -670,9 +670,11 @@ test("resume reconciles pending gates and replays recorded evidence", () => {
   const cli = (...args) => execFileSync(process.execPath, [join(process.cwd(), "src", "cli.js"), ...args], { cwd: root, encoding: "utf8", timeout: 30000, env: { ...process.env, DIRF_HOME: home } });
   cli("attempt", "start", attempt.id, "--path", root);
   const out = cli("resume", attempt.id, "--path", root);
-  assert.match(out, /Pending gates \(reconcile before continuing\)/);
-  assert.match(out, /design \(decision\)/);
-  assert.match(out, /build \(verify\)/);
+  assert.match(out, /Pending decisions or checks: 3/);
+  const full = cli("resume", attempt.id, "--path", root, "--full");
+  assert.match(full, /Pending gates \(reconcile before continuing\)/);
+  assert.match(full, /design \(decision\)/);
+  assert.match(full, /build \(verify\)/);
 });
 
 test("reconcile validates gate declarations against declared phases", () => {

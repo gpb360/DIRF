@@ -19,7 +19,8 @@ function runRejectedProgress(args, env, cwd, reason) {
     cwd, encoding: "utf8", timeout: TIMEOUT, env: { ...process.env, ...env },
   });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /recorded for the attempt only; canonical handoff unchanged/i);
+  assert.match(result.stderr, /Task progress saved\. Shared summary unchanged/i);
+  assert.match(result.stderr, /Do not repeat this checkpoint/);
   assert.match(result.stderr, new RegExp(reason));
   return result;
 }
@@ -149,7 +150,14 @@ test("dirf resume composes project context and gives the active attempt preceden
     "--phase", "verify", "--next", "Review exact head before merge",
   ], { DIRF_HOME: home }, main);
 
-  const resumed = run(["resume", built.attempt.id, "--path", main], { DIRF_HOME: home }, main);
+  const brief = run(["resume", built.attempt.id, "--path", main], { DIRF_HOME: home }, main);
+  assert.match(brief, /Stage: /);
+  assert.match(brief, /Next: Review exact head before merge/);
+  assert.match(brief, /Load workflow: /);
+  assert.match(brief, /Load attempt handoff: /);
+  assert.ok(brief.trim().split(/\r?\n/).length <= 10, brief);
+  assert.doesNotMatch(brief, /Published PR 21|Project context:|Canonical project handoff|Project attempts/);
+  const resumed = run(["resume", built.attempt.id, "--path", main, "--full"], { DIRF_HOME: home }, main);
   assert.match(resumed, /Project context:/);
   assert.match(resumed, /Published PR 21/);
   assert.match(resumed, /Review exact head before merge/);
@@ -630,6 +638,14 @@ test("bounded active state compares a same-attempt canonical checkpoint without 
   assert.equal(active.attempt.next_action, null);
   assert.equal(active.attempt.related_attempt_id, activeAttempt.id);
   assert.equal(active.attempt.related_handoff_path, canonicalPath);
+  const resumed = spawnSync(process.execPath, [CLI, "resume", activeAttempt.id, "--path", main], {
+    cwd: main, env: { ...process.env, DIRF_HOME: home }, encoding: "utf8", timeout: TIMEOUT,
+  });
+  assert.notEqual(resumed.status, 0);
+  assert.match(resumed.stderr, /older information/);
+  assert.ok(resumed.stderr.includes(canonicalPath));
+  assert.doesNotMatch(resumed.stderr, /EISDIR/);
+  assert.doesNotMatch(resumed.stdout, /Next:/);
 });
 
 test("record-progress rejects an explicit empty CLI work item without mutation", () => {

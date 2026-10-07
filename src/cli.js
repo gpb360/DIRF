@@ -9,7 +9,7 @@
 //   dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
 //   dirf list [--path DIR]                               list saved attempts
 //   dirf status [--path DIR]                             show project and repository state
-//   dirf resume <name-or-id> [--path DIR]                load the workflow handoff
+//   dirf resume <name-or-id> [--path DIR] [--full]       claim task and show its next action
 //   dirf host setup [--settings FILE] [--skill-dir DIR]  one-time host bootstrap: SessionStart hook + global dirf skill
 //   dirf state active [--path DIR] [--json|--hook]       report checkout-scoped responsibility
 //   dirf validate                                        validate registries + workflows
@@ -664,7 +664,9 @@ function cmdResume(args) {
   const target = projectRoot(args.path);
   const attempt = findAttempt(target, args.name);
   const project = resolveProject(target);
-  const context = attemptContextState(project.slug, attempt.id);
+  const context = attemptContextState(project.slug, attempt.id, {
+    bounded: !args.json && !args.full,
+  });
   if (context.needs_refresh) {
     if (context.related_task_requires_reconciliation) {
       if (context.related_task_relation === "conflict") {
@@ -700,6 +702,23 @@ function cmdResume(args) {
   const workflow = existsSync(readme) ? readme : join(attempt.folder, "workflow.json");
   const handoff = join(attempt.folder, "HANDOFF.md");
   if (!existsSync(handoff)) throw new Error(`Attempt ${attempt.id} has no HANDOFF.md; rebuild it before resuming.`);
+  if (!args.json && !args.full) {
+    const current = getAttemptState(project.slug, attempt.id);
+    const gates = pendingGates(project.slug, attempt.id);
+    console.log(`Resume attempt: ${attempt.id}`);
+    console.log(`Stage: ${current.current_phase || "not started"}`);
+    if (autoStarted) console.log("Lifecycle: started");
+    console.log(`Load workflow: ${workflow}`);
+    console.log(`Load attempt handoff: ${handoff}`);
+    if (gates.length) {
+      console.log(`Pending decisions or checks: ${gates.length} (see workflow)`);
+      const gate = gates.find((item) => item.phase === current.current_phase);
+      if (gate) console.log(`Current check: ${gate.phase} (${gate.kind}${gate.status === "denied" ? ", denied" : ""})${gate.comment ? ` — ${gate.comment}` : ""}`);
+    }
+    console.log(`Next: ${context.next_action || "Read the workflow and task handoff for the next action."}`);
+    console.log("Use --full for project context and recorded evidence.");
+    return;
+  }
   let config = null;
   try { config = loadProjectConfig(target); }
   catch { /* legacy state can predate canonical config */ }
@@ -1685,7 +1704,7 @@ function cmdRecordProgress(args) {
     if (!outcome.accepted) {
       const detail = outcome.reason || "canonical handoff rejected the checkpoint";
       if (outcome.recorded) {
-        console.error(`Progress recorded for the attempt only; canonical handoff unchanged (${detail}).`);
+        console.error(`Task progress saved. Shared summary unchanged (${detail}). Do not repeat this checkpoint.`);
       } else {
         console.error(`Progress not recorded; handoffs and lifecycle unchanged (${detail}).`);
       }
@@ -1753,6 +1772,7 @@ function parse(argv) {
     if (a === "--confirm") { out.confirm = true; continue; }
     if (a === "--approved") { out.approved = true; continue; }
     if (a === "--json") { out.json = true; continue; }
+    if (a === "--full") { out.full = true; continue; }
     if (a === "--hook") { out.hook = true; continue; }
     if (a === "--research") { out.research = true; continue; }
     if (a === "--no-focused-output") { out.focusedOutput = false; continue; }
@@ -1793,7 +1813,7 @@ Usage:
   dirf run <folder> [--no-focused-output]             print deterministic execution handoff
   dirf list [--path DIR]                               list saved attempts
   dirf status [--path DIR]                             show project and repository state
-  dirf resume <name-or-id> [--path DIR]                load the workflow handoff
+  dirf resume <name-or-id> [--path DIR] [--full]       show task, stage and next action; --full includes project history
   dirf record-progress "<message>" [--path DIR] [--attempt ID|UNIQUE_NAME] [--phase PHASE] [--next ACTION] [--files FILES] [--work-item ITEM] [--review-revision SHA]
                                                       record progress, update HANDOFF.md and sync the attempt lifecycle
   dirf attempt <action> <id> [--path DIR]              update lifecycle or execution ownership
