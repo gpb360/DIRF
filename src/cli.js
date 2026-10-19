@@ -8,8 +8,8 @@
 //   dirf learn [URL|FILE|TEXT] [--path DIR] [--file FILE] create a read-only learning review
 //   dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
 //   dirf list [--path DIR]                               list saved attempts
-//   dirf status [--path DIR]                             show project and repository state
-//   dirf resume <name-or-id> [--path DIR]                load the workflow handoff
+//   dirf status [--path DIR] [--json]                    show project and repository state
+//   dirf resume <name-or-id> [--path DIR] [--json]       load the workflow handoff
 //   dirf validate                                        validate registries + workflows
 //   dirf skills scan [--path DIR]                        scan host, print installed skills + resolved refs
 //   dirf validate|graph|run|render <folder>               operate an Eve-style folder DAG
@@ -506,6 +506,25 @@ function cmdStatus(args) {
   const branch = gitOutput(target, ["branch", "--show-current"]);
   const changes = gitOutput(target, ["status", "--porcelain"]).split(/\r?\n/).filter(Boolean);
   const aheadBehind = gitOutput(target, ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"]).split(/\s+/).map(Number);
+
+  if (args.json) {
+    const hasUpstream = aheadBehind.length === 2 && aheadBehind.every(Number.isFinite);
+    const status = {
+      target,
+      configured,
+      attempts: attempts.length,
+      latest_attempt: attempts.length ? attempts.at(-1).id : null,
+      repository: {
+        is_git: Boolean(branch),
+        branch: branch || null,
+        changed_paths: branch ? changes.length : null,
+        ahead: hasUpstream ? aheadBehind[0] : null,
+        behind: hasUpstream ? aheadBehind[1] : null,
+      },
+    };
+    console.log(JSON.stringify(status, null, 2));
+    return;
+  }
 
   console.log("DIRF status");
   console.log(`Target: ${target}`);
@@ -1218,7 +1237,7 @@ Usage:
   dirf graph <folder>                                 print ordered folder DAG
   dirf run <folder> [--no-focused-output]             print deterministic execution handoff
   dirf list [--path DIR]                               list saved attempts
-  dirf status [--path DIR]                             show project and repository state
+  dirf status [--path DIR] [--json]                    show project and repository state (machine-readable)
   dirf resume <name-or-id> [--path DIR]                load the workflow handoff
   dirf record-progress "<message>" [--path DIR] [--attempt ID|UNIQUE_NAME] [--phase PHASE] [--next ACTION] [--files FILES]
                                                       record progress, update HANDOFF.md and sync the attempt lifecycle
