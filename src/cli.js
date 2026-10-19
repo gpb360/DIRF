@@ -503,21 +503,26 @@ function cmdStatus(args) {
   try { loadProjectConfig(target); attempts = listAttempts(target); }
   catch { configured = false; }
 
-  const branch = gitOutput(target, ["branch", "--show-current"]);
+  const isGit = gitOutput(target, ["rev-parse", "--is-inside-work-tree"]).trim() === "true";
+  const branch = isGit ? gitOutput(target, ["branch", "--show-current"]) : "";
   const changes = gitOutput(target, ["status", "--porcelain"]).split(/\r?\n/).filter(Boolean);
   const aheadBehind = gitOutput(target, ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"]).split(/\s+/).map(Number);
+  const hasUpstream = aheadBehind.length === 2 && aheadBehind.every(Number.isFinite);
+  const mostRecentlyUpdated = attempts.length
+    ? attempts.reduce((latest, attempt) => (String(attempt.updated_at ?? "") > String(latest.updated_at ?? "") ? attempt : latest), attempts[0]).id
+    : null;
 
   if (args.json) {
-    const hasUpstream = aheadBehind.length === 2 && aheadBehind.every(Number.isFinite);
     const status = {
       target,
       configured,
       attempts: attempts.length,
       latest_attempt: attempts.length ? attempts.at(-1).id : null,
+      most_recently_updated_attempt: mostRecentlyUpdated,
       repository: {
-        is_git: Boolean(branch),
+        is_git: isGit,
         branch: branch || null,
-        changed_paths: branch ? changes.length : null,
+        changed_paths: isGit ? changes.length : null,
         ahead: hasUpstream ? aheadBehind[0] : null,
         behind: hasUpstream ? aheadBehind[1] : null,
       },
@@ -531,12 +536,12 @@ function cmdStatus(args) {
   console.log(`Configured: ${configured ? "yes" : "no"}`);
   console.log(`Attempts: ${attempts.length}`);
   if (attempts.length) console.log(`Latest: ${attempts.at(-1).id}`);
-  if (!branch) {
+  if (!isGit) {
     console.log("Repository: not a Git repository");
     return;
   }
-  console.log(`Repository: ${branch} (${changes.length ? `${changes.length} changed path(s)` : "clean"})`);
-  if (aheadBehind.length === 2 && aheadBehind.every(Number.isFinite)) {
+  console.log(`Repository: ${branch || "detached HEAD"} (${changes.length ? `${changes.length} changed path(s)` : "clean"})`);
+  if (hasUpstream) {
     console.log(`Upstream: ${aheadBehind[0]} ahead, ${aheadBehind[1]} behind`);
   }
 }
@@ -1238,7 +1243,7 @@ Usage:
   dirf run <folder> [--no-focused-output]             print deterministic execution handoff
   dirf list [--path DIR]                               list saved attempts
   dirf status [--path DIR] [--json]                    show project and repository state (machine-readable)
-  dirf resume <name-or-id> [--path DIR]                load the workflow handoff
+  dirf resume <name-or-id> [--path DIR] [--json]       load the workflow handoff (--json returns structured state)
   dirf record-progress "<message>" [--path DIR] [--attempt ID|UNIQUE_NAME] [--phase PHASE] [--next ACTION] [--files FILES]
                                                       record progress, update HANDOFF.md and sync the attempt lifecycle
   dirf attempt <action> <id> [--path DIR]              update lifecycle state
