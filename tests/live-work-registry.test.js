@@ -656,6 +656,8 @@ test("concurrent advance and observation preserve both lifecycle and ownership",
     DIRF_SESSION_ID: "owner",
     DIRF_ORCHESTRATOR_TOKEN: AUTHORITY_TOKEN,
   };
+  const registryPath = join(process.env.DIRF_HOME, "projects.json");
+  const registryBefore = readFileSync(registryPath, "utf8");
 
   const [observation, advance] = await Promise.all([
     runCliAsync(["attempt", "observe", attempt.id, "--execution-status", "active"], { cwd: root, env }),
@@ -667,6 +669,8 @@ test("concurrent advance and observation preserve both lifecycle and ownership",
   const final = projectWorkSnapshot(slug, new Date()).attempts[0];
   assert.equal(final.current_phase, "verify");
   assert.equal(final.execution.session_id, "owner");
+  assert.equal(readFileSync(registryPath, "utf8"), registryBefore,
+    "attempt updates must not race on registry last_seen before acquiring the project lock");
 });
 
 test("setup stays idempotent when the orchestrator token rotates", () => {

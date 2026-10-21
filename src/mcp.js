@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import {
   resolveProject, resolveProjectReference, listProjects,
   writeHandoff, listAttempts, getAttempt, readAttemptAssignment, storeProjectDir, recordProgress, projectHandoffContextState,
+  attemptSummary, deriveSlug, getProject,
 } from "./state.js";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -20,19 +21,50 @@ const CAPABILITIES_KEY = "io.modelcontextprotocol/clientCapabilities";
 const PACKAGE_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 const SERVER_INFO = { name: "dirf", version: PACKAGE_VERSION };
 
+const ARTIFACT_REFERENCE_SCHEMA = {
+  type: "object", properties: { artifact_id: { type: "string" }, sha256: { type: "string", pattern: "^[a-f0-9]{64}$" } },
+  required: ["artifact_id", "sha256"], additionalProperties: false,
+};
+const REQUIREMENT_UPDATE_SCHEMA = {
+  type: "object", description: "Explicit requirement mapping update. Requires attempt; the core validates accepted identities, proof bytes and revision.",
+  properties: {
+    schema_version: { type: "integer", enum: [1] }, attempt_id: { type: "string" },
+    governing_plan: ARTIFACT_REFERENCE_SCHEMA, expected_revision: { type: "integer", minimum: 0 },
+    requirements: { type: "array", items: {
+      type: "object", properties: {
+        requirement_id: { type: "string" }, decision_ref: { anyOf: [ARTIFACT_REFERENCE_SCHEMA, { type: "null" }] },
+        work_state: { type: "string", enum: ["planned", "in_progress", "blocked", "complete"] },
+        proof_refs: { type: "array", items: ARTIFACT_REFERENCE_SCHEMA },
+      }, required: ["requirement_id", "decision_ref", "work_state", "proof_refs"], additionalProperties: false,
+    } },
+  }, required: ["schema_version", "attempt_id", "governing_plan", "expected_revision", "requirements"], additionalProperties: false,
+};
+
 const TOOLS = [
   { name: "dirf_resolve_project", description: "Resolve which DIRF project a path belongs to (default: server cwd).", inputSchema: { type: "object", properties: { path: { type: "string" } } } },
   { name: "dirf_list_projects", description: "List all registered DIRF projects.", inputSchema: { type: "object", properties: {} } },
   { name: "dirf_read_handoff", description: "Read the canonical handoff for a project (slug or path; default: server cwd).", inputSchema: { type: "object", properties: { project: { type: "string" } } } },
   { name: "dirf_write_handoff", description: "Replace the canonical handoff for a project with the given content.", inputSchema: { type: "object", properties: { project: { type: "string" }, content: { type: "string" } }, required: ["content"] } },
-  { name: "dirf_record_progress", description: "Record workflow progress in HANDOFF.md - call this after completing each step. Updates current phase, last action, completed steps, and next action.", inputSchema: { type: "object", properties: { project: { type: "string", description: "Project slug or path (default: server cwd)" }, attempt: { type: "string", description: "Attempt id or unique name; required when the project has multiple attempts" }, message: { type: "string", description: "What was just completed" }, currentPhase: { type: "string", description: "Current workflow phase" }, nextAction: { type: "string", description: "Exact next step" }, changedFiles: { type: "array", items: { type: "string" }, description: "Files changed in this step" }, workItem: { type: "string", description: "Stable work identity such as pr:1442" }, reviewRevision: { type: "string", description: "Reviewed commit SHA" } }, required: ["message", "nextAction"] } },
+  { name: "dirf_record_progress", description: "Record workflow progress in HANDOFF.md - call this after completing each step. Updates current phase, last action, completed steps, and next action.", inputSchema: { type: "object", properties: { project: { type: "string", description: "Project slug or path (default: server cwd)" }, attempt: { type: "string", description: "Attempt id or unique name; required when the project has multiple attempts or requirementUpdate is supplied" }, message: { type: "string", description: "What was just completed" }, currentPhase: { type: "string", description: "Current workflow phase" }, nextAction: { type: "string", description: "Exact next step" }, changedFiles: { type: "array", items: { type: "string" }, description: "Files changed in this step" }, workItem: { type: "string", description: "Stable work identity such as pr:1442" }, reviewRevision: { type: "string", description: "Reviewed commit SHA" }, requirementUpdate: REQUIREMENT_UPDATE_SCHEMA }, required: ["message", "nextAction"] } },
   { name: "dirf_list_attempts", description: "List attempts for a project.", inputSchema: { type: "object", properties: { project: { type: "string" } } } },
   { name: "dirf_get_attempt", description: "Get one attempt by id or name.", inputSchema: { type: "object", properties: { project: { type: "string" }, id: { type: "string" } }, required: ["id"] } },
   { name: "dirf_read_assignment", description: "Read the complete workflow and handoff for one exact attempt id.", inputSchema: { type: "object", properties: { project: { type: "string" }, attempt: { type: "string", description: "Exact attempt id; names and paths are rejected" } }, required: ["attempt"] } },
+  { name: "dirf_read_summary", description: "Read compact current evidence for an explicit attempt ID or unique name without claiming work. Use cursors for further pages.", inputSchema: { type: "object", properties: { project: { type: "string", description: "Registered project slug or path (default: server cwd)" }, attempt: { type: "string" }, requirementsCursor: { type: "string" }, unresolvedWorkCursor: { type: "string" } }, required: ["attempt"] } },
 ];
 
 function resolveSlugFromParams(params = {}, options = {}) {
   return resolveProjectReference(params.project, { defaultPath: process.cwd(), ...options });
+}
+
+function resolveRegisteredSlug(args) {
+  // Path resolution can migrate legacy state even with touch:false. Resolve
+  // only an already registered identity for compact reads and mapping input.
+  const reference = args.project;
+  // Preserve the core's slug namespace instead of reinterpreting an unknown
+  // slug-shaped reference as a relative directory in a registered checkout.
+  const slug = reference && (getProject(reference) || /^[a-z0-9.-]+-[0-9a-f]{8}$/.test(reference))
+    ? reference : deriveSlug(resolve(reference || process.cwd()));
+  return resolveProjectReference(slug, { explicitSlug: true, touch: false });
 }
 
 function callTool(name, args) {
@@ -66,6 +98,11 @@ function callTool(name, args) {
     case "dirf_record_progress": {
       // recordProgress serializes the checkpoint itself; avoid mutating the
       // global registry while resolving the project before that lock.
+      const hasUpdate = Object.hasOwn(args, "requirementUpdate");
+      if (hasUpdate && !args.attempt?.trim()) throw new Error("requirementUpdate requires an explicit attempt ID or unique name");
+      // Preflight registration for mapping input, then retain normal write
+      // resolution, including the newer-local-handoff conflict check.
+      if (hasUpdate) resolveRegisteredSlug(args);
       const slug = resolveSlugFromParams(args, { touch: false });
       const outcome = recordProgress(slug, {
         message: args.message,
@@ -76,6 +113,7 @@ function callTool(name, args) {
         attemptId: args.attempt || null,
         workItem: args.workItem ?? null,
         reviewRevision: args.reviewRevision || null,
+        ...(hasUpdate ? { requirementUpdate: args.requirementUpdate } : {}),
       });
       return {
         ok: true,
@@ -105,6 +143,11 @@ function callTool(name, args) {
       const slug = resolveSlugFromParams(args);
       return readAttemptAssignment(slug, args.attempt);
     }
+    case "dirf_read_summary":
+      return attemptSummary(resolveRegisteredSlug(args), args.attempt, {
+        requirementsCursor: args.requirementsCursor,
+        unresolvedWorkCursor: args.unresolvedWorkCursor,
+      });
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -131,6 +174,7 @@ function validateArguments(tool, args) {
   for (const [key, schema] of Object.entries(tool.inputSchema.properties)) {
     if (!Object.hasOwn(args, key)) continue;
     if (schema.type === "string" && typeof args[key] !== "string") throw new Error(`${key} must be a string`);
+    if (schema.type === "object" && !object(args[key])) throw new Error(`${key} must be an object`);
     if (schema.type === "array" && (!Array.isArray(args[key]) || args[key].some(item => typeof item !== "string"))) {
       throw new Error(`${key} must be an array of strings`);
     }

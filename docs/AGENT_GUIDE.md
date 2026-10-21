@@ -73,6 +73,10 @@ full handoffs:
 - **conflict** — multiple attempts claim the checkout; stop and select one
   explicitly instead of choosing the latest.
 
+Configured checkouts also report up to five unresolved items, total and omitted
+counts, and a continuation command. Idle can include blocked work. Reading a
+blocked reference does not claim or reopen that attempt.
+
 `dirf resume <id>` is the claim operation. It starts a planned attempt and
 binds it to the current Git worktree. Blocking or completing it makes the
 checkout idle again.
@@ -85,6 +89,14 @@ canonical project state while responsibility remains checkout-scoped.
 Hosts with session hooks can run `dirf state active --hook`. The command emits
 the small `SessionStart` context envelope directly; it contains the active
 phase, exact next action, and lazy paths to the workflow and attempt handoff.
+It also includes bounded unresolved references. Related-checkpoint warnings and
+evidence completeness are separate. A false `needs_refresh` value does not prove
+that decisions or evidence are verified. Lifecycle phase disagreements produce
+warnings without advancing the workflow. Pending progress recovery makes these
+read-only queries fail until an ordinary recovery operation resolves it.
+After a stopped writer, the existing progress command recovers pending work
+before recording the next checkpoint. The existing lock checks still apply.
+Retry startup after that operation succeeds.
 
 ### 2. Plan / start a workflow
 
@@ -175,10 +187,85 @@ what it detects.
 
 `dirf resume` shows the current task, stage, next action, file paths, and pending
 check count. Use `--full` to read project context, the gate list, and recorded
-evidence. The JSON view retains its complete contract. A soft gate crossed
+evidence. The legacy JSON view retains its complete contract. A soft gate crossed
 without evidence is reported as `passed`;
 it is history, not a pending blocker. Use `--strict` when soft gates must require
 evidence before they can be crossed.
+
+### Read current evidence or explicit history
+
+Use the compact query to read an identified attempt without claiming it:
+
+```bash
+dirf state summary --attempt <id> --json
+dirf state summary --attempt <id> --requirements-cursor <token> --json
+dirf state summary --attempt <id> --unresolved-work-cursor <token> --json
+```
+
+Each page contains at most five entries, total and omitted counts, and a
+`next_cursor`. Continue until `next_cursor` is null. Changed source data rejects
+old cursors. Restart from the first page after that rejection.
+
+The summary references the accepted plan, requirement IDs, decisions, proof,
+warnings, and one next action. Detailed prose stays behind references. A legacy
+attempt without an explicit mapping reports `mapping_missing` and unverified
+evidence. The query preserves its handoff bytes.
+
+Choose resume when you intend to claim the named attempt:
+
+```bash
+dirf resume <id> --summary --json  # claim, then return compact current state
+dirf resume <id> --json            # claim, then retain legacy JSON fields and history
+dirf resume <id> --full            # claim, then show explicit text details
+```
+
+Legacy JSON keeps `project_handoff`, `attempt_handoff`, and `project_brain`.
+Compact JSON excludes those fields. Read a referenced artifact or attempt
+handoff only when its details are needed. `state read-handoff` reads the project
+handoff, which can belong to a different checkout's attempt.
+
+The MCP tool `dirf_read_summary` accepts `attempt`, optional `project`,
+`requirementsCursor`, and `unresolvedWorkCursor`. It returns the same current
+summary. Existing MCP detail operations keep their contracts.
+
+### Update the requirement mapping explicitly
+
+Requirement prose remains in the governing accepted plan. Progress prose does
+not create a mapping, grant acceptance, or prove a requirement. Supply an
+explicit update through the existing progress command:
+
+```bash
+dirf record-progress "Verified R1" --attempt <id> --phase <phase> --next "Review evidence" --requirement-update-file update.json
+```
+
+The accepted Markdown plan must declare its IDs in a table under a heading
+named `Requirements`. The table starts with `|` and has an `ID` or
+`Requirement ID` column:
+
+```markdown
+## Requirements
+
+| ID | Requirement |
+| --- | --- |
+| R1 | Preserve accepted evidence across progress updates. |
+```
+
+If an accepted plan lacks this format, record a superseding plan and obtain its
+acceptance through the normal artifact flow. Preserve the earlier accepted bytes.
+
+The file uses `RequirementMappingUpdate` from
+[`src/summary-contracts.d.ts`](../src/summary-contracts.d.ts). It names
+`schema_version: 1`, `attempt_id`, `governing_plan`, `expected_revision`, and
+`requirements`. Each requirement names `requirement_id`, `decision_ref`,
+`work_state`, and `proof_refs`. Artifact references contain `artifact_id` and
+`sha256`. Use revision zero for the first mapping. Use the current summary's
+`mapping.revision` for later updates. Unnamed requirements retain their values
+when the governing plan is unchanged. Replacing the plan starts a new mapping.
+
+The core rejects unknown IDs, mismatched plan hashes, and stale revisions.
+Missing or changed proof remains unverified. Replacing proof retains earlier
+revision records. Recording progress never accepts an artifact.
+MCP `dirf_record_progress` accepts the same object as optional `requirementUpdate`.
 
 ### Typed artifacts
 
@@ -257,7 +344,9 @@ summary and have reconciled its existing owner and content.
 | `dirf state active [--json\|--hook]` | checkout-scoped idle, active, or conflict state |
 | `dirf build <name> "<task>"` | route a task → instruction set in the store |
 | `dirf learn [URL\|FILE\|TEXT]` | ingest one authorized source; a connected agent continues through read-only analysis to the decision gate without another user command |
-| `dirf resume <name-or-id> [--full]` | show the task and next action; `--full` includes project context and evidence |
+| `dirf resume <name-or-id> [--full\|--summary] [--json]` | claim the named task; compact JSON is opt-in and legacy JSON retains history |
+| `dirf state summary --attempt <id> [--json]` | read compact current evidence without claiming; cursor options page both collections |
+| `dirf state active [--json\|--hook] [--unresolved-work-cursor TOKEN]` | read checkout ownership and bounded unresolved work |
 | `dirf attempt advance <id> [--run "CMD" \| --evidence "TEXT"] [--strict] [--auto]` | advance one phase (gates enforced); `--run` makes the CLI execute the command and record exit code + output digest; `--auto` crosses covered phases and stops at gates |
 | `dirf attempt complete <id> --confirm [--run "CMD"]` | complete from the final phase after accepted decisions, required captured checks, and a current task handoff |
 | `dirf attempt gate <id> <phase> accept\|deny [--comment "…"]` | record a user-owned decision on a decision-gated phase (deny requires a comment) |
