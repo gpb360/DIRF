@@ -2,34 +2,38 @@
 // DIRF — Do It Right First. Unified CLI. Node built-ins only.
 //
 //   dirf setup [path] [--reserve-percent N]              configure a target repository
-//   dirf build  <name> "<task>" [--path DIR] [--open] [--no-focused-output] [--playbooks DIR]
-//   dirf plan   <name> "<task>" [--path DIR] [--research] [--playbooks DIR]  lifecycle planning attempt
-//   dirf create <name> "<task>" [--path DIR] [--playbooks DIR]  route -> attempt workflow JSON only
-//   dirf learn [URL|FILE|TEXT] [--path DIR] [--file FILE] create a read-only learning review
+//   dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--open] [--no-focused-output] [--playbooks DIR]
+//   dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--research] [--playbooks DIR]  lifecycle planning attempt
+//   dirf create <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--playbooks DIR]  route -> attempt workflow JSON only
+//   dirf learn [URL|FILE|TEXT] [--path DIR] [--profile FILE] [--file FILE] create a read-only learning review
 //   dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
 //   dirf list [--path DIR]                               list saved attempts
 //   dirf status [--path DIR] [--json]                    show project and repository state
-//   dirf resume <name-or-id> [--path DIR] [--json]       load the workflow handoff
+//   dirf resume <name-or-id> [--path DIR] [--json|--full] claim task and show its next action
+//   dirf host setup [--settings FILE] [--skill-dir DIR]  one-time host bootstrap: SessionStart hook + global dirf skill
+//   dirf state active [--path DIR] [--json|--hook]       report checkout-scoped responsibility
 //   dirf validate                                        validate registries + workflows
 //   dirf skills scan [--path DIR]                        scan host, print installed skills + resolved refs
+//   dirf review trigger|verify-update ...                 hand off findings to a same-PR fixer
 //   dirf validate|graph|run|render <folder>               operate an Eve-style folder DAG
-import { writeFileSync, readFileSync, existsSync, statSync } from "node:fs";
-import { dirname, join, isAbsolute, resolve } from "node:path";
+import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import { basename, dirname, join, isAbsolute, resolve } from "node:path";
 import { homedir } from "node:os";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { ROOT, REGISTRY, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, fileHash, folderHash, loadJson } from "./paths.js";
 import { collectRoutingFacts, loadPlaybooks, recommend } from "./router.js";
-import { discover, discoverAgents, enrichDiscovered, lintSkillMetadata, loadRegistry, loadTrustedSources, providerForPath, resolveAgentSkills, tokenBudget } from "./skills.js";
+import { bundledSkills, detectHarnesses, discover, discoverAgents, enrichDiscovered, lintSkillMetadata, loadRegistry, loadTrustedSources, missingSkillFiles, providerForPath, resolveAgentSkills, skillIsIncomplete, tokenBudget } from "./skills.js";
 import { FOCUSED_OUTPUT_RULES, buildInstructions, buildHtml } from "./renderer.js";
-import { main as validateMain } from "./validate.js";
+import { main as validateMain, validateSnapshot } from "./validate.js";
 import { inspect, detectStackProfile } from "./inspect.js";
+import { installationDiagnostics } from "./doctor.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptNextAction, attemptGateState, pendingGates, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact } from "./state.js";
+import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, projectHandoffContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, attemptNextAction, projectWorkSnapshot, observeAttempt, bindExecutionAuthority, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings, workflowGates, attemptAudit, runBuiltinCheck } from "./state.js";
 import { ARTIFACT_TYPES, explainGoverningArtifact } from "./artifacts.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 import {
@@ -41,6 +45,10 @@ import {
   verifyEvidenceLedger,
 } from "./governance.js";
 import { DEFAULT_ISSUE_POLICY } from "./issue-governance.js";
+import { buildModelAdvice, normalizeModelCatalog } from "./model-advice.js";
+import { run as runReviewReport } from "../skills/code-review/scripts/review-report.mjs";
+import { run as runReviewLedger } from "../skills/code-review/scripts/review-ledger.mjs";
+import { bindingsFromPlan, refreshSkillBindings } from "./skill-bindings.js";
 
 const LIFECYCLE = {
   clarify: "Use the best installed interview capability before implementation.",
@@ -49,6 +57,48 @@ const LIFECYCLE = {
   implement: "Execute one ticket per fresh context.",
   review: "Review independently against both the specification and repository standards.",
 };
+
+function planningContract(includeResearch = false) {
+  const phases = [
+    "resolve load-bearing decisions",
+    "model domain language and durable decisions",
+    ...(includeResearch ? ["research unresolved decisions against primary sources"] : []),
+    "write the approved specification",
+    "split the specification into dependency-ordered tickets",
+    "write the execution handoff",
+  ];
+  const agents = [
+    "workflow-orchestrator",
+    "knowledge-synthesizer",
+    ...(includeResearch ? ["research-analyst"] : []),
+    "agent-organizer",
+  ];
+  const agentContracts = {
+    "workflow-orchestrator": {
+      phases: ["resolve load-bearing decisions", "write the execution handoff"],
+      output: "accepted planning decisions and an exact execution handoff",
+      verification: "every unresolved decision is explicit and the handoff names one next action",
+    },
+    "knowledge-synthesizer": {
+      phases: ["model domain language and durable decisions", "write the approved specification"],
+      output: "consistent domain language, justified durable decisions, and a build-ready specification",
+      verification: "the specification traces every requirement to accepted context or recorded evidence",
+    },
+    "agent-organizer": {
+      phases: ["split the specification into dependency-ordered tickets"],
+      output: "dependency-ordered tickets with bounded ownership and verification",
+      verification: "every ticket traces to the approved specification and has a checkable result",
+    },
+  };
+  if (includeResearch) {
+    agentContracts["research-analyst"] = {
+      phases: ["research unresolved decisions against primary sources"],
+      output: "provenance-bound evidence for the unresolved planning decisions",
+      verification: "every factual recommendation cites a primary source and separates fact from inference",
+    };
+  }
+  return { phases, agents, agentContracts };
+}
 
 function enrichAgents(agentNames) {
   // Resolve playbook agent names into full entries (file, tags, skills) from the registry.
@@ -113,13 +163,15 @@ function castAgents(agents, hostAgents) {
 }
 
 function buildPlan(name, task, path, reservePercent = 5, compaction = null, focusedOutput = true, routing = {}) {
-  const { selection, skillFlow, discovered, hostAgents, facts } = assembleTaskRouting(task, path, routing);
-  skillFlow.steps = skillFlow.steps.map((step) => ({ ...step, instructions: readSkillInstructions(step.path) }));
+  const { selection, skillFlow, discovered, hostAgents, facts, capabilityProfile, modelAdvice } = assembleTaskRouting(task, path, routing);
   const agents = castAgents(enrichAgents(selection.agents), hostAgents).map((agent) => ({
     ...agent,
-    skills: resolveAgentSkills(agent.name, agent.skills, [], discovered).filter((skill) => skill.status === "installed"),
+    skills: resolveAgentSkills(agent.name, agent.skills, [], discovered),
   }));
   const questions = [...(selection.questions || [])];
+  if (capabilityProfile?.missing.length) {
+    questions.push(`Capability profile entries are not available on this host: ${capabilityProfile.missing.join(", ")}. They remain visible gaps and are not selected.`);
+  }
   if (agents.length && !Object.keys(hostAgents).length) {
     questions.unshift("No installed agents were found on this host. Use DIRF's bundled default agents for this workflow, or point DIRF at your own agents folder and re-run?");
   }
@@ -135,12 +187,15 @@ function buildPlan(name, task, path, reservePercent = 5, compaction = null, focu
     score: selection.score,
     matched_keywords: selection.matched_keywords,
     alternates: selection.alternates,
+    continuation: selection.continuation,
     repository: repositoryIdentity(path),
     repository_context: repositoryContext(path),
     workflow: selection.workflow,
     routing_facts: facts,
     skill_flow: skillFlow,
     capability_gaps: skillFlow.gaps,
+    ...(capabilityProfile ? { capability_profile: capabilityProfile } : {}),
+    ...(modelAdvice ? { model_advice: modelAdvice } : {}),
     agents,
     baseline_skills: [],
     questions,
@@ -161,16 +216,38 @@ function buildPlan(name, task, path, reservePercent = 5, compaction = null, focu
   };
 }
 
-function readSkillInstructions(path) {
-  if (!path) return "";
+function readCapabilityProfile(file) {
+  if (!file) return null;
+  let profile;
   try {
-    if (statSync(path).isFile()) return readFileSync(path, "utf8");
-    for (const name of ["SKILL.md", "README.md", "skill.json"]) {
-      const candidate = join(path, name);
-      if (existsSync(candidate)) return readFileSync(candidate, "utf8");
-    }
-  } catch { /* unavailable skill source stays capability-only */ }
-  return "";
+    profile = JSON.parse(readFileSync(resolve(file), "utf8"));
+  } catch (error) {
+    throw new Error(`Capability profile must be readable JSON: ${error.message}`);
+  }
+  if (!profile || typeof profile !== "object" || Array.isArray(profile) || !Array.isArray(profile.skills)) {
+    throw new Error('Capability profile must be an object with a "skills" array');
+  }
+  if (profile.skills.some((name) => typeof name !== "string" || !name.trim())) {
+    throw new Error("Capability profile skills must be non-empty strings");
+  }
+  if (profile.skills.some((name) => isAbsolute(name.trim()) || /[\\/]/.test(name))) {
+    throw new Error("Capability profile skills must be names, not paths");
+  }
+  return { skills: [...new Set(profile.skills.map((name) => name.trim()))] };
+}
+
+function readModelCatalog(file) {
+  if (!file) return null;
+  let raw;
+  let catalog;
+  try {
+    raw = readFileSync(resolve(file), "utf8");
+    catalog = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`Model catalog must be readable JSON: ${error.message}`);
+  }
+  const sha256 = createHash("sha256").update(raw).digest("hex");
+  return normalizeModelCatalog(catalog, sha256);
 }
 
 function repositoryContext(root) {
@@ -231,6 +308,7 @@ function assembleTaskRouting(task, path, options = {}) {
       playbook_description: playbook.description,
       playbook_source: playbook.playbook_source,
       playbook_source_path: playbook.playbook_source_path,
+      continuation: undefined,
       workflow: playbook.workflow,
       skill_flow: playbook.skill_flow,
       agents: playbook.agents,
@@ -238,36 +316,62 @@ function assembleTaskRouting(task, path, options = {}) {
     };
   }
   if (options.planningOnly) {
+    const planning = planningContract(options.branches?.includes("research"));
+    selection.agents = planning.agents;
     selection.workflow = {
-      phases: [
-        "resolve load-bearing decisions",
-        "model domain language and durable decisions",
-        ...(options.branches?.includes("research") ? ["research unresolved decisions against primary sources"] : []),
-        "write the approved specification",
-        "split the specification into dependency-ordered tickets",
-        "write the execution handoff",
-      ],
+      phases: planning.phases,
+      agent_contracts: planning.agentContracts,
       output: "approved context, justified ADRs, a build-ready specification, dependency-ordered tickets, and an execution handoff",
       validation: "every ticket traces to the approved specification and every durable decision traces to context, an ADR, or cited research",
       recovery: "if a load-bearing decision remains unresolved, stop in discovery and record the blocker instead of producing speculative tickets",
     };
   }
-  const discovered = enrichDiscovered(discover(targetRoot));
+  const capabilityProfile = readCapabilityProfile(options.profile);
+  const allDiscovered = enrichDiscovered(discover(targetRoot));
+  const allowed = capabilityProfile ? new Set(capabilityProfile.skills) : null;
+  const discovered = allowed
+    ? Object.fromEntries(Object.entries(allDiscovered).filter(([name]) => allowed.has(name)))
+    : allDiscovered;
   const hostAgents = discoverAgents(targetRoot);
   const trustedSources = loadTrustedSources(targetRoot);
-  const skillFlow = buildFlow(selection, { task, trustedSources, branches: options.branches }, discovered);
+  const bundledIndex = capabilityProfile ? bundledSkills() : undefined;
+  const skillFlow = buildFlow(selection, {
+    task,
+    trustedSources,
+    branches: options.branches,
+    ...(capabilityProfile ? { allowedSkills: capabilityProfile.skills, bundledIndex } : {}),
+  }, discovered);
+  const profileSnapshot = capabilityProfile ? {
+    skills: capabilityProfile.skills,
+    missing: capabilityProfile.skills.filter((name) => !allDiscovered[name] && !bundledIndex[name]),
+  } : null;
   if (options.planningOnly) {
     const planningStages = new Set(["discover", "model", "research", "specify", "slice", "handoff"]);
     skillFlow.steps = skillFlow.steps.filter((step) => planningStages.has(step.stage));
     skillFlow.gaps = skillFlow.gaps.filter((gap) => planningStages.has(gap.stage));
   }
-  return { selection, discovered, hostAgents, facts, skillFlow };
+  const blockingGaps = skillFlow.gaps.filter((gap) => gap.blocking === true);
+  if (blockingGaps.length) {
+    throw new Error(`Task Routing validation failed:\n${blockingGaps.map((gap) => `  - ${gap.question}`).join("\n")}`);
+  }
+  const modelCatalog = readModelCatalog(options.models);
+  const modelAdvice = (options.models || skillFlow.steps.some((step) => step.capability === "model selection advice"))
+    ? buildModelAdvice(skillFlow, modelCatalog)
+    : null;
+  return { selection, discovered, hostAgents, facts, skillFlow, capabilityProfile: profileSnapshot, modelAdvice };
 }
 
-function savePlan(plan, attempt) {
+function savePlan(plan, attempt, target) {
   const path = join(attempt.folder, "workflow.json");
   plan.attempt = { id: attempt.id, path: attempt.relativePath };
-  writeFileSync(path, JSON.stringify(portablePlan(plan), null, 2), "utf-8");
+  const snapshot = portablePlan(plan);
+  const validationErrors = validateSnapshot(snapshot, `generated workflow ${attempt.id}`);
+  if (validationErrors.length) {
+    throw new Error(`Generated workflow validation failed:\n${validationErrors.map((error) => `  - ${error}`).join("\n")}`);
+  }
+  const slug = resolveProject(target).slug;
+  writeAttemptSkillBindings(slug, attempt.id, bindingsFromPlan(plan, target));
+  writeFileSync(path, JSON.stringify(snapshot, null, 2), "utf-8");
   const handoff = join(attempt.folder, "HANDOFF.md");
   if (!existsSync(handoff)) writeFileSync(handoff, [
     "# DIRF Handoff", "",
@@ -280,12 +384,14 @@ function savePlan(plan, attempt) {
   return path;
 }
 
-function renderPlan(planPath, openBrowser = false, quiet = false) {
+function renderPlan(planPath, target, openBrowser = false, quiet = false) {
   const plan = JSON.parse(readFileSync(planPath, "utf-8"));
   const outDir = dirname(planPath);
-  const written = buildInstructions(plan, outDir);
+  const slug = resolveProject(target).slug;
+  const bindings = readAttemptSkillBindings(slug, plan.attempt?.id || basename(outDir));
+  const written = buildInstructions(plan, outDir, bindings);
   const htmlPath = join(outDir, "instructions.html");
-  writeFileSync(htmlPath, buildHtml(plan), "utf-8");
+  writeFileSync(htmlPath, buildHtml(plan, bindings), "utf-8");
   written.push(htmlPath);
   if (!quiet) console.log(`Spec kit rendered: ${htmlPath}`);
   if (openBrowser) openBrowserAt(htmlPath);
@@ -305,16 +411,18 @@ function cmdBuild(args) {
   const config = loadProjectConfig(target);
   const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction, args.focusedOutput !== false, {
     projectPlaybooks: args.playbooks,
+    profile: args.profile,
+    models: args.models,
   });
   const attempt = createAttempt(target, args.name);
-  const planPath = savePlan(plan, attempt);
+  const planPath = savePlan(plan, attempt, target);
   if (!args.json) console.log(`Attempt saved: ${attempt.id}`);
-  renderPlan(planPath, args.open, args.json);
+  renderPlan(planPath, target, args.open, args.json);
   if (args.json) console.log(JSON.stringify({ attempt: publicAttemptForSlug(resolveProject(target).slug, attempt), workflow: planPath }, null, 2));
 }
 
 function cmdPlan(args) {
-  if (!args.name || !args.task) throw new Error('usage: dirf plan <name> "<task>" [--path DIR] [--research]');
+  if (!args.name || !args.task) throw new Error('usage: dirf plan <name> "<task>" [--path DIR] [--profile FILE] [--research]');
   const target = projectRoot(args.path);
   const config = loadProjectConfig(target);
   const branches = ["multi-session", ...(args.research ? ["research"] : [])];
@@ -323,12 +431,14 @@ function cmdPlan(args) {
     branches,
     planningOnly: true,
     projectPlaybooks: args.playbooks,
+    profile: args.profile,
+    models: args.models,
   });
   const attempt = createAttempt(target, args.name);
-  const planPath = savePlan(plan, attempt);
+  const planPath = savePlan(plan, attempt, target);
   console.log(`Plan saved: ${attempt.id}`);
   console.log(`Lifecycle: ${plan.skill_flow.steps.map((step) => step.stage).join(" -> ")}`);
-  renderPlan(planPath, args.open);
+  renderPlan(planPath, target, args.open);
 }
 
 function cmdCreate(args) {
@@ -336,9 +446,11 @@ function cmdCreate(args) {
   const config = loadProjectConfig(target);
   const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction, args.focusedOutput !== false, {
     projectPlaybooks: args.playbooks,
+    profile: args.profile,
+    models: args.models,
   });
   const attempt = createAttempt(target, args.name);
-  savePlan(plan, attempt);
+  savePlan(plan, attempt, target);
   console.log(`Attempt saved: ${attempt.id}`);
   console.log(`Routed to playbook: ${plan.playbook} (score ${plan.score})`);
   const installed = (plan.agents || []).filter((agent) => agent.status === "installed");
@@ -399,9 +511,10 @@ async function cmdLearn(args) {
   const plan = buildPlan(name, task, target, config.context.reserve_percent, config.compaction, true, {
     playbook: "methodology-learning",
     branches: ["research"],
+    profile: args.profile,
   });
   const attempt = createAttempt(target, name);
-  savePlan(plan, attempt);
+  savePlan(plan, attempt, target);
   const slug = resolveProject(target).slug;
   try {
     const source = await ingestLearningSource({
@@ -430,15 +543,11 @@ async function cmdLearn(args) {
         request: learningArtifactRelativePath(requestPath),
       },
       repository_modified: false,
+      agent_action: "continue_to_decision_gate",
       next: `dirf resume ${attempt.id} --path ${JSON.stringify(target)}`,
     };
     if (args.json) console.log(JSON.stringify(result, null, 2));
-    else {
-      console.log(`Learning source saved: ${source.title}`);
-      console.log(`Attempt: ${attempt.id}`);
-      console.log("Repository changes: none");
-      console.log(`Next: ${result.next}`);
-    }
+    else console.log("DIRF source saved; repo unchanged. Continuing review unless a decision is needed.");
   } catch (error) {
     updateAttemptLifecycle(slug, attempt.id, "block", { reason: `Learning intake failed: ${error.message}` });
     throw error;
@@ -446,19 +555,36 @@ async function cmdLearn(args) {
 }
 
 function cmdRender(args) {
-  const attempt = findAttempt(projectRoot(args.path), args.name);
+  const target = projectRoot(args.path);
+  const attempt = findAttempt(target, args.name);
+  const project = resolveProject(target);
   const planPath = join(attempt.folder, "workflow.json");
   if (!existsSync(planPath)) {
     console.error(`Attempt ${attempt.id} has no workflow.json`);
     process.exit(2);
   }
-  renderPlan(planPath, args.open);
+  const plan = JSON.parse(readFileSync(planPath, "utf8"));
+  const bindings = refreshSkillBindings(plan, readAttemptSkillBindings(project.slug, attempt.id), target);
+  writeAttemptSkillBindings(project.slug, attempt.id, bindings);
+  renderPlan(planPath, target, args.open);
 }
 
-function publicAttemptForSlug(slug, attempt) {
+function publicAttemptForSlug(slug, attempt, context = null) {
   // One composed read: attemptGateState does a single workflow.json read for
   // the already-loaded attempt (avoid re-looking-up per gate — see M2).
-  const { phases, gates } = attemptGateState(slug, attempt);
+  // A gate whose accepted artifact was mutated or deleted after acceptance
+  // throws on read; degrade that single attempt instead of crashing the whole
+  // listing, and surface the reason.
+  let phases = [];
+  let gates = [];
+  let gateError = null;
+  let audit = { gated: false, unaudited: false };
+  try {
+    ({ phases, gates } = attemptGateState(slug, attempt));
+    audit = attemptAudit(slug, attempt);
+  } catch (error) {
+    gateError = error.message;
+  }
   return {
     id: attempt.id,
     name: attempt.name,
@@ -470,30 +596,43 @@ function publicAttemptForSlug(slug, attempt) {
     phases,
     worker: attempt.worker || null,
     blocker: attempt.blocker || null,
+    abandonment_reason: attempt.abandonment_reason || null,
+    abandoned_at: attempt.abandoned_at || null,
     wait: attempt.wait || null,
     worktree_path: attempt.worktree_path || null,
     gates,
-    pending_gates: gates.filter((gate) => gate.status !== "accepted" && gate.status !== "satisfied").map((gate) => gate.phase),
+    ...(gateError ? { gate_error: gateError } : {}),
+    pending_gates: gates.filter(gateIsPending).map((gate) => gate.phase),
     evidence: attempt.evidence || {},
-    next_action: attemptNextAction(slug, attempt.id),
+    ...audit,
+    ...(context || attemptContextState(slug, attempt.id)),
   };
 }
 
 function cmdList(args) {
   const attempts = listAttempts(projectRoot(args.path));
   const slug = resolveProject(projectRoot(args.path)).slug;
-  if (args.json) { console.log(JSON.stringify(attempts.map((attempt) => publicAttemptForSlug(slug, attempt)), null, 2)); return; }
+  if (args.json) {
+    const contexts = attemptContextStates(slug);
+    console.log(JSON.stringify(attempts.map((attempt) => publicAttemptForSlug(slug, attempt, contexts.get(attempt.id))), null, 2));
+    return;
+  }
   if (!attempts.length) { console.log("(no attempts saved)"); return; }
   console.log("Saved attempts:");
   for (const attempt of attempts) console.log(`  - ${attempt.id}  ${attempt.name}`);
 }
 
-function gitOutput(target, args) {
+function gitOutput(target, args, { throwOnError = false } = {}) {
   try {
     return execFileSync("git", ["-C", target, ...args], { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).trim();
-  } catch {
+  } catch (error) {
+    if (throwOnError) throw error;
     return "";
   }
+}
+
+function checkoutRoot(target) {
+  return gitOutput(target, ["rev-parse", "--show-toplevel"]) || target;
 }
 
 function cmdStatus(args) {
@@ -505,11 +644,16 @@ function cmdStatus(args) {
 
   const isGit = gitOutput(target, ["rev-parse", "--is-inside-work-tree"]).trim() === "true";
   const branch = isGit ? gitOutput(target, ["branch", "--show-current"]) : "";
-  const changes = gitOutput(target, ["status", "--porcelain"]).split(/\r?\n/).filter(Boolean);
+  let changes = null;
+  if (isGit) {
+    try {
+      changes = gitOutput(target, ["status", "--porcelain"], { throwOnError: true }).split(/\r?\n/).filter(Boolean);
+    } catch { /* Keep an unavailable working tree inspection distinct from a clean checkout. */ }
+  }
   const aheadBehind = gitOutput(target, ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"]).split(/\s+/).map(Number);
   const hasUpstream = aheadBehind.length === 2 && aheadBehind.every(Number.isFinite);
   const mostRecentlyUpdated = attempts.length
-    ? attempts.reduce((latest, attempt) => (String(attempt.updated_at ?? "") > String(latest.updated_at ?? "") ? attempt : latest), attempts[0]).id
+    ? attempts.reduce((latest, attempt) => (String(attempt.updated_at ?? attempt.created_at ?? "") > String(latest.updated_at ?? latest.created_at ?? "") ? attempt : latest), attempts[0]).id
     : null;
 
   if (args.json) {
@@ -522,7 +666,7 @@ function cmdStatus(args) {
       repository: {
         is_git: isGit,
         branch: branch || null,
-        changed_paths: isGit ? changes.length : null,
+        changed_paths: changes?.length ?? null,
         ahead: hasUpstream ? aheadBehind[0] : null,
         behind: hasUpstream ? aheadBehind[1] : null,
       },
@@ -540,7 +684,8 @@ function cmdStatus(args) {
     console.log("Repository: not a Git repository");
     return;
   }
-  console.log(`Repository: ${branch || "detached HEAD"} (${changes.length ? `${changes.length} changed path(s)` : "clean"})`);
+  const workingTree = changes === null ? "working tree status unavailable" : changes.length ? `${changes.length} changed path(s)` : "clean";
+  console.log(`Repository: ${branch || "detached HEAD"} (${workingTree})`);
   if (hasUpstream) {
     console.log(`Upstream: ${aheadBehind[0]} ahead, ${aheadBehind[1]} behind`);
   }
@@ -550,10 +695,36 @@ function cmdResume(args) {
   const target = projectRoot(args.path);
   const attempt = findAttempt(target, args.name);
   const project = resolveProject(target);
+  const context = attemptContextState(project.slug, attempt.id, {
+    bounded: !args.json && !args.full,
+  });
+  if (context.needs_refresh) {
+    if (context.related_task_requires_reconciliation) {
+      if (context.related_task_relation === "conflict") {
+        throw new Error(`This task and task ${context.related_attempt_id} point to different PR commits. Check the current PR commit, update the task that matches it, and stop or update the other task before continuing. Other handoff: ${context.related_handoff_path}`);
+      }
+      throw new Error(`DIRF cannot tell whether this task or task ${context.related_attempt_id} matches the current PR version. Check or fetch the current PR commit, update the task that matches it, and stop or update the other task before continuing. Other handoff: ${context.related_handoff_path}`);
+    }
+    throw new Error(`This task has older information. Read newer task ${context.newer_attempt_id} at ${context.newer_handoff_path} before continuing.`);
+  }
+  const stored = claimAttemptCheckout(project.slug, attempt.id, checkoutRoot(target));
+  const planPath = join(attempt.folder, "workflow.json");
+  if (existsSync(planPath)) {
+    const plan = JSON.parse(readFileSync(planPath, "utf8"));
+    const bindings = refreshSkillBindings(plan, readAttemptSkillBindings(project.slug, attempt.id), target);
+    writeAttemptSkillBindings(project.slug, attempt.id, bindings);
+    if ([2, 3, 4, 5].includes(plan.schema_version)) renderPlan(planPath, target, false, true);
+    const missing = bindings.filter((binding) => binding.status !== "installed");
+    if (missing.length) {
+      const detail = missing.map((binding) => skillIsIncomplete(binding)
+        ? `${binding.skill} (missing: ${missingSkillFiles(binding).join(", ") || "unknown"})`
+        : binding.skill).join(", ");
+      throw new Error(`Cannot resume: required skill${missing.length === 1 ? "" : "s"} not installed: ${detail}`);
+    }
+  }
   // Resume is the "work is starting" signal: a planned attempt auto-starts so
   // the lifecycle can't drift (no phases in its workflow → stays planned).
   let autoStarted = false;
-  const stored = getAttemptState(project.slug, attempt.id);
   if (stored?.tracked && stored.status === "planned") {
     try { updateAttemptLifecycle(project.slug, attempt.id, "start"); autoStarted = true; }
     catch { /* attempt workflow has no phases — leave planned */ }
@@ -562,12 +733,30 @@ function cmdResume(args) {
   const workflow = existsSync(readme) ? readme : join(attempt.folder, "workflow.json");
   const handoff = join(attempt.folder, "HANDOFF.md");
   if (!existsSync(handoff)) throw new Error(`Attempt ${attempt.id} has no HANDOFF.md; rebuild it before resuming.`);
+  if (!args.json && !args.full) {
+    const current = getAttemptState(project.slug, attempt.id);
+    const gates = pendingGates(project.slug, attempt.id);
+    console.log(`Resume attempt: ${attempt.id}`);
+    console.log(`Stage: ${current.current_phase || "not started"}`);
+    if (autoStarted) console.log("Lifecycle: started");
+    console.log(`Load workflow: ${workflow}`);
+    console.log(`Load attempt handoff: ${handoff}`);
+    if (gates.length) {
+      console.log(`Pending decisions or checks: ${gates.length} (see workflow)`);
+      const gate = gates.find((item) => item.phase === current.current_phase);
+      if (gate) console.log(`Current check: ${gate.phase} (${gate.kind}${gate.status === "denied" ? ", denied" : ""})${gate.comment ? ` — ${gate.comment}` : ""}`);
+    }
+    console.log(`Next: ${context.next_action || "Read the workflow and task handoff for the next action."}`);
+    console.log("Use --full for project context and recorded evidence.");
+    return;
+  }
   let config = null;
   try { config = loadProjectConfig(target); }
   catch { /* legacy state can predate canonical config */ }
   const contextPath = config?.context?.path ? join(target, config.context.path) : null;
   const attemptHandoff = readFileSync(handoff, "utf8");
-  const projectHandoff = readHandoff(project.slug);
+  const projectHandoffState = projectHandoffContextState(project.slug);
+  const projectHandoff = projectHandoffState.handoff;
   const projectHandoffPath = join(storeProjectDir(project.slug), "HANDOFF.md");
   const projectBrain = {
     config,
@@ -576,6 +765,7 @@ function cmdResume(args) {
       content: contextPath && existsSync(contextPath) ? readFileSync(contextPath, "utf8") : null,
     },
     handoff: projectHandoff,
+    handoff_attention: projectHandoffState.attention,
     attempts: listAttemptsState(project.slug).map((item) => ({
       id: item.id,
       name: item.name,
@@ -596,13 +786,14 @@ function cmdResume(args) {
   if (args.json) {
     const prompt = `Resume DIRF attempt "${attempt.id}" for "${project?.slug || "project"}" at "${args.path || projectRoot(args.path)}".\nResolve the project brain before any global fallback. The active attempt takes precedence over the canonical project handoff if they conflict.\nContinue from the exact next action; do not restart completed work.`;
     // Re-read after auto-start so the emitted attempt reflects the store.
-    const current = autoStarted ? getAttemptState(project.slug, attempt.id) : attempt;
+    const current = getAttemptState(project.slug, attempt.id);
     console.log(JSON.stringify({
       attempt: publicAttemptForSlug(project.slug, current),
       workflow_path: workflow,
       project_brain: projectBrain,
       attempt_handoff: attemptHandoff,
       project_handoff: projectHandoff,
+      project_handoff_attention: projectHandoffState.attention,
       pending_gates: pendingGates(project.slug, attempt.id),
       recorded_evidence: recordedEvidence(project.slug, attempt.id),
       resume_prompt: prompt,
@@ -615,7 +806,11 @@ function cmdResume(args) {
   console.log(`Load workflow: ${workflow}`);
   console.log(`Load project config: ${join(storeProjectDir(project.slug), "config.json")}`);
   console.log(`Load project context: ${contextPath || "(not configured)"}`);
-  console.log(`Load canonical handoff: ${projectHandoffPath}`);
+  if (projectHandoffState.needs_refresh) {
+    console.log(`Skip canonical handoff: ${projectHandoffState.attention} Read task ${projectHandoffState.related_attempt_id} at ${projectHandoffState.related_handoff_path}`);
+  } else {
+    console.log(`Load canonical handoff: ${projectHandoffPath}`);
+  }
   console.log(`Load attempt handoff: ${handoff}\n`);
   // Reconciliation on resume: surface unresolved gates (the reconciler analog)
   // and recorded evidence (replay completed phases — do not re-run them).
@@ -656,7 +851,12 @@ function cmdMigrate(name, target) {
       parsed.lifecycle ??= LIFECYCLE;
       const plan = portablePlan(parsed);
       writeFileSync(path, JSON.stringify(plan, null, 2), "utf-8");
-      if (existsSync(join(dirname(path), "README.md"))) renderPlan(path);
+      if (existsSync(join(dirname(path), "README.md"))) {
+        const project = resolveProject(root);
+        const bindings = refreshSkillBindings(plan, readAttemptSkillBindings(project.slug, attempt.id), root);
+        writeAttemptSkillBindings(project.slug, attempt.id, bindings);
+        renderPlan(path, root);
+      }
       migrated += 1;
     } catch (error) {
       console.error(`Failed to migrate ${attempt.id}: ${error.message}`);
@@ -668,13 +868,142 @@ function cmdMigrate(name, target) {
 function cmdSetup(args) {
   const target = args._[0] || args.path || ".";
   const result = setupProject(target, { tracker: args.tracker, context: args.context, reservePercent: args.reservePercent });
+  let authority = null;
+  let authorityNote = "";
+  if (process.env.DIRF_ORCHESTRATOR_TOKEN) {
+    try {
+      authority = bindExecutionAuthority(result.slug, process.env.DIRF_ORCHESTRATOR_TOKEN);
+    } catch (error) {
+      authorityNote = `${error.message}. Live observations with this token stay rejected until the stored authority record is explicitly re-bound.`;
+    }
+  }
   console.log(`DIRF configured: ${result.root}`);
-  console.log(result.created.length ? `Created: ${result.created.join(", ")}` : "Already configured; no files changed.");
+  console.log(result.created.length ? `Created: ${result.created.join(", ")}` : "Already configured; nothing new to scaffold.");
+  if (result.updated.length) console.log(`Updated: ${result.updated.join(", ")}`);
+  if (authority) console.log(authority.changed ? "Execution authority initialized." : "Execution authority already initialized.");
+  if (authorityNote) console.log(`Execution authority note: ${authorityNote}`);
   const discovered = enrichDiscovered(discover(result.root));
   const gaps = findCapabilityGaps(loadPlaybooks(), discovered);
   console.log(`Detected ${Object.keys(discovered).length} installed skills; no skills were installed.`);
+  const harnesses = detectHarnesses(result.root);
+  console.log(`Harnesses detected: project ${harnesses.project.join(", ") || "none"}; global ${harnesses.global.join(", ") || "none"}.`);
   if (gaps.length) console.log(`Capability gaps: ${gaps.map((gap) => gap.capability).join(", ")}`);
   else console.log("Capability gaps: none.");
+  console.log("Host hint: run `dirf host setup` once to make future agent sessions DIRF-aware (SessionStart hook + global dirf skill).");
+}
+
+// --- One-time host bootstrap ---------------------------------------------
+// dirf host setup makes every future agent session in DIRF-configured repos
+// DIRF-aware: a SessionStart hook that emits the checkout-ownership envelope,
+// and a global `dirf` skill any agent can invoke. Both are additive and
+// idempotent; neither edits user content without being asked.
+
+const HOST_SKILL_SOURCE = join(ROOT, "host", "dirf-skill", "SKILL.md");
+const DEFAULT_SKILL_DIR = join(homedir(), ".zcode", "skills");
+
+function hookCommandLine() {
+  return `node "${join(ROOT, "src", "cli.js")}" state active --hook`;
+}
+
+function hookGroup() {
+  return { hooks: [{ type: "command", command: hookCommandLine() }] };
+}
+
+function hookSnippet() {
+  return JSON.stringify({ hooks: { SessionStart: [hookGroup()] } }, null, 2);
+}
+
+function installHook(settingsPath) {
+  // Merge the SessionStart hook group into an existing settings file without
+  // touching anything else. Backs up the original once; re-runs are a no-op.
+  // Two host schema shapes are auto-detected from the file's existing hooks:
+  //   Claude Code / Codex:  hooks.SessionStart = [ { hooks: [...] } ]
+  //   ZCode config:         hooks.events.SessionStart = [ ... ], gated by hooks.enabled
+  const original = readFileSync(settingsPath, "utf8");
+  const settings = JSON.parse(original);
+  if (typeof settings !== "object" || settings === null || Array.isArray(settings)) {
+    throw new Error("settings file must contain a JSON object");
+  }
+  if (settings.hooks !== undefined && (typeof settings.hooks !== "object" || settings.hooks === null || Array.isArray(settings.hooks))) {
+    throw new Error(`settings.hooks must be an object, found ${Array.isArray(settings.hooks) ? "an array" : typeof settings.hooks}`);
+  }
+  if (settings.hooks?.events !== undefined && (typeof settings.hooks.events !== "object" || settings.hooks.events === null || Array.isArray(settings.hooks.events))) {
+    throw new Error("settings.hooks.events must be an object");
+  }
+  const eventsShape = settings.hooks?.events !== undefined;
+  const hooks = settings.hooks ?? (settings.hooks = {});
+  const target = eventsShape ? (hooks.events ??= {}) : hooks;
+  const list = target.SessionStart ?? (target.SessionStart = []);
+  if (!Array.isArray(list)) throw new Error(`${eventsShape ? "settings.hooks.events.SessionStart" : "settings.hooks.SessionStart"} must be an array or absent`);
+  const command = hookCommandLine();
+  const present = list.some((group) => Array.isArray(group?.hooks) && group.hooks.some((entry) => entry?.type === "command" && entry?.command === command));
+  if (present) return { installed: false, enabledChanged: false };
+  list.push(hookGroup());
+  let enabledChanged = false;
+  if (eventsShape && hooks.enabled !== true) { hooks.enabled = true; enabledChanged = true; }
+  const backup = `${settingsPath}.dirf-bak`;
+  if (!existsSync(backup)) writeFileSync(backup, original, "utf8");
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf8");
+  return { installed: true, enabledChanged };
+}
+
+function installHostSkill(skillDir, force = false) {
+  if (!existsSync(HOST_SKILL_SOURCE)) throw new Error(`host skill template missing: ${HOST_SKILL_SOURCE}`);
+  const source = readFileSync(HOST_SKILL_SOURCE, "utf8");
+  const target = join(skillDir, "dirf", "SKILL.md");
+  if (existsSync(target)) {
+    const current = readFileSync(target, "utf8");
+    if (current === source) return "unchanged";
+    if (!force) return "edited";
+  }
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, source, "utf8");
+  return "installed";
+}
+
+function cmdHost(args) {
+  const sub = args._[0] || "setup";
+  if (sub === "hook-snippet") { console.log(hookSnippet()); return; }
+  if (sub !== "setup") {
+    console.error("usage: dirf host [setup] [--settings FILE] [--skill-dir DIR] [--skip-hook] [--skip-skill] [--force]\n       dirf host hook-snippet");
+    process.exit(2);
+  }
+
+  if (!args.skipHook) {
+    if (args.settings) {
+      const settingsPath = resolve(args.settings);
+      try {
+        const result = installHook(settingsPath);
+        if (result.installed) {
+          const enabledNote = result.enabledChanged ? " Set hooks.enabled = true (ZCode config requires it for hooks to run)." : "";
+          console.log(`Hook installed in ${settingsPath} (backup at ${settingsPath}.dirf-bak).${enabledNote}`);
+        } else {
+          console.log(`Hook already present in ${settingsPath}; nothing changed.`);
+        }
+      } catch (error) {
+        console.error(`Hook install failed: ${error.message}`);
+        process.exitCode = 1;
+      }
+    } else {
+      console.log("SessionStart hook — add to the host's settings file, or re-run with --settings <settings.json> to install:");
+      console.log(hookSnippet());
+    }
+  }
+
+  if (!args.skipSkill) {
+    const skillDir = args.skillDir ? resolve(args.skillDir) : DEFAULT_SKILL_DIR;
+    try {
+      const state = installHostSkill(skillDir, Boolean(args.force));
+      if (state === "installed") console.log(`Installed global dirf skill at ${join(skillDir, "dirf", "SKILL.md")}.`);
+      else if (state === "unchanged") console.log(`Global dirf skill already up to date at ${join(skillDir, "dirf", "SKILL.md")}.`);
+      else console.error(`Not overwriting ${join(skillDir, "dirf", "SKILL.md")} — local edits present. Use --force to replace.`);
+      const alternate = join(homedir(), ".agents", "skills");
+      if (existsSync(alternate) && alternate !== skillDir) console.log(`Note: host also reads ${alternate} — install there too with --skill-dir if your CLI loads both.`);
+    } catch (error) {
+      console.error(`Skill install failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+  }
 }
 
 function cmdValidate() {
@@ -715,26 +1044,31 @@ function cmdFolderRender(target) {
 function cmdSkillsScan(args) {
   const scanRoot = args.path ? (isAbsolute(args.path) ? args.path : resolve(process.cwd(), args.path)) : null;
   const idx = discover(scanRoot);
-  console.log(`Discovered ${Object.keys(idx).length} installed skills across scanned roots.`);
+  const incompleteCount = Object.values(idx).filter(skillIsIncomplete).length;
+  console.log(`Discovered ${Object.keys(idx).length} skill packages across scanned roots${incompleteCount ? ` (${incompleteCount} incomplete)` : ""}.`);
   const agentIdx = discoverAgents(scanRoot);
   const agentNames = Object.keys(agentIdx);
   console.log(`Discovered ${agentNames.length} installed agents${agentNames.length ? `: ${agentNames.slice(0, 12).join(", ")}${agentNames.length > 12 ? ", …" : ""}` : " — DIRF will offer its bundled defaults as a backup."}`);
   console.log("\nRegistry references resolved:");
   for (const ref of loadRegistry().skills || []) {
     const hit = idx[ref.name];
-    const status = hit ? "installed" : "recommended (not installed)";
+    const status = !hit ? "recommended (not installed)" : skillIsIncomplete(hit) ? "incomplete (not routable)" : "installed";
     const loc = hit ? ` -> ${hit.path}` : "";
     const invocation = hit ? (hit.invocation === "user" ? " [user-invoked — human-only]" : " [model-invoked]") : "";
-    console.log(`  ${ref.name.padEnd(24)} ${status}${loc}${invocation}`);
+    const missing = skillIsIncomplete(hit) ? ` [missing: ${missingSkillFiles(hit).join(", ") || "unknown"}]` : "";
+    console.log(`  ${ref.name.padEnd(24)} ${status}${loc}${invocation}${missing}`);
   }
   const discoveredList = Object.values(idx);
-  const userInvoked = discoveredList.filter((skill) => skill.invocation === "user").length;
-  console.log(`\nInvocation: ${discoveredList.length - userInvoked} model-invoked (agent-routable), ${userInvoked} user-invoked (human-only).`);
+  // The three counts partition the discovered total: incomplete packages are
+  // excluded from both invocation counts, never double-counted.
+  const userInvoked = discoveredList.filter((skill) => skill.invocation === "user" && !skillIsIncomplete(skill)).length;
+  const routable = discoveredList.filter((skill) => skill.invocation !== "user" && !skillIsIncomplete(skill)).length;
+  console.log(`\nInvocation: ${routable} model-invoked (agent-routable), ${userInvoked} user-invoked (human-only), ${incompleteCount} incomplete (not routable).`);
   const referrers = discoveredList.filter((skill) => skill.references?.length);
   if (referrers.length) {
     console.log("\nSkill-to-skill references (backticked /commands in bodies):");
     for (const skill of referrers) {
-      const resolved = skill.references.map((ref) => `${ref} (${idx[ref] ? "installed" : "referenced, not installed"})`).join(", ");
+      const resolved = skill.references.map((ref) => `${ref} (${!idx[ref] ? "referenced, not installed" : skillIsIncomplete(idx[ref]) ? "incomplete" : "installed"})`).join(", ");
       console.log(`  ${skill.name} → ${resolved}`);
     }
   }
@@ -767,6 +1101,7 @@ function cmdStateWhich(args) {
   // worktrees of one project can sit on different branches.
   const branch = gitOutput(target, ["branch", "--show-current"]);
   console.log(`${resolved.slug}  ->  ${storeProjectDir(resolved.slug)}`);
+  console.log(`handoff: ${join(storeProjectDir(resolved.slug), "HANDOFF.md")}`);
   console.log(`branch: ${branch || "(detached HEAD)"}`);
 }
 
@@ -787,7 +1122,12 @@ function cmdStateRegister(args) {
 
 function cmdStateReadHandoff(args) {
   const slug = resolveStateSlug(args);
-  const md = readHandoff(slug);
+  const state = projectHandoffContextState(slug);
+  const md = state.handoff;
+  if (state.needs_refresh) {
+    console.log(`DIRF withheld the canonical handoff. ${state.attention} Read task ${state.related_attempt_id} at ${state.related_handoff_path}.`);
+    return;
+  }
   if (md === null) { console.error(`No HANDOFF.md for ${slug}`); process.exitCode = 1; return; }
   process.stdout.write(md);
 }
@@ -810,7 +1150,11 @@ function cmdStateWriteHandoff(args) {
 function cmdStateListAttempts(args) {
   const slug = resolveStateSlug(args);
   const attempts = listAttemptsState(slug);
-  if (args.json) { console.log(JSON.stringify(attempts.map((attempt) => publicAttemptForSlug(slug, attempt)), null, 2)); return; }
+  if (args.json) {
+    const contexts = attemptContextStates(slug);
+    console.log(JSON.stringify(attempts.map((attempt) => publicAttemptForSlug(slug, attempt, contexts.get(attempt.id))), null, 2));
+    return;
+  }
   if (!attempts.length) { console.log("(no attempts saved)"); return; }
   console.log("Saved attempts:");
   for (const a of attempts) console.log(`  - ${a.id}  ${a.name}`);
@@ -826,6 +1170,107 @@ function cmdStateGetAttempt(args) {
   console.log(`name: ${a.name}`);
   console.log(`created_at: ${a.created_at}`);
   console.log(`folder: ${a.folder}`);
+}
+
+function currentExecutionFromEnv(env) {
+  const harness = env.DIRF_HARNESS || (env.CODEX_THREAD_ID ? "codex" : null);
+  const sessionId = env.DIRF_SESSION_ID || env.CODEX_THREAD_ID || null;
+  if (!harness || !sessionId) return null;
+  return {
+    harness,
+    sessionId,
+    authorityToken: env.DIRF_ORCHESTRATOR_TOKEN || null,
+    status: env.DIRF_EXECUTION_STATUS || "active",
+  };
+}
+
+function cmdStateActive(args) {
+  const target = projectRoot(args.path || ".");
+  const project = resolveProject(target);
+  const checkout = checkoutRoot(target);
+  if (!project) {
+    const result = { schema_version: 1, state: "idle", configured: false, project: null, checkout };
+    if (args.hook) {
+      console.log(JSON.stringify({ hookSpecificOutput: {
+        hookEventName: "SessionStart",
+        additionalContext: "DIRF is available, but this checkout is not configured. Run dirf setup before routing new work; do not borrow attempts or context from another project.",
+      } }));
+    } else if (args.json) console.log(JSON.stringify(result, null, 2));
+    else console.log("DIRF idle: this checkout is not configured. Run dirf setup before routing new work.");
+    return;
+  }
+  const projectAttempts = listAttemptsState(project.slug);
+  const responsibility = attemptResponsibility(project.slug, checkout, { attempts: projectAttempts });
+  const execution = responsibility.attempt ? currentExecutionFromEnv(process.env) : null;
+  if (execution?.authorityToken) observeAttempt(project.slug, responsibility.attempt.id, { ...execution, worktreePath: checkout });
+  const attempts = responsibility.attempts.map((attempt) => ({
+    id: attempt.id,
+    name: attempt.name,
+    current_phase: attempt.current_phase || null,
+    responsibility_path: attempt.responsibility_path,
+  }));
+  const activeContext = responsibility.attempt
+    ? attemptContextState(project.slug, responsibility.attempt.id, {
+      bounded: true,
+      attempts: projectAttempts,
+      attempt: responsibility.attempt,
+    })
+    : null;
+  const active = responsibility.attempt ? {
+    ...attempts[0],
+    ...activeContext,
+    workflow_path: existsSync(join(responsibility.attempt.folder, "README.md"))
+      ? join(responsibility.attempt.folder, "README.md")
+      : join(responsibility.attempt.folder, "workflow.json"),
+    handoff_path: join(responsibility.attempt.folder, "HANDOFF.md"),
+  } : null;
+  const result = {
+    schema_version: 1,
+    state: responsibility.state,
+    configured: true,
+    project: project.slug,
+    checkout,
+    ...(active ? { attempt: active } : {}),
+    ...(responsibility.state === "conflict" ? { attempts } : {}),
+  };
+
+  if (args.hook) {
+    let additionalContext;
+    if (result.state === "active") {
+      additionalContext = active.needs_refresh
+        ? active.related_task_requires_reconciliation
+          ? active.related_task_relation === "conflict"
+            ? `Two tasks point to different PR commits. Check the current PR commit, update the task that matches it, and stop or update task ${active.related_attempt_id}. Other handoff: ${active.related_handoff_path}`
+            : `DIRF cannot tell which task matches the current PR version. Check or fetch the current PR commit, update the matching task, and stop or update task ${active.related_attempt_id}. Other handoff: ${active.related_handoff_path}`
+          : `DIRF found newer work for the same pull request. Do not follow this task's old next step. Read task ${active.newer_attempt_id} at ${active.newer_handoff_path}, update this task, and continue only from the corrected next step.`
+        : `DIRF already has work in this checkout. Continue task ${active.id} (${active.name}). Current stage: ${active.current_phase || "not recorded"}. Next: ${active.next_action || "continue the current stage"}. Load ${active.workflow_path} and ${active.handoff_path} only if needed.`;
+    } else if (result.state === "conflict") {
+      additionalContext = `DIRF responsibility conflict in this checkout: ${attempts.map(({ id }) => id).join(", ")}. Stop and select the intended attempt explicitly; do not choose the latest.`;
+    } else {
+      additionalContext = "DIRF is available in this checkout, but no in-progress attempt is bound here. Route genuinely new work through DIRF; do not resume or duplicate unrelated planned, blocked, or other-checkout attempts.";
+    }
+    console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext } }));
+    return;
+  }
+  if (args.json) { console.log(JSON.stringify(result, null, 2)); return; }
+  if (result.state === "active") {
+    console.log(`DIRF task: ${active.id} (${active.name})`);
+    console.log(`Stage: ${active.current_phase || "not recorded"}`);
+    if (active.needs_refresh) {
+      console.log(`Attention: ${active.attention}`);
+      if (active.related_task_requires_reconciliation) {
+        console.log(`Next: Check the current PR commit, update the task that matches it, and stop or update task ${active.related_attempt_id}. Other handoff: ${active.related_handoff_path}`);
+      } else {
+        console.log(`Next: Read task ${active.newer_attempt_id} at ${active.newer_handoff_path} and replace this task's old next step before continuing.`);
+      }
+    } else {
+      console.log(`Next: ${active.next_action || "continue the current stage"}`);
+    }
+  } else if (result.state === "conflict") {
+    console.log(`DIRF conflict: ${attempts.map(({ id }) => id).join(", ")}`);
+  } else {
+    console.log("DIRF idle: available for new work; no in-progress attempt is bound to this checkout.");
+  }
 }
 
 function artifactProjection(slug, id) {
@@ -884,11 +1329,78 @@ function cmdArtifact(args) {
   }
 }
 
+// Deterministic gate evidence. --run makes the CLI execute the command itself
+// and record the exit code plus an output digest: the gate opens on a fact the
+// CLI captured, not on a claim the model typed. Built-in check gates execute
+// inside DIRF (no shell at all). Legacy --evidence text stays compatible but
+// marks the attempt unaudited (derived in state.js attemptAudit).
+const RUN_OUTPUT_STORED_CHARS = 4000;
+
+function captureRun(command) {
+  const result = spawnSync(command, { shell: true, encoding: "utf8", windowsHide: true, timeout: 120_000 });
+  const output = `${result.stdout || ""}${result.stderr || ""}`;
+  // The digest always covers the full capture; the stored tail is bounded so
+  // a chatty command cannot bloat attempt.json.
+  const stored = output.length > RUN_OUTPUT_STORED_CHARS ? output.slice(-RUN_OUTPUT_STORED_CHARS) : output;
+  return {
+    exit: result.status === null ? 1 : result.status,
+    output: stored,
+    output_sha256: createHash("sha256").update(output).digest("hex"),
+    ...(output.length > RUN_OUTPUT_STORED_CHARS ? { truncated: true } : {}),
+  };
+}
+
+function gateEvidenceForPhase(slug, id, phase, args) {
+  const gate = workflowGates(slug, id)[phase];
+  if (gate?.check) {
+    const result = runBuiltinCheck(slug, id, gate.check);
+    if (!result.ok) throw new Error(`Built-in check "${gate.check}" failed — the gate stays pending:\n${result.output}`);
+    return { command: `builtin:${gate.check}`, mode: "builtin", check: gate.check, ok: true, exit: 0, output: result.output };
+  }
+  if (args.run) {
+    const captured = captureRun(args.run);
+    if (captured.exit !== 0) {
+      throw new Error(`Recorded run exited ${captured.exit} — the gate stays pending: ${args.run}\n${captured.output.slice(-800)}`);
+    }
+    return { ...captured, command: args.run, mode: "run" };
+  }
+  return args.evidence ? { command: args.evidence, output: args.output } : undefined;
+}
+
+// Deterministic recorder identity for gate records: the agent harness that
+// executed the command. Sourced from the explicit DIRF_* overrides
+// (DIRF_HARNESS / DIRF_SESSION_ID / DIRF_MODEL — a superset of what attempt
+// observe trusts) and session-scoped harness env markers: CODEX_THREAD_ID
+// for codex; CLAUDECODE or CLAUDE_CODE_ENTRYPOINT for claude; CURSOR_AGENT
+// or CURSOR_TRACE_ID for cursor. ANTHROPIC_MODEL fills the model when the
+// host exports it. Persistent configuration variables (e.g. CODEX_HOME) are
+// deliberately not markers: a machine's setup is not the executor. Null when
+// the host provides nothing.
+// Resolution order is explicit-over-detected: DIRF_HARNESS wins, then known
+// harness env markers, then the dot-folder scan (project + global). Model and
+// session come from env only — DIRF never guesses them.
+function envHarnessMarker(env) {
+  if (env.CODEX_THREAD_ID) return "codex";
+  if (env.CLAUDECODE || env.CLAUDE_CODE_ENTRYPOINT) return "claude";
+  if (env.CURSOR_AGENT || env.CURSOR_TRACE_ID) return "cursor";
+  return null;
+}
+
+function recorderIdentityFromEnv(env, detected = { project: [], global: [] }) {
+  const installed = [...new Set([...(detected.project || []), ...(detected.global || [])])].sort();
+  const harness = env.DIRF_HARNESS || envHarnessMarker(env) || (installed.length ? installed.join("+") : null);
+  const sessionId = env.DIRF_SESSION_ID || env.CODEX_THREAD_ID || null;
+  const model = env.DIRF_MODEL || env.ANTHROPIC_MODEL || null;
+  if (!harness && !sessionId && !model) return null;
+  const who = `${harness || "unknown"}${sessionId ? `/${sessionId}` : ""}`;
+  return model ? `${who} on ${model}` : who;
+}
+
 function cmdAttempt(args) {
   const slug = resolveStateSlug(args);
   const action = args._[0];
   const id = args._[1];
-  if (!action) throw new Error("usage: dirf attempt <start-tracking|start|assign|advance|block|reopen|complete|link|gate|sync-from-handoff> <id> [options]");
+  if (!action) throw new Error("usage: dirf attempt <start-tracking|start|assign|advance|block|abandon|reopen|complete|link|observe|gate|sync-from-handoff> <id> [options]");
   if (action === "sync-from-handoff") {
     // One attempt, or the whole project when no id is given. Backfills
     // attempt.json status from completion evidence in HANDOFF.md.
@@ -904,17 +1416,42 @@ function cmdAttempt(args) {
     console.log(`Backfilled ${outcomes.filter((o) => o.changed).length} of ${outcomes.length} attempt(s) from handoff evidence.`);
     return;
   }
-  if (!id) throw new Error("usage: dirf attempt <start-tracking|start|assign|advance|block|reopen|complete|link|gate|sync-from-handoff> <id> [options]");
+  if (!id) throw new Error("usage: dirf attempt <start-tracking|start|assign|advance|block|abandon|reopen|complete|link|observe|gate|sync-from-handoff> <id> [options]");
   let result;
   let extra = null;
   if (action === "start-tracking") result = startTrackingAttempt(slug, id);
   else if (action === "link") result = linkAttemptWorktree(slug, id, args.worktree);
+  else if (action === "observe") {
+    const owner = currentExecutionFromEnv(process.env);
+    if (!owner) throw new Error("attempt observe requires trusted harness identity in DIRF_HARNESS and DIRF_SESSION_ID (or CODEX_THREAD_ID)");
+    if (!owner.authorityToken) throw new Error("attempt observe requires DIRF_ORCHESTRATOR_TOKEN from the trusted harness adapter");
+    let snapshot = {};
+    if (args.file) {
+      try { snapshot = JSON.parse(readFileSync(args.file, "utf8")); }
+      catch { throw new Error(`execution snapshot must contain valid JSON: ${args.file}`); }
+      if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) throw new Error("execution snapshot must be a JSON object");
+    }
+    result = observeAttempt(slug, id, {
+      ...owner,
+      status: args.executionStatus || snapshot.status || owner.status,
+      worktreePath: args.worktree || checkoutRoot(projectRoot(args.path || ".")),
+      observedAt: args.observedAt,
+      transferReason: args.transferReason,
+      ...(snapshot.children !== undefined ? { children: snapshot.children } : {}),
+    });
+  }
   else if (action === "gate") {
     const phase = args._[2];
     const decision = args._[3];
     if (!phase || !decision) throw new Error('usage: dirf attempt gate <id> <phase> accept|deny [--comment "..."]');
-    result = updateAttemptLifecycle(slug, id, "gate", { phase, decision, comment: args.comment, worker: args.worker });
+    const detected = detectHarnesses(projectRoot(args.path || "."));
+    result = updateAttemptLifecycle(slug, id, "gate", { phase, decision, comment: args.comment, worker: args.worker, recordedBy: recorderIdentityFromEnv(process.env, detected) });
   } else if (action === "advance" && args.auto) {
+    // Guard before autoAdvance runs: throwing after it would leave the
+    // auto-advanced lifecycle writes in place behind a failed command.
+    if (args.run) {
+      throw new Error(`--run cannot be combined with --auto: auto-advance cannot capture a per-phase run. Advance the gated phase once with --run, then use --auto.`);
+    }
     const outcome = autoAdvance(slug, id, {
       strict: args.strict,
       evidence: args.evidence ? { command: args.evidence, output: args.output } : undefined,
@@ -922,11 +1459,22 @@ function cmdAttempt(args) {
     result = outcome.attempt;
     extra = { advanced: outcome.advanced, stopped_at_gate: outcome.stopped_at_gate };
   } else {
+    let evidence;
+    if (action === "advance") {
+      const attempt = getAttemptState(slug, id);
+      evidence = gateEvidenceForPhase(slug, id, attempt.current_phase, args);
+    } else if (action === "complete") {
+      const phases = attemptPhases(slug, id);
+      evidence = gateEvidenceForPhase(slug, id, phases.at(-1), args);
+    } else if (args.run) {
+      throw new Error(`--run applies to attempt advance and attempt complete, not "${action}"`);
+    }
     result = updateAttemptLifecycle(slug, id, action, {
       worker: args.worker,
       reason: args.reason || args._[2],
+      authorityToken: action === "abandon" ? process.env.DIRF_ORCHESTRATOR_TOKEN : undefined,
       confirm: args.confirm,
-      evidence: args.evidence ? { command: args.evidence, output: args.output } : undefined,
+      evidence,
       strict: args.strict,
       wait: args.wait,
     });
@@ -1001,7 +1549,7 @@ function cmdStateMigrateCleanup(args) {
 
 function formatPortfolioSummary(snapshot) {
   const parts = [];
-  for (const status of ["active", "completed", "stale", "archived", "empty"]) {
+  for (const status of ["active", "idle", "completed", "stale", "archived", "empty"]) {
     const n = snapshot.summary[status] || 0;
     if (n) parts.push(`${n} ${status}`);
   }
@@ -1030,7 +1578,23 @@ function cmdProject(args) {
   if (action === "status") {
     const entry = portfolioSnapshot().projects.find((p) => p.slug === slug);
     if (!entry) throw new Error(`Unknown DIRF project ${slug}`);
+    const work = projectWorkSnapshot(slug);
+    if (args.json) { console.log(JSON.stringify(work, null, 2)); return; }
     console.log(`status: ${entry.status}${entry.explicit_status ? ` (explicit ${entry.explicit_status})` : " (derived)"}`);
+    console.log(`work: ${Object.entries(work.summary).filter(([key]) => key !== "total").map(([key, value]) => `${key}: ${value}`).join(", ")}`);
+    for (const attempt of work.attempts.filter(({ live_state }) => !["completed", "planned", "historical"].includes(live_state))) {
+      const owner = attempt.execution ? ` · ${attempt.execution.harness}:${attempt.execution.session_id}` : "";
+      const location = attempt.worktree_path ? ` · ${attempt.worktree_path}${attempt.execution?.branch ? ` [${attempt.execution.branch}]` : ""}` : "";
+      console.log(`  ${attempt.live_state.padEnd(10)} ${attempt.id}  ${attempt.name}${owner}${location}`);
+      for (const child of attempt.execution?.children || []) {
+        const blocker = child.blocker ? ` · blocker: ${child.blocker}` : "";
+        console.log(`    child ${child.status.padEnd(9)} ${child.harness}:${child.session_id} · ${child.assignment}${blocker}`);
+      }
+      if (attempt.abandonment_reason) console.log(`    abandoned: ${attempt.abandonment_reason}`);
+      if (attempt.handoff_path) console.log(`    handoff: ${attempt.handoff_path}`);
+      if (attempt.next_action) console.log(`    next: ${attempt.next_action}`);
+    }
+    if (work.continuation) console.log(`continue: ${work.continuation.handoff_path}${work.continuation.next_action ? ` · ${work.continuation.next_action}` : ""}`);
     return;
   }
   if (action === "complete") { setProjectStatus(slug, "complete"); console.log(`Marked ${slug} complete (explicit).`); return; }
@@ -1104,11 +1668,11 @@ function cmdExportGraphify(args) {
 
 // `dirf notice` — a non-derailing side-observation channel. Park anything NOT
 // the current task (a side bug, a doc staleness, a "fix later") without acting
-// on it or polluting HANDOFF.md. Default target: the latest attempt.
+// on it or polluting HANDOFF.md. Default target: the checkout owner.
 
 function cmdNoticeAppend(args, text) {
   const slug = resolveStateSlug(args);
-  const opts = {};
+  const opts = { checkoutPath: projectRoot(args.path) };
   if (args.project) opts.project = true;
   if (args.attempt) opts.attemptId = args.attempt;
   const { n, ts, file } = appendObservation(slug, text, opts);
@@ -1119,7 +1683,7 @@ function cmdNoticeAppend(args, text) {
 
 function cmdNoticeList(args) {
   const slug = resolveStateSlug(args);
-  const opts = {};
+  const opts = { checkoutPath: projectRoot(args.path) };
   if (args.project) opts.project = true;
   if (args.attempt) opts.attemptId = args.attempt;
   const entries = listObservations(slug, opts);
@@ -1131,7 +1695,7 @@ function cmdNoticeList(args) {
 
 function cmdNoticePromote(args, entryN) {
   const slug = resolveStateSlug(args);
-  const opts = {};
+  const opts = { checkoutPath: projectRoot(args.path) };
   if (args.attempt) opts.attemptId = args.attempt;
   const n = Number(entryN);
   if (!Number.isInteger(n) || n < 1) { console.error("usage: dirf notice promote <N> [--attempt ID]"); process.exitCode = 2; return; }
@@ -1153,18 +1717,31 @@ function cmdRecordProgress(args) {
     }
 
     // Build update
-    const timestamp = args.timestamp || new Date().toISOString();
     const updateData = {
       message,
-      timestamp,
+      timestamp: args.timestamp || null,
       phase: args.phase || null,
       next: args.next || "Continue work",
       files: args.files ? args.files.split(",") : [],
       attemptId: args.attempt || null,
+      workItem: args.workItem ?? null,
+      reviewRevision: args.reviewRevision || null,
     };
 
-    const { lifecycle: synced } = recordProgress(project.slug, updateData);
+    const outcome = recordProgress(project.slug, updateData);
+    const synced = outcome.lifecycle;
     if (synced) console.log(`   Lifecycle: ${synced.status}${synced.current_phase ? ` · phase: ${synced.current_phase}` : ""}`);
+
+    if (!outcome.accepted) {
+      const detail = outcome.reason || "canonical handoff rejected the checkpoint";
+      if (outcome.recorded) {
+        console.error(`Task progress saved. Shared summary unchanged (${detail}). Do not repeat this checkpoint.`);
+      } else {
+        console.error(`Progress not recorded; handoffs and lifecycle unchanged (${detail}).`);
+      }
+      process.exitCode = 1;
+      return;
+    }
 
     console.log("✅ Progress recorded:");
     console.log(`   ${message}`);
@@ -1191,13 +1768,32 @@ function parse(argv) {
     if (a === "--name") { out.name = rest[++i]; continue; }
     if (a === "--language") { out.language = rest[++i]; continue; }
     if (a === "--playbooks") { out.playbooks = rest[++i]; continue; }
+    if (a === "--profile") {
+      const file = rest[++i];
+      if (!file || file.startsWith("--")) throw new Error("--profile requires FILE");
+      out.profile = file;
+      continue;
+    }
+    if (a === "--models") {
+      const file = rest[++i];
+      if (!file || file.startsWith("--")) throw new Error("--models requires FILE");
+      out.models = file;
+      continue;
+    }
     if (a === "--force") { out.force = true; continue; }
+    if (a === "--settings") { out.settings = rest[++i]; continue; }
+    if (a === "--skill-dir") { out.skillDir = rest[++i]; continue; }
+    if (a === "--skip-hook") { out.skipHook = true; continue; }
+    if (a === "--skip-skill") { out.skipSkill = true; continue; }
     if (a === "--project") { out.project = true; continue; }
     if (a === "--slug") { out.slug = rest[++i]; continue; }
     if (a === "--attempt") { out.attempt = rest[++i]; continue; }
     if (a === "--worker") { out.worker = rest[++i]; continue; }
     if (a === "--reason") { out.reason = rest[++i]; continue; }
     if (a === "--worktree") { out.worktree = rest[++i]; continue; }
+    if (a === "--execution-status") { out.executionStatus = rest[++i]; continue; }
+    if (a === "--observed-at") { out.observedAt = rest[++i]; continue; }
+    if (a === "--transfer-reason") { out.transferReason = rest[++i]; continue; }
     if (a === "--stale-days") { out.staleDays = Number(rest[++i]); continue; }
     if (a === "--stale-project-days") { out.staleProjectDays = Number(rest[++i]); continue; }
     if (a === "--archive-reminder-days") { out.archiveReminderDays = Number(rest[++i]); continue; }
@@ -1207,13 +1803,18 @@ function parse(argv) {
     if (a === "--confirm") { out.confirm = true; continue; }
     if (a === "--approved") { out.approved = true; continue; }
     if (a === "--json") { out.json = true; continue; }
+    if (a === "--full") { out.full = true; continue; }
+    if (a === "--hook") { out.hook = true; continue; }
     if (a === "--research") { out.research = true; continue; }
     if (a === "--no-focused-output") { out.focusedOutput = false; continue; }
     if (a === "--phase") { out.phase = rest[++i]; continue; }
     if (a === "--next") { out.next = rest[++i]; continue; }
     if (a === "--files") { out.files = rest[++i]; continue; }
     if (a === "--timestamp") { out.timestamp = rest[++i]; continue; }
+    if (a === "--work-item") { out.workItem = rest[++i]; continue; }
+    if (a === "--review-revision") { out.reviewRevision = rest[++i]; continue; }
     if (a === "--evidence") { out.evidence = rest[++i]; continue; }
+    if (a === "--run") { out.run = rest[++i]; continue; }
     if (a === "--output") { out.output = rest[++i]; continue; }
     if (a === "--policy") { out.policy = rest[++i]; continue; }
     if (a === "--ledger") { out.ledger = rest[++i]; continue; }
@@ -1232,10 +1833,10 @@ const HELP = `DIRF — Do It Right First
 
 Usage:
   dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
-  dirf build  <name> "<task>" [--path DIR] [--open] [--no-focused-output] [--playbooks DIR]
-  dirf plan   <name> "<task>" [--path DIR] [--research] [--open] [--no-focused-output] [--playbooks DIR]
-  dirf create <name> "<task>" [--path DIR] [--playbooks DIR]   JSON only
-  dirf learn [URL|FILE|TEXT] [--path DIR] [--file FILE] [--language CODE] [--name NAME] [--json]
+  dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--open] [--no-focused-output] [--playbooks DIR]
+  dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--research] [--open] [--no-focused-output] [--playbooks DIR]
+  dirf create <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--playbooks DIR]   JSON only
+  dirf learn [URL|FILE|TEXT] [--path DIR] [--profile FILE] [--file FILE] [--language CODE] [--name NAME] [--json]
                                                       ingest a source; implementation requires an accepted recommendation and decision
   dirf render <name-or-id> [--path DIR] [--open]       re-render an attempt
   dirf validate <folder>                              validate a folder DAG
@@ -1243,12 +1844,14 @@ Usage:
   dirf run <folder> [--no-focused-output]             print deterministic execution handoff
   dirf list [--path DIR]                               list saved attempts
   dirf status [--path DIR] [--json]                    show project and repository state (machine-readable)
-  dirf resume <name-or-id> [--path DIR] [--json]       load the workflow handoff (--json returns structured state)
-  dirf record-progress "<message>" [--path DIR] [--attempt ID|UNIQUE_NAME] [--phase PHASE] [--next ACTION] [--files FILES]
+  dirf resume <name-or-id> [--path DIR] [--json|--full] show task and next action; --json returns state, --full includes history
+  dirf record-progress "<message>" [--path DIR] [--attempt ID|UNIQUE_NAME] [--phase PHASE] [--next ACTION] [--files FILES] [--work-item ITEM] [--review-revision SHA]
                                                       record progress, update HANDOFF.md and sync the attempt lifecycle
-  dirf attempt <action> <id> [--path DIR]              update lifecycle state
-                                                      (advance: [--evidence "CMD" [--output F]] [--strict] [--auto])
+  dirf attempt <action> <id> [--path DIR]              update lifecycle or execution ownership
+                                                      (advance: [--run "CMD" | --evidence "TEXT"] [--strict] [--auto] — gated attempts complete only with captured --run/built-in evidence and a synced handoff)
+                                                      (complete: --confirm [--evidence "CMD" [--output F]] [--strict])
                                                       (gate <phase> accept|deny [--comment "..."]; block [--wait input|blocker])
+                                                      (abandon: --reason "..." + DIRF_ORCHESTRATOR_TOKEN; observe: trusted harness env + DIRF_ORCHESTRATOR_TOKEN + active|idle|unknown [--file SNAPSHOT] [--transfer-reason "..."])
                                                       (sync-from-handoff: backfill done from handoff evidence; no id = all)
   dirf artifact list <attempt> [--json]                list typed artifacts and governing versions
   dirf artifact record <attempt> --file FILE [--json] record one metadata JSON object (add is an alias)
@@ -1259,13 +1862,18 @@ Usage:
   dirf validate                                        validate registries
   dirf skills scan [--path DIR]                        show installed skills
   dirf portfolio [--json]                             cross-project status view (active/stale/completed/...)
-  dirf project <complete|reopen|archive|status> [...] explicit project status override
+  dirf project <complete|reopen|archive|status> [...] explicit project status or reconciled --json view
   dirf export playbooks                                regenerate legacy playbooks JSON
   dirf export obsidian [--out DIR]                     export portfolio into an Obsidian vault (notes + canvas)
   dirf export graphify [--out DIR] [--skip-render]    export portfolio as a graphify graph (+ HTML render)
+  dirf doctor [--path DIR] [--json]                  show executable, revision, version, and store identity
   dirf inspect [<path>]                                detect a project's optimization stack + suggest gaps
-  dirf flow "<task>" [--path DIR]                      show the ordered skill flow for a task (ask-matt style)
+  dirf flow "<task>" [--path DIR] [--profile FILE] [--models FILE]
+                                                      show the ordered skill flow and optional diagnostic model advice
   dirf govern <digest|evaluate|append|verify> [...]    decide actions and maintain a hash-linked evidence ledger
+  dirf review <validate|render|ready> review.json     validate, render, or prove a PR review is ready
+  dirf review trigger review.json                    emit a bounded same-PR fix request
+  dirf review verify-update request.json updated-review.json  compare the report targets
   dirf state which [--path DIR]                       what project am I in? (slug + store path)
   dirf state list                                      list all registered projects
   dirf state register [--path DIR]                    register a project explicitly
@@ -1273,8 +1881,12 @@ Usage:
   dirf state write-handoff --file FILE|- [...]        write the canonical handoff
   dirf state list-attempts [--path DIR|--slug S]      list attempts for a project
   dirf state get-attempt <id> [...]                   show one attempt
+  dirf state active [--path DIR] [--json|--hook]      report idle, active, or conflicting checkout responsibility
   dirf state import-handoff [--path DIR] [--force]    promote a local HANDOFF.md into the store
   dirf state migrate-cleanup [--path DIR]            remove migration backup(s) after confirming the store works
+  dirf host setup [--settings FILE] [--skill-dir DIR] [--skip-hook] [--skip-skill] [--force]
+                                                     one-time host bootstrap: SessionStart hook + global dirf skill
+  dirf host hook-snippet                             print the SessionStart hook JSON only
 
 Side observations (park non-task notes without derailing):
   dirf notice "<text>"                                log an observation to the current attempt
@@ -1297,17 +1909,37 @@ Plain language (natural-English aliases for the same commands):
 
 function cmdFlow(args) {
   const task = args._.join(" ");
-  if (!task) { console.error("usage: dirf flow \"<task>\" [--path DIR]"); process.exit(2); }
-  const { skillFlow: flow } = assembleTaskRouting(task, projectRoot(args.path));
+  if (!task) { console.error("usage: dirf flow \"<task>\" [--path DIR] [--profile FILE] [--models FILE]"); process.exit(2); }
+  const { skillFlow: flow, capabilityProfile, modelAdvice } = assembleTaskRouting(task, projectRoot(args.path), { profile: args.profile, models: args.models });
   console.log(`Flow: ${flow.label}`);
   console.log(`Playbook: ${flow.playbook}${flow.branches.length ? ` (branches: ${flow.branches.join(", ")})` : ""}\n`);
+  if (capabilityProfile) {
+    console.log(`Profile skills: ${capabilityProfile.skills.join(", ") || "(none)"}`);
+    if (capabilityProfile.missing.length) console.log(`Profile gaps: ${capabilityProfile.missing.join(", ")}`);
+  }
   let lastStage = "";
   for (const s of flow.steps) {
     if (s.stage !== lastStage) { console.log(`\n[${s.stage}]`); lastStage = s.stage; }
     const mark = s.status === "installed" ? "✅" : "⚠️";
     const note = s.status === "installed" ? "" : " (recommended — not installed)";
-    console.log(`  ${mark} ${s.skill}${note}`);
+    const prefix = s.invocation === "user" ? "[user checkpoint]" : mark;
+    console.log(`  ${prefix} ${s.skill}${note}`);
     console.log(`      ${s.reason}`);
+  }
+  if (flow.gaps.length) {
+    console.log("\n[gaps]");
+    for (const gap of flow.gaps) console.log(`  ${gap.question}`);
+  }
+  if (modelAdvice) {
+    console.log("\n[model advice — diagnostic preflight]");
+    console.log(`  ${modelAdvice.rationale}`);
+    for (const recommendation of modelAdvice.recommendations) {
+      console.log(`  ${recommendation.model} (${recommendation.cost_tier}): ${recommendation.capabilities.join(", ")}`);
+    }
+    if (modelAdvice.uncovered_capabilities.length) {
+      console.log(`  Uncovered: ${modelAdvice.uncovered_capabilities.join(", ")}`);
+    }
+    console.log("  Preflight advice only; DIRF did not invoke a model, monitor a session, query live pricing, or authorize spend.");
   }
 }
 
@@ -1335,6 +1967,17 @@ function cmdInspect(args) {
   } else {
     console.log("No gaps detected — the optimization stack looks complete.");
   }
+}
+
+function cmdDoctor(args) {
+  const info = installationDiagnostics(projectRoot(args.path));
+  if (args.json) { console.log(JSON.stringify(info, null, 2)); return; }
+  console.log(`DIRF ${info.version} · Node ${info.node}`);
+  console.log(`CLI: ${info.cli}`);
+  console.log(`Revision: ${info.revision || "unavailable (not a Git checkout)"}`);
+  console.log(`Uncommitted changes: ${info.dirty === null ? "unknown" : info.dirty ? "yes" : "no"}`);
+  console.log(`Target: ${info.target}`);
+  console.log(`Project store: ${info.project_store}`);
 }
 
 // Natural-language aliases — plain-English entry points that rewrite to the
@@ -1399,6 +2042,28 @@ function cmdGovern(args) {
   process.exitCode = 2;
 }
 
+function cmdReview(args) {
+  const subcommand = args._[0];
+  const files = args._.slice(1);
+  if (!subcommand || !files.length) {
+    console.error("usage: dirf review <validate|render|ready> review.json");
+    console.error("       dirf review trigger review.json");
+    console.error("       dirf review verify-update request.json updated-review.json");
+    process.exitCode = 2;
+    return;
+  }
+  if (subcommand === "trigger" || subcommand === "verify-update") {
+    console.log(JSON.stringify(runReviewLedger([subcommand, ...files]), null, 2));
+    return;
+  }
+  if (files.length !== 1) {
+    console.error("usage: dirf review <validate|render|ready> review.json");
+    process.exitCode = 2;
+    return;
+  }
+  console.log(runReviewReport([subcommand, files[0]]));
+}
+
 function plainName(task) {
   // Short, filesystem-safe name from a task sentence, for `start work on`.
   return String(task || "")
@@ -1438,6 +2103,7 @@ async function main() {
   if (args.help) { console.log(HELP); return; }
 
   if (cmd === "setup") cmdSetup(args);
+  else if (cmd === "host") cmdHost(args);
   else if (cmd === "build") { args.name = args._[0]; args.task = args._.slice(1).join(" "); cmdBuild(args); }
   else if (cmd === "plan") { args.name = args._[0]; args.task = args._.slice(1).join(" "); cmdPlan(args); }
   else if (cmd === "create") { args.name = args._[0]; args.task = args._.slice(1).join(" "); cmdCreate(args); }
@@ -1468,8 +2134,10 @@ async function main() {
   else if (cmd === "artifact") cmdArtifact(args);
   else if (cmd === "project") cmdProject(args);
   else if (cmd === "inspect") { args._ = args._.length ? args._ : [args.path]; cmdInspect(args); }
+  else if (cmd === "doctor") cmdDoctor(args);
   else if (cmd === "flow") { cmdFlow(args); }
   else if (cmd === "govern") { cmdGovern(args); }
+  else if (cmd === "review") { cmdReview(args); }
   else if (cmd === "state") {
     const sub = args._[0];
     const subArgs = { ...args, _: args._.slice(1) };
@@ -1480,6 +2148,7 @@ async function main() {
     else if (sub === "write-handoff") cmdStateWriteHandoff(subArgs);
     else if (sub === "list-attempts") cmdStateListAttempts(subArgs);
     else if (sub === "get-attempt") cmdStateGetAttempt(subArgs);
+    else if (sub === "active") cmdStateActive(subArgs);
     else if (sub === "import-handoff") cmdStateImportHandoff(subArgs);
     else if (sub === "migrate-cleanup") cmdStateMigrateCleanup(subArgs);
     else { console.error(`unknown state subcommand: ${sub}\n\n${HELP}`); process.exit(2); }

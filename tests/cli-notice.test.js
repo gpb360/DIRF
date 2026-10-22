@@ -23,6 +23,7 @@ function setupProj(home, dir) {
   run(["setup", dir], { DIRF_HOME: home });
   // create an attempt so `dirf notice` has a default target
   run(["build", "demo", "some task"], { DIRF_HOME: home }, dir);
+  run(["resume", "demo"], { DIRF_HOME: home }, dir);
 }
 
 test('"dirf notice <text>" writes an observation to the current attempt', () => {
@@ -94,5 +95,5 @@ test('"dirf notice" with no attempt and no --project errors clearly', () => {
     err = e;
   }
   assert.ok(err, "expected nonzero exit when no attempt exists");
-  assert.match(err.stderr || err.stdout || "", /no attempt|build first/i);
+  assert.match(err.stderr || err.stdout || "", /no unique active attempt/i);
 });

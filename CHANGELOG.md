@@ -7,6 +7,253 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+### Added
+- **Reverse-engineering routing** — the registry now references
+  `reverse-engineer-anything` (REA), so jobs that depend on shipped binaries,
+  packages, firmware, network captures, or live runtime evidence route to it
+  when it is installed on the host, instead of falling through to ordinary
+  source-repository analysis.
+
+### Changed
+- Bundled `research`, `root-cause-debugging`, and `handoff` skills absorbed
+  REA's evidence disciplines: separate observations from inferences and
+  unknowns in an evidence ledger, diagnose a blocked action before changing
+  configuration (distinct blockers have distinct remedies, and an identical
+  failing action is never retried without changed input), and carry the
+  open-question ledger (answered / partially answered / unresolved) through
+  handoffs so successors never inherit unfinished work marked complete.
+
+## [0.31.2] - 2026-10-06
+
+### Fixed
+- A finished task can use its current task handoff without changing a shared
+  summary owned by another task. Identity, phase, decision, and proof checks
+  remain enforced.
+- A checkpoint that advances the phase remains fresh for completion.
+- Brief resume checks current guidance without reading unrelated handoffs
+  when the task has no shared work reference.
+
+### Changed
+- Resume shows the task, stage, handoff paths, and next action. Use `--full`
+  for the detailed view. JSON output keeps its existing form.
+- Checkout claims check Git membership without checking every worktree's
+  status and history. Repeated revision comparisons are reused within each call.
+- In a local Windows test with 11 worktrees and 102 tasks, median resume time
+  fell from 3.01 seconds to 1.19 seconds across five runs per version.
+  Git calls fell from 38 to 11. The test used a minimal workflow without
+  generated-workflow rendering. These timings apply to that test setup.
+- Output guidance uses ASD-STE100 Issue 9 writing rules. This guidance does
+  not certify full compliance. Partial-save messages now say when task progress
+  was saved, and the [Windows command guide](docs/windows-commands.md) includes
+  tested examples.
+
+## [0.31.1] - 2026-10-01
+
+### Added
+- An offline experiment compares one shorter startup paragraph with real DIRF
+  instruction packs. Six fixtures retain complete original and candidate text,
+  SHA-256 hashes, exact task constraints, and UTF-8 byte counts.
+- Negative controls reject changed objectives, restrictions, approvals, commands,
+  phase order, and execution-receipt requirements. Unknown or ambiguous layouts
+  remain unchanged and earn no size benefit.
+
+The measured saving is 696 bytes: 3.14% across fixture READMEs and 0.58% across
+complete instruction packs. This does not prove better routing, model
+understanding, execution outcomes, token savings, or lower costs. The experiment
+is not enabled in the CLI or renderer; production defaults and dependencies are
+unchanged. See `docs/experiments/assignment-size.md` for reproduction and limits.
+
+## [0.31.0] - 2026-09-29
+
+### Added
+- **MCP trace experiment.** A dependency-free injectable trace sink records
+  correlated request and tool spans. Request content and request-derived
+  identifiers are excluded. Tests exercise a real MCP process and verify that
+  synchronous and asynchronous sink failures preserve tool responses and
+  handoff bytes. No production sink or telemetry exporter is enabled.
+- **Deterministic gate enforcement.** `dirf attempt advance --run "CMD"` makes
+  the CLI execute the command itself and record the exit code and an output
+  digest; verify gates open on that captured fact, not on typed evidence
+  claims. Playbooks can declare built-in `check` gates (executed inside DIRF,
+  no shell) — the pr-review playbook now gates its review-artifact phase on a
+  `review-json` validation and its final phase on a user-owned decision.
+  Completing a gated attempt additionally requires the canonical handoff to be
+  at least as fresh as the last phase write, and `record-progress` accepts only
+  the current phase or its immediate successor. Attempts whose gates lack
+  captured verification project as `unaudited`.
+- **Every shipped playbook ends in a user-owned decision gate.** All 23
+  playbooks (and their conditional and non-interview contract variants) now
+  declare a decision gate on their final phase, so no DIRF-governed attempt
+  completes without a recorded human accept.
+- **Gate records carry the recorder identity.** Decision gate records now
+  capture `recorded_by` — the agent harness and session that executed the
+  command — kept separate from `by`, the human the decision belongs to.
+  Resolution is explicit-over-detected: `DIRF_HARNESS` / `DIRF_SESSION_ID` /
+  `DIRF_MODEL` win, then known session-scoped harness env markers
+  (`CODEX_THREAD_ID`, `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CURSOR_AGENT`,
+  `CURSOR_TRACE_ID`; `ANTHROPIC_MODEL` fills in the model when exported),
+  then the dot-folder scan (project and global: `.claude`, `.codex`,
+  `.cursor`, `.zcode`, `.opencode` — `.agents` is a shared convention, not a
+  harness). When a session or model resolves but no harness does, the harness
+  is recorded as `unknown`. `dirf setup` prints what it detected.
+
+### Fixed
+- **`unaudited` now actually appears on the CLI surface.** Public attempt
+  views (`dirf list --json`, attempt JSON) passed an attempt object where an
+  id/name was expected, so the audit derivation threw on every attempt and
+  every gated attempt projected as audited with a bogus `gate_error`.
+  `attemptAudit` now accepts an attempt object or an id/name.
+- **The `review-json` gate enforces the real review artifact schema.** The
+  built-in check demanded a stored verdict in a homemade shape that the
+  playbook's own validation (`dirf review ready review.json`) rejects — no
+  artifact could satisfy both. The check now reuses `validateReview`/
+  `deriveVerdict` from the review-report script; the verdict is derived, so
+  closed/open findings follow the schema's own rule instead of a hand-rolled
+  disposition list.
+- **A rejected `record-progress` no longer writes first.** The lifecycle
+  adjacency/gate decision now runs before any handoff write or update-number
+  consumption, so a rejected checkpoint leaves no progress section and no
+  consumed sequence number to duplicate on retry.
+- `dirf attempt advance --auto --run` rejects the combination before
+  auto-advance mutates state, and the completion error for gates crossed only
+  with typed evidence now says the attempt must be abandoned and restarted
+  (no command can re-capture the evidence).
+
+## [0.30.0] — 2026-09-12
+
+### Added
+- **Review evidence ledger:** code-review findings and PR review readiness are
+  recorded in a hash-linked, tamper-evident ledger; review handoffs stay behind
+  verification, and the ledger triggers after PR fixes are applied.
+- **Live work registry:** a project-level registry of live PRs with verified
+  review evidence drives merge readiness instead of per-checkout guesses.
+- **Verify gates bind implementation evidence:** advancing past a verify gate
+  records the exact implementation evidence that justified the crossing.
+- **`dirf doctor`:** environment health diagnostics in one command.
+- **Read-only audit playbook:** repository audits that cannot modify state.
+- **CI:** GitHub Actions validates every push with the release check suite.
+- **Agent-facing discovery bootstrap.** `dirf setup` appends a marker-guarded
+  block to the host's `AGENTS.md` and context file pointing a fresh agent at
+  `dirf state active` and the canonical store path (append-only; existing
+  content is never rewritten).
+- **One-time host bootstrap (`dirf host`).** `dirf host setup` installs a
+  SessionStart hook (`dirf state active --hook`) by idempotently merging it
+  into a settings file (backup at `<settings>.dirf-bak`), and installs a
+  machine-wide `dirf` skill (default `~/.zcode/skills/dirf/SKILL.md`) that
+  teaches any agent the session-start bootstrap. `dirf host hook-snippet`
+  prints the hook JSON only.
+- **Minimal execution rules in every workflow:** generated instruction sets
+  now carry a fixed, distilled version of the ponytail reuse ladder (reuse
+  what exists, standard library before new dependencies, smallest correct
+  change, delete before you add). Applies on every host regardless of
+  installed skills; the `ponytail` skill remains the full method where
+  installed. See ADR 0007.
+
+### Fixed
+- PR review readiness fails closed: graded review convergence is enforced,
+  stale merge readiness is prevented, merged-base refs are verified exactly,
+  and progress locks release without deleting successor ownership.
+- Incomplete skill packages fail closed instead of half-routing.
+- Public HTTPS intake rejects mapped loopback/private addresses and special-use
+  networks, pins connections to validated DNS answers, and keeps one timeout
+  through redirects and response-body consumption.
+- Publication screening covers extensionless text, private environment and host
+  configuration paths, and common credential patterns. Package checks inspect
+  the actual npm dry-run manifest.
+- Worktree cleanup instructions consistently require approval for archive
+  status changes, filesystem moves, and removal.
+
+### Changed
+- PR review updates report in plain English: how many confirmed issues remain,
+  what checks passed, and whether another review is running.
+- `dirf state which` also prints the canonical handoff path alongside the
+  slug and store path.
+- The README is a getting-started guide; detailed commands and integration
+  instructions live under `docs/`. CI and development-install requirements
+  now match the repository.
+- Skill headings and descriptions use clearer language while public IDs remain
+  unchanged.
+- Release checks include JavaScript syntax and package checks. Public HTTPS
+  intake, publication screening, and check scripts opt into type checking;
+  Node type definitions are development-only dependencies.
+
+### Removed
+- Retired the standalone `pr-review` launcher and legacy review-cycle guides,
+  scripts, mock reports, and posting helpers. Use the `pr-review` playbook and
+  `code-review` skill instead.
+- Removed project-specific cast and pose-review workflows from the reusable kit.
+- Consolidated root integration guides and `setup-integration.sh` into
+  `docs/integration.md`. Existing user-owned aliases and updater scripts are
+  not modified automatically.
+
+## [0.29.0] — 2026-08-30
+
+### Added
+- **Human-controlled plan interviews:** explicit Grill Me and Grill With Docs
+  requests now use the installed interview workflow while remaining under the
+  user's control.
+- **Diagnostic model advice:** `--models FILE` lets a host provide model names,
+  capabilities, and cost tiers. DIRF records the cheapest declared match for
+  work known before execution, or states that no match is available.
+- **Per-phase ownership:** generated workflows give each phase one owner, one
+  expected result, and one verification check in both Markdown and HTML.
+
+### Changed
+- A request that combines an interview with a review or implementation keeps
+  both tasks and runs them in the order the user stated.
+- Continuation questions now appear at the transition where they are needed,
+  and generated plans are validated before they are written to attempt state.
+
+### Fixed
+- Plain-English exclusions such as “no interview,” “without interviewing me,”
+  and “do not ask more questions” now produce a complete non-interview plan
+  instead of leaving interview phases, gates, or questions behind.
+- Positive requests such as “do not leave questions unanswered” keep the
+  interview, while negated review and implementation work stays excluded.
+- DIRF stops before creating an attempt when a requested interview workflow is
+  missing or cannot be run by the agent.
+
+## [0.28.1] — 2026-08-27
+
+### Fixed
+- Generated workflows now keep small machine-local pointers to selected skills
+  instead of copying skill folders into each attempt. Portable workflow data
+  contains only the skill name and provider.
+- `dirf resume` checks saved skill locations first, rescans only when a skill is
+  missing or moved, resolves repository skills in the active worktree, and
+  stops safely when a required skill is unavailable.
+- Resume verifies checkout ownership before changing shared attempt state.
+
+## [0.28.0] — 2026-08-22
+
+### Added
+- **Checkout responsibility hook** — `dirf state active` reports whether DIRF
+  is idle, already governing the current worktree, or has conflicting claims;
+  `--hook` emits a bounded `SessionStart` context envelope.
+- **Scoped capability profiles** — `build`, `plan`, `create`, `flow`, and
+  `learn` accept `--profile FILE` with an exact skill-name allowlist. Missing
+  names remain visible as capability gaps; the full skills scan is unchanged.
+- **Human-facing workflow helpers** — Unslop removes filler without changing
+  meaning, and the user-invoked Wait-What fallback restores missing context
+  when an explanation does not land.
+
+### Changed
+- `dirf resume` now claims the current worktree and refuses to create a second
+  active owner there. Session guidance uses this bounded state instead of
+  loading the full handoff and attempt portfolio unconditionally.
+- A connected agent now carries `dirf learn` through read-only analysis in the
+  same turn and stops at the decision gate. The printed resume command is for
+  later recovery.
+- Skill discovery honors human-only invocation metadata from Claude and Codex.
+- Documentation workflows and authoring guidance use a final plain-language
+  prose pass while preserving commands, evidence, and machine-readable text.
+
+### Fixed
+- Task Routing matches keywords and phrases at word boundaries, so `bundle`
+  still matches `bundles` but no longer misroutes tasks that say `bundled`.
+- Verify and soft gates with a declared verification command reject evidence
+  recorded for a different command.
+
 ## [0.27.0] — 2026-08-19
 
 ### Added

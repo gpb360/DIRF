@@ -1,102 +1,165 @@
 # Writing great playbooks and agents
 
-The vocabulary that survives contact with agents — informed by the Agent Skills
-ecosystem (mattpocock/skills, the agentskills.io specification, and Anthropic's
-guidance) and applied to DIRF's own authoring surface: playbook `config`
-frontmatter, `agents/*.md` definitions, and the workflow policy.
+This guide covers the authoring surface for DIRF: playbook frontmatter,
+`agents/*.md` definitions, and workflow policy.
 
-A skill/playbook exists to wrangle determinism out of a stochastic system.
-**Predictability** — the agent taking the same *process* every run, not
-producing the same output — is the root virtue; every rule below serves it.
+A skill or playbook gives an agent a repeatable process. The goal is
+predictable behavior, not identical wording on every run.
 
 ## Descriptions are routing hints
 
-The description is the entire routing surface: it's what the agent sees when
-deciding whether to load the playbook/skill. Write it for that job:
+An agent uses a skill description to decide whether to load it. Write the
+description for that decision:
 
-- **Front-load the leading word.** The first word does the invocation work.
-- **One trigger per branch.** "…build features test-first, mentions
-  red-green-refactor, or wants integration tests" — each branch distinct.
-  Synonyms that rename one branch are duplication; collapse them.
-- **Third person, always.** "Use when the user…", never "I" or "You" —
-  inconsistent point of view breaks discovery.
-- **Cut identity already in the body.** The description holds triggers, plus
-  any "when another skill needs…" reach clause. Nothing else.
-- **Keep it under 1024 chars.** Over-budget descriptions get dropped silently.
+- Put the leading word first. It helps the description trigger the right use.
+- Give each branch one trigger. Collapse synonyms that describe the same
+  branch.
+- Use third person. Write "Use when the user...", not "I" or "You".
+- Keep identity in the body. The description needs triggers and any reach
+  clause for another skill, not a second summary of the skill.
+- Keep the description below 1024 characters. Longer descriptions may be
+  dropped silently.
 
-**Two routing surfaces — don't confuse them.** A *skill's* description is the
-entire routing surface; write it as triggers. A *playbook* routes by
-**keywords** (DIRF's router matches keywords, not descriptions) — its
-description is identity + scope ("Research a topic, competitor, technology,
-or market and synthesize recommendations"), and trigger phrasing is optional
-there. Put the one-trigger-per-branch discipline into the keyword list
-instead. Auditing the kit found zero playbook-description issues: the
-heuristic only applies to model-invoked skills.
+Skills and playbooks route differently. A skill routes from its description.
+A playbook routes from keywords because DIRF's router matches keywords, not
+playbook descriptions. Put trigger phrases in the keyword list.
 
-## Completion criteria: checkable and exhaustive
+## Declare required skill resources
 
-Every step ends on a completion criterion. Two levers:
+When a skill cannot run from its entrypoint alone, declare every required
+co-located file through the standard `metadata` field:
 
-- **Checkable** — can the agent tell done from not-done? "The loop is
-  red-capable, deterministic, and fast" beats "make a good loop".
-- **Exhaustive, where it matters** — "every modified model accounted for"
-  forces legwork; "produce a change list" invites **premature completion**
-  (the agent rushing to *being done*).
+```yaml
+metadata: {"required_files":["scripts/run.cjs","references/checks.md"]}
+```
 
-DIRF's Verification Contract policy pairs with this: name the verify command
-before work starts; done means its output.
+Paths are relative to the skill folder and must stay inside it. DIRF treats a
+missing, non-file, absolute, or escaping path as incomplete. Incomplete skills
+remain visible for repair but are not candidates for automatic routing. An
+explicit request for one fails closed and names the missing resources.
+
+## Completion criteria are checkable
+
+Every step needs a clear definition of done:
+
+- Make completion observable. "The loop is deterministic and fast" is weaker
+  than a check that reports those properties.
+- Be exhaustive where it matters. "Every modified model is accounted for"
+  prevents an incomplete handoff. "Produce a change list" does not.
+
+DIRF's Verification Contract requires the workflow to name its verify command
+before work begins. The command's output is the evidence of completion.
 
 ## Progressive disclosure
 
-Steps live in the file; reference is pushed out behind pointers, one level
-deep. **Branching is the cleanest disclosure test**: inline what every branch
-needs, push behind a pointer what only some branches reach. Unread files cost
-zero tokens. In DIRF: `details:` arrays (one level deep, never recursed),
-`skill_flow.steps[].output` as the terse checkpoint, and keep SKILL.md /
-playbook bodies under ~500 lines.
+Keep each step focused. Put details behind one-level pointers when only one
+branch needs them. Unread files cost no tokens.
+
+In DIRF, use `details:` arrays, keep
+`skill_flow.steps[].output` as a short checkpoint, and keep `SKILL.md` and
+playbook bodies below about 500 lines.
 
 ## Prompt the positive
 
-Steering by prohibition drags the forbidden behavior into context and makes
-it more available. State the target behavior; keep a prohibition only as a
-hard guardrail you can't phrase positively, and pair it with what to do
-instead.
+State the behavior you want. A prohibition can make the forbidden behavior
+more salient. Keep a prohibition only when it is a necessary guardrail, and
+state the permitted behavior beside it.
+
+## Optional prose pass
+
+Before publishing a playbook, remove filler and vague claims. Name the actor
+and the evidence when they matter. Preserve the intended meaning and tone.
+Read the result once as a skeptical user. Cut formulaic phrasing, add a
+concrete example when a rule is abstract, and keep stylistic preferences
+optional unless the repository requires them.
 
 ## Leading words
 
-A compact concept already living in the model's pretraining — *red* (loop),
-*tight*, *seam*, *fog of war* — anchors behavior in fewer tokens than a
-sentence of restatement, and the same word in prompts/docs makes the
-playbook fire more reliably. Hunt for passages begging to collapse into one
-token.
+A short, familiar concept can replace a sentence of explanation. Use words
+such as *red*, *tight*, or *seam* when they accurately name the behavior. If a
+sentence repeats one idea, replace the repetition with the useful term.
 
 ## Invocation classes
 
-`disable-model-invocation: true` means the description is **human-facing**
-(triggers stripped — the human is the index); model-invoked descriptions are
-agent-facing trigger blocks. DIRF reads the flag and keeps user-invoked
-skills out of autonomous routing — but it never imposes the choice. A
-user-invoked skill may invoke model-invoked ones, never another user-invoked
-one; when they multiply, add a router.
+`disable-model-invocation: true` marks a human-facing skill in Claude Code.
+Codex uses `policy.allow_implicit_invocation: false` under
+`agents/openai.yaml`. DIRF treats either declaration as human-only, so its
+triggers are not used for automatic routing. Other skills are model-facing and
+use their descriptions as trigger blocks.
+
+DIRF respects this choice. A user-invoked skill may call a model-invoked skill,
+but it should not call another user-invoked skill. Add a router when several
+user-invoked skills need to work together.
+
+When a user names a human-only router, preserve every requested action and its
+order. Action-first wording runs the action before the checkpoint. Otherwise,
+the checkpoint comes first and the original action continues after the user
+confirms the decision.
+
+Every skill referenced by that router must be installed, complete, and
+model-invoked. DIRF uses the reference that covers the requested capability as
+the executable engine and binds the others as required dependencies. A
+missing, human-only, or incomplete dependency stops with a plain validation
+error instead of running part of the workflow. A generic task may select the
+engine directly.
+
+Keep the router small and put the repeatable process in the engine. If one
+branch changes durable documentation, give that branch a named documentation
+owner and a phase after the acceptance decision. Stateless interviews do not
+need that owner.
+
+If the user explicitly excludes interviews or questions, route to a declared
+non-interview contract or fail closed. Removing only the interview skill is not
+enough: the persisted phases, gates, ownership, output, validation, questions,
+and rendered instructions must also honor the exclusion.
+
+## One capability, five connected views
+
+Treat an adopted capability as one behavior with five connected views:
+
+| View | Question it answers |
+|---|---|
+| Workflow | What happens, in what order, and where does work stop? |
+| Playbook | When should DIRF route here, and which gates apply? |
+| Agent | Who owns the action, decision, verification, and handoff? |
+| Code | What is validated, selected, persisted, or rendered deterministically? |
+| Documentation | How can a person understand and use it in ordinary language? |
+
+Do not copy the same instructions into five files. Keep one authoritative rule
+and make the other views point to or enforce it. For example, a plan interview
+has a one-question workflow, routes through the existing planning playbook,
+assigns question order to the workflow orchestrator while decisions remain
+user-owned, enforces the confirmation gate in code, and documents the normal
+and stateful variants once.
+
+Model advice follows the same rule. The workflow declares the preflight phase,
+the agent organizer owns it, and the rendered workflow carries the result. The
+[model-advice contract](../skills/model-advice/README.md) owns the matching and
+safety rules.
 
 ## Failure modes to prune
 
-- **Premature completion** — vague completion criteria.
-- **Duplication** — one meaning in several places (maintenance + tokens).
-- **Sediment** — stale layers that settle because adding feels safe.
-- **Sprawl** — too long even when every line is live. Cure: disclose down.
-- **No-op** — a line the model obeys by default. Test: does it change
-  behavior versus the default?
-- **Negation** — prohibition as the primary steering mechanism.
+- **Premature completion:** the completion rule is too vague to verify.
+- **Duplication:** one meaning appears in several places, increasing upkeep.
+- **Sediment:** stale guidance remains because deleting it feels risky.
+- **Sprawl:** the body is too long even though every line is relevant. Move
+  branch-specific detail behind a pointer.
+- **No-op guidance:** the line does not change the agent's default behavior.
+- **Negation:** a prohibition is doing the work of positive direction.
 
-## Authoring checklist (copy this into your draft and tick it off)
+## Authoring checklist
 
-- [ ] Description: leading word first, one trigger per branch, third person,
-      under 1024 chars, no identity already in the body
-- [ ] Every step ends on a checkable (and where it matters, exhaustive)
-      completion criterion
-- [ ] Reference pushed one level deep behind pointers; body under ~500 lines
-- [ ] Positive phrasing; prohibitions only as paired guardrails
-- [ ] Leading words recruited where a sentence restates one idea
-- [ ] Invocation class chosen deliberately (and declared, if user-invoked)
-- [ ] `dirf validate` passes; gates declared on non-final phases only
+- [ ] Description starts with the leading word, has one trigger per branch,
+      uses third person, stays below 1024 characters, and avoids repeating the
+      body.
+- [ ] Every step has a checkable completion criterion and covers all important
+      cases.
+- [ ] Branch-specific reference is one level deep and the body stays below
+      about 500 lines.
+- [ ] Guidance states the desired behavior and pairs necessary prohibitions
+      with guardrails.
+- [ ] Short leading words replace repeated explanations where they improve
+      clarity.
+- [ ] The invocation class is deliberate and declared for user-invoked skills.
+- [ ] `dirf validate` passes; every phase that must stop for evidence or a
+      decision declares the applicable verify, decision, or soft gate.

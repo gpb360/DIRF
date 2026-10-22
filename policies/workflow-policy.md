@@ -12,9 +12,16 @@ Use this policy in every generated workflow prompt.
 ## Runtime Portability
 - Operating instructions are host-neutral. The current host may be Claude, Codex, Cursor, Zcode, T3Code, another agent, or a person.
 - Resolve repository, skill, and tool paths at runtime. Never persist absolute host paths as workflow identity.
-- DIRF coordination state is canonical and central (~/.dirf/projects/<slug>/). Worktrees resolve to the same store entry automatically via git-common-dir, so no per-worktree setup is needed and state cannot drift between checkouts. Scratch isolation stays local to the current execution.
+- DIRF coordination state is canonical and central (~/.dirf/projects/<slug>/). Worktrees resolve to the same store entry automatically via git-common-dir, so no per-worktree setup is needed and worktrees share the same coordination store. Scratch isolation stays local to the current execution.
 - Select scratch space inside the active workspace. Never silently fall back to another drive or the operating-system temp directory.
 - Persist capability names and provider hints, not installation paths.
+
+## Delegated Status
+- The orchestrator is the only execution-registry writer for its Attempt; user-owned lifecycle and decision actions remain separate.
+- The harness binds the execution authority token during trusted setup before children run and keeps it out of child environments; identity variables and a self-written transfer reason do not grant registry authority or abandonment rights.
+- Every child assignment identifies the parent Attempt and requires the child to report its state, result, blocker, and handoff back to the orchestrator.
+- Child agents do not call DIRF state commands. The orchestrator submits their reports as one bounded execution snapshot.
+- A child is a separate Attempt only when it needs an independent lifecycle and handoff.
 
 ## Build Bias
 - Start with the smallest useful workflow.
@@ -40,11 +47,27 @@ Use this policy in every generated workflow prompt.
 
 ## PR Merge Readiness
 - Do not infer readiness from GitHub's mechanical mergeable or ready status, a green build, or a prior review.
-- After every final push, refresh the exact PR head; collect all review comments, unresolved threads, and checks; reconcile every P0, P1, and P2 finding; fix and verify each applicable finding; then rerun the relevant checks.
+- After every final push, refresh the exact PR head; collect all review comments, unresolved threads, and checks; reconcile every P0, P1, P2, and P3 finding; fix and verify each finding; then rerun the relevant checks and review the new head.
 - Re-fetch that exact head's reviews, unresolved threads, checks, mergeability, and diff. Report "ready to merge" only when no unresolved review findings remain and all required gates pass.
-- Identify every waived or dismissed finding and obtain explicit user approval. Otherwise report "not ready" and state the exact remaining action.
+- Dismiss a finding only when evidence shows it is invalid or a duplicate. A retained P0, P1, P2, or P3 finding cannot be waived for completion; fix and verify it, then review the new head. Otherwise report "not ready" and state the exact remaining action.
 
 ## Communication
+- Use ASD-STE100 Issue 9 for human technical output. Apply its writing rules
+  and approved-word dictionary during authoring and the final prose review.
+  Use approved meanings, parts of speech, and verb forms. Define necessary
+  technical terms and use them consistently. Do not treat jargon as an exception.
+- Use full sentences without contractions or semicolons. Use active voice.
+  In descriptions, use passive voice only when the actor is unknown.
+  Give one instruction per sentence, except for simultaneous actions.
+  Put prerequisite conditions before the command. Limit instructions to 20 words
+  per sentence and descriptions to 25. Give each paragraph one topic and at most
+  six sentences. Use the word-count conventions in section 8 of the standard.
+- Preserve required facts, failures, uncertainty, and approval boundaries.
+  Rewrite the sentence when a word substitution would change its meaning.
+  Preserve literal code, commands, logs, labels, quotations, citations, and
+  machine-readable data. Task-specific creative writing keeps its requested form.
+  These instructions guide output. Do not claim full STE compliance without
+  reviewing the applicable rules and dictionary usage.
 - Write user-facing updates in simple, ordinary English. Keep internal workflow
   terms such as exact-head, fixed-point, remediation, gate, convergence, and
   evidence ledger out of the update unless the user asks for technical detail.
@@ -57,12 +80,38 @@ Use this policy in every generated workflow prompt.
 - For pull requests, never say "ready to merge" while a review is still running
   or any serious review issue remains. When it is ready, ask one plain question:
   "All checks passed and no review issues remain. May I merge PR #N into staging?"
+- In normal PR updates, say how many confirmed issues remain, what checks
+  passed, whether another review is running, and what happens next.
+- Keep grades, confidence scores, P-codes, and the detailed findings ledger in
+  the review artifact. Show or link that detail when it helps, or when the user
+  asks for it; do not make the user decode it in every status update.
+- For implementation and merge-readiness work, `Complete` requires a review of the current commit with no remaining issues,
+  all required checks passed, all review conversations resolved, and proof that
+  the corrected behavior works. Green checks alone are not completion.
+- Separate code pushed, PR text posted, checks completed, and review completed.
+  Never present one as proof of another.
+- Include the PR number and current head when they matter. Link the published PR
+  update when the user expects to see it on GitHub.
 - Do not add AI attribution footers or generated-by boilerplate.
 - Pull requests created during the workflow carry a description: what
   changed, why, and how it was verified — never a title-only PR.
 
+## Final Prose Pass
+- When the workflow includes a prose-editing capability, apply it once to
+  human-facing output such as documentation, reports, pull-request text,
+  handoffs, and interface copy.
+- Remove filler, puffery, vague attribution, repeated ideas, generic
+  conclusions, forced lists, synonym cycling, and formulaic framing.
+- Prefer concrete actors, actions, evidence, and ordinary words. Preserve the
+  intended meaning, audience, and tone.
+- Do not invent evidence or polish an unverified claim into certainty. State
+  the uncertainty plainly.
+- Do not rewrite code, machine-readable data, commands, logs, citations,
+  quotations, or verbatim source. Preserve required formats and contracts.
+- Self-audit once before delivery.
+
 ## Side observations
-- Park anything noticed that is NOT the current task (a side bug, a doc staleness, a "fix later") via `dirf notice "<note>"`. Default target: the current attempt.
+- Park anything noticed that is NOT the current task (a side bug, a doc staleness, a "fix later") via `dirf notice "<note>"`. Default target: the active checkout owner. If no unique owner exists, use `--attempt <id>` or `--project`.
 - Never put side observations in HANDOFF.md — they are not status, decisions, or blockers.
 - Do not act on a side observation in the current attempt. Log it and continue.
 - Observations are ephemeral to the attempt. Promote one to the project-level list with `dirf notice promote <N>` only if it should survive across sessions.

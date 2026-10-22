@@ -5,7 +5,9 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  bindExecutionAuthority,
   createAttemptInStore,
+  observeAttempt,
   portfolioSnapshot,
   readRegistry,
   registerProject,
@@ -18,6 +20,7 @@ import {
 } from "../src/state.js";
 
 const DAY = 86_400_000;
+const AUTHORITY_TOKEN = "test-portfolio-capability-token-00001";
 
 function setup(now = new Date()) {
   const home = mkdtempSync(join(tmpdir(), "dirf-portfolio-"));
@@ -25,6 +28,7 @@ function setup(now = new Date()) {
   const root = mkdtempSync(join(tmpdir(), "dirf-portfolio-repo-"));
   execFileSync("git", ["init", "-q"], { cwd: root });
   const { slug } = registerProject(root);
+  bindExecutionAuthority(slug, AUTHORITY_TOKEN);
   return { home, root, slug, now };
 }
 
@@ -65,16 +69,32 @@ test("a project with no attempts is empty", () => {
   assert.equal(project.latest, null);
 });
 
-test("a project with an in-progress attempt is active", () => {
+test("an in-progress attempt without fresh harness evidence leaves the project idle", () => {
   const { slug, now } = setup();
   addAttempt(slug, "feature", daysAgo(5, now), "in_progress");
+  assert.equal(portfolioSnapshot(now).projects[0].status, "idle");
+});
+
+test("fresh harness evidence makes a project active", () => {
+  const { root, slug, now } = setup();
+  const attempt = addAttempt(slug, "feature", now, "in_progress");
+  observeAttempt(slug, attempt.id, { harness: "test", sessionId: "owner", status: "active", worktreePath: root, authorityToken: AUTHORITY_TOKEN }, now);
   assert.equal(portfolioSnapshot(now).projects[0].status, "active");
 });
 
-test("a project with only planned attempts and recent activity is active", () => {
+test("a fresh idle observation keeps an old open project idle", () => {
+  const { root, slug, now } = setup();
+  const old = daysAgo(45, now);
+  const attempt = addAttempt(slug, "old feature", old, "in_progress");
+  backdateLastSeen(slug, old);
+  observeAttempt(slug, attempt.id, { harness: "test", sessionId: "owner", status: "idle", worktreePath: root, authorityToken: AUTHORITY_TOKEN }, now);
+  assert.equal(portfolioSnapshot(now).projects[0].status, "idle");
+});
+
+test("a project with only planned attempts and recent activity is idle", () => {
   const { slug, now } = setup();
   addAttempt(slug, "fresh-plan", daysAgo(2, now), "planned");
-  assert.equal(portfolioSnapshot(now).projects[0].status, "active");
+  assert.equal(portfolioSnapshot(now).projects[0].status, "idle");
 });
 
 test("a project with only planned attempts and old activity is stale", () => {
@@ -104,7 +124,7 @@ test("open work beats a handoff completion signal", () => {
   const { slug, now } = setup();
   addAttempt(slug, "work", daysAgo(1, now), "in_progress");
   writeHandoff(slug, "# DIRF Handoff\n\n## Status: Complete.\n");
-  assert.equal(portfolioSnapshot(now).projects[0].status, "active");
+  assert.equal(portfolioSnapshot(now).projects[0].status, "idle");
 });
 
 test("stale_project_days drives the staleness threshold", () => {
@@ -114,7 +134,7 @@ test("stale_project_days drives the staleness threshold", () => {
   backdateLastSeen(slug, daysAgo(7, now));
   assert.equal(portfolioSnapshot(now).projects[0].status, "stale");
   writeSettings({ stale_project_days: 30 });
-  assert.equal(portfolioSnapshot(now).projects[0].status, "active");
+  assert.equal(portfolioSnapshot(now).projects[0].status, "idle");
 });
 
 test("explicit status overrides derived classification until reopened", () => {
@@ -128,7 +148,7 @@ test("explicit status overrides derived classification until reopened", () => {
   assert.equal(portfolioSnapshot(now).projects[0].status, "archived");
   setProjectStatus(slug, null);
   project = portfolioSnapshot(now).projects[0];
-  assert.equal(project.status, "active");
+  assert.equal(project.status, "idle");
   assert.equal(project.explicit_status, null);
 });
 
@@ -157,7 +177,8 @@ test("snapshot carries attempt counts, latest attempt and summary", () => {
   assert.equal(project.latest.status, "in_progress");
   assert.equal(project.latest.next_action, "Run the focused tests.");
   assert.equal(snapshot.summary.projects, 1);
-  assert.equal(snapshot.summary.active, 1);
+  assert.equal(snapshot.summary.idle, 1);
+  assert.equal(project.work_registry.attempts.length, 2);
   assert.equal(snapshot.summary.attempts_done, 1);
   assert.equal(snapshot.summary.attempts_in_progress, 1);
 });

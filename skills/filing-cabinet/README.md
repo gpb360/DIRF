@@ -1,7 +1,7 @@
 ---
 name: filing-cabinet
 kind: skill
-description: "Inventory excessive Git worktrees, review branch history, and recommend archive/remove/retain actions behind an explicit single-use approval contract"
+description: "List Git worktrees and recommend which to keep, review, archive, or remove; changes require explicit approval"
 uses: []
 details: ["CONTRACT.md"]
 inputs: ["repository with worktrees", "approval to act"]
@@ -9,10 +9,9 @@ outputs: ["worktree inventory", "recommendations", "decision contract"]
 capabilities: ["worktree hygiene", "governed maintenance"]
 ---
 
-# Filing Cabinet
+# Worktree cleanup
 
-DIRF grows worktrees faster than they get cleaned up. This skill inventories
-every worktree in a repository, classifies each by branch state and recency,
+This skill inventories every worktree in a repository, checks its branch and age,
 and recommends `retain` / `review` / `archive` / `remove` behind an explicit
 single-use approval contract. It never deletes, archives, or rewrites anything
 itself — the approval contract is enforced before any destructive action.
@@ -34,7 +33,8 @@ itself — the approval contract is enforced before any destructive action.
    | Action class | Risk | Gate |
    |---|---|---|
    | inventory / review | none | allow (read-only) |
-   | worktree archive | low | logged, no approval |
+   | record archive status | low | explicit approval |
+   | move a worktree | moderate | single-use approval |
    | worktree remove | moderate | single-use approval |
    | branch delete | high | single-use approval + merged-or-backed-up evidence |
    | history rewrite | deny | written mandate only |
@@ -48,7 +48,7 @@ itself — the approval contract is enforced before any destructive action.
 
 ## Evidence requirements (summary)
 
-- archive: worktree listed in the inventory; clean or dirty recorded
+- archive: exact worktree, branch, HEAD, and clean state verified; explicit approval recorded
 - remove: inventory entry + branch merged status + last commit date
 - branch delete: `git branch --merged` proof or a named backup ref
 - history rewrite: written mandate + backup plan (denied by default)
@@ -63,5 +63,7 @@ See [CONTRACT.md](CONTRACT.md) for the full allow/deny/approval contract.
 - A dirty worktree is never recommended for removal without review.
 - Valid unmerged work found in a cleanup candidate is consolidated into a PR
   before any removal is approved.
+- `dirf worktree archive` records cleanup status; it does not move files.
+  Moving a worktree is a separate filesystem action requiring its own approval.
 - The repository owner is the sole authority; no agent-initiated destructive
   action happens without their per-item single-use approval.

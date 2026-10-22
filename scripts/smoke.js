@@ -9,13 +9,13 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = join(ROOT, "src", "cli.js");
 const TARGET = mkdtempSync(join(tmpdir(), "dirf-smoke-"));
+spawnSync("git", ["init", TARGET], { stdio: "ignore" });
 // Point home at an empty temp dir so whatever agents/skills happen to be
 // installed on the dev machine can't leak into the assertions.
 const FAKE_HOME = mkdtempSync(join(tmpdir(), "dirf-smoke-home-"));
 const ENV = { ...process.env, HOME: FAKE_HOME, USERPROFILE: FAKE_HOME };
-// The full suite runs inside this integration check. Leave enough headroom for
-// slower Windows process startup and loaded CI/dev machines.
-const TIMEOUT_MS = 60_000;
+// Bound each CLI invocation. Unit tests run separately via check:release.
+const TIMEOUT_MS = 180_000;
 
 function run(args, expectFail = false) {
   const res = spawnSync(process.execPath, [CLI, ...args], { cwd: ROOT, encoding: "utf-8", timeout: TIMEOUT_MS, env: ENV });
@@ -30,14 +30,6 @@ function assertContains(output, needle) {
 }
 
 try {
-  const testFiles = readdirSync(join(ROOT, "tests"))
-    .filter((name) => name.endsWith(".test.js"))
-    .sort()
-    .map((name) => join("tests", name));
-  const unit = spawnSync(process.execPath, ["--test", ...testFiles], { cwd: ROOT, encoding: "utf-8", timeout: TIMEOUT_MS });
-  if (unit.status !== 0) throw new Error(`unit tests failed\n${unit.error?.message || unit.stderr || unit.stdout}`);
-  assertContains(unit.stdout, "# fail 0");
-
   assertContains(run(["validate"]), "Validation passed");
   assertContains(run(["skills", "scan"]), "Discovered");
   const unconfigured = run(["build", "smoke", "build a landing page", "--path", TARGET], true);
@@ -47,7 +39,7 @@ try {
   const setup = run(["setup", TARGET, "--reserve-percent", "5"]);
   assertContains(setup, "DIRF configured:");
   assertContains(setup, "Capability gaps:");
-  assertContains(run(["setup", TARGET]), "Already configured; no files changed.");
+  assertContains(run(["setup", TARGET]), "Already configured; nothing new to scaffold.");
   assertContains(readFileSync(join(TARGET, ".gitignore"), "utf8"), ".dirf/attempts/");
   const registry = JSON.parse(readFileSync(join(FAKE_HOME, ".dirf", "projects.json"), "utf8"));
   const [slug] = Object.keys(registry.projects);
@@ -117,7 +109,14 @@ try {
   status = run(["status", "--path", TARGET]);
   assertContains(status, "Attempts: 5");
   assertContains(status, "Latest:");
-  assertContains(run(["resume", attemptId, "--path", TARGET]), "## Exact next action");
+  const resume = run(["resume", attemptId, "--path", TARGET]);
+  assertContains(resume, "Stage:");
+  assertContains(resume, "Next:");
+  assertContains(resume, "Load attempt handoff:");
+  if (resume.includes("## Exact next action") || resume.trim().split(/\r?\n/).length > 10) {
+    throw new Error("default resume must show a brief task summary");
+  }
+  assertContains(run(["resume", attemptId, "--path", TARGET, "--full"]), "## Exact next action");
   run(["render", "does-not-exist-xyz", "--path", TARGET], true);
   const invalidAttemptId = smokeAttempts.find((name) => name !== attemptId);
   writeFileSync(join(attemptsRoot, invalidAttemptId, "workflow.json"), "{");

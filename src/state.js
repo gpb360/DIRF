@@ -3,6 +3,7 @@
 //   projects.json            project registry
 //   projects/<slug>/
 //     config.json            canonical config
+//     execution-authority.json  hashed harness capability
 //     HANDOFF.md             canonical handoff
 //     attempts/<id>/         per-run state (layout unchanged)
 //
@@ -15,9 +16,18 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSyn
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { resolveGoverningArtifact, validateArtifactGraph, validatePlanDelta } from "./artifacts.js";
-import { updateProgressSection } from "./handoff-update.js";
+import { parseCurrentHandoff, updateProgressSection } from "./handoff-update.js";
+// The review-json built-in check enforces the real review artifact schema —
+// the one the pr-review playbook's declared validation (`dirf review ready
+// review.json`) already enforces through this module. Verdicts are derived
+// from findings/verification/confidence, never stored.
+import { deriveVerdict } from "../skills/code-review/scripts/review-report.mjs";
 
 const GIT_TIMEOUT = 30_000;
+const LIVE_OBSERVATION_TTL_MS = 5 * 60_000;
+const EXECUTION_STATUSES = new Set(["active", "idle", "unknown"]);
+const CHILD_EXECUTION_STATUSES = new Set(["active", "idle", "blocked", "completed", "unknown"]);
+const MAX_CHILD_EXECUTIONS = 64;
 
 export function storeHome() {
   return process.env.DIRF_HOME || join(homedir(), ".dirf");
@@ -60,10 +70,10 @@ function gitCommonDir(targetPath) {
 }
 
 // The normalization contract (spec §4). MUST be deterministic and byte-stable.
-// Order: absolute -> forward slashes -> strip trailing slash -> resolve symlinks
+// Order: normalize separators -> absolute -> strip trailing slash -> resolve symlinks
 //        -> case-fold to lower case.
 export function normalizeIdentityKey(rawKey) {
-  let key = resolve(rawKey);                    // 1. absolute
+  let key = resolve(rawKey.replaceAll("\\", "/")); // 1. normalize separators before host path resolution
   key = key.replaceAll("\\", "/");              // 2. forward slashes
   key = key.replace(/\/+$/, "");                // 3. strip trailing slash(es)
   try { key = realpathSync(key).replaceAll("\\", "/"); } catch { /* not-yet-existing path: keep resolved form */ }
@@ -242,6 +252,22 @@ export function storeAttemptDir(slug, attemptId) {
   return join(storeProjectDir(slug), "attempts", storeSegment(attemptId, "attempt id"));
 }
 
+const SKILL_BINDINGS_FILE = "skill-bindings.json";
+
+export function readAttemptSkillBindings(slug, attemptId) {
+  const attempt = getAttempt(slug, attemptId);
+  const path = join(attempt.folder, SKILL_BINDINGS_FILE);
+  if (!existsSync(path)) return [];
+  const value = JSON.parse(readFileSync(path, "utf8"));
+  return Array.isArray(value.bindings) ? value.bindings : [];
+}
+
+export function writeAttemptSkillBindings(slug, attemptId, bindings) {
+  const attempt = getAttempt(slug, attemptId);
+  const path = join(attempt.folder, SKILL_BINDINGS_FILE);
+  atomicWrite(path, JSON.stringify({ schema_version: 1, bindings }, null, 2) + "\n");
+}
+
 // Create an attempt inside the store. Mirrors project.js createAttempt semantics
 // (timestamp id, collision suffix, attempt.json) but writes to the store.
 export function createAttemptInStore(slug, name, now = new Date()) {
@@ -275,6 +301,7 @@ export function createAttemptInStore(slug, name, now = new Date()) {
 }
 
 export function listAttempts(slug) {
+  recoverPendingProgress(slug);
   const base = join(storeProjectDir(slug), "attempts");
   if (!existsSync(base)) return [];
   return readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name)).flatMap((entry) => {
@@ -287,14 +314,17 @@ export function listAttempts(slug) {
   });
 }
 
-export function getAttempt(slug, idOrName) {
-  const attempts = listAttempts(slug);
+function getAttemptFromList(slug, attempts, idOrName) {
   const exact = attempts.find((a) => a.id === idOrName);
   if (exact) return exact;
   const wanted = slugifyName(idOrName);
   const matches = attempts.filter((a) => slugifyName(a.name) === wanted);
   if (!matches.length) throw new Error(`No DIRF attempt named ${JSON.stringify(idOrName)} for project ${slug}`);
   return matches.at(-1);
+}
+
+export function getAttempt(slug, idOrName) {
+  return getAttemptFromList(slug, listAttempts(slug), idOrName);
 }
 
 function attemptMetadataPath(slug, id) {
@@ -367,7 +397,7 @@ export function listAttemptArtifacts(slug, idOrName) {
   return artifacts;
 }
 
-export function recordAttemptArtifact(slug, idOrName, artifact, now = new Date()) {
+function recordAttemptArtifactLocked(slug, idOrName, artifact, now = new Date()) {
   const attempt = getAttempt(slug, idOrName);
   if (artifact?.accepted_at !== undefined || artifact?.accepted_sha256 !== undefined) {
     throw new Error("Record the artifact first and accept it separately");
@@ -385,7 +415,11 @@ export function recordAttemptArtifact(slug, idOrName, artifact, now = new Date()
   return writeAttempt(slug, { ...attempt, artifacts, updated_at: now.toISOString() });
 }
 
-export function acceptAttemptArtifact(slug, idOrName, artifactId, now = new Date()) {
+export function recordAttemptArtifact(slug, idOrName, artifact, now = new Date()) {
+  return withProgressLock(slug, () => recordAttemptArtifactLocked(slug, idOrName, artifact, now));
+}
+
+function acceptAttemptArtifactLocked(slug, idOrName, artifactId, now = new Date()) {
   const attempt = getAttempt(slug, idOrName);
   const current = attempt.artifacts || [];
   assertArtifactGraph(current);
@@ -411,6 +445,10 @@ export function acceptAttemptArtifact(slug, idOrName, artifactId, now = new Date
   return writeAttempt(slug, { ...attempt, artifacts, updated_at: now.toISOString() });
 }
 
+export function acceptAttemptArtifact(slug, idOrName, artifactId, now = new Date()) {
+  return withProgressLock(slug, () => acceptAttemptArtifactLocked(slug, idOrName, artifactId, now));
+}
+
 // Single workflow.json read for an already-loaded attempt. Projections pass
 // the attempt they already hold so per-attempt work stays O(1) reads, not O(N)
 // (every getAttempt lists the whole attempts tree).
@@ -424,6 +462,40 @@ export function attemptWorkflow(slug, attempt) {
   };
 }
 
+// Read the complete persisted assignment for one exact attempt id. Callers
+// must never resolve names here: an MCP client can reconnect while several
+// similarly named attempts exist, and assignment continuity must remain bound
+// to the id it was originally given. Resolve the id before joining any path so
+// traversal-like input is treated as an unknown id rather than a file path.
+export function readAttemptAssignment(slug, attemptId) {
+  if (typeof attemptId !== "string" || !attemptId.trim()) {
+    throw new Error("An exact attempt id is required");
+  }
+  const attempt = listAttempts(slug).find((candidate) => candidate.id === attemptId);
+  if (!attempt) {
+    throw new Error(`No DIRF attempt with exact id ${JSON.stringify(attemptId)} for project ${slug}`);
+  }
+  const workflowPath = join(attempt.folder, "workflow.json");
+  if (!existsSync(workflowPath)) {
+    throw new Error(`Attempt ${attempt.id} has no workflow.json assignment`);
+  }
+  const workflow = JSON.parse(readFileSync(workflowPath, "utf8"));
+  const handoff = readAttemptHandoffFile(slug, attempt.id);
+  if (handoff === null) {
+    throw new Error(`Attempt ${attempt.id} has no HANDOFF.md assignment`);
+  }
+  return {
+    id: attempt.id,
+    name: attempt.name,
+    created_at: attempt.created_at,
+    status: attempt.status,
+    current_phase: attempt.current_phase || null,
+    worker: attempt.worker || null,
+    workflow,
+    handoff,
+  };
+}
+
 export function attemptPhases(slug, idOrName) {
   return attemptWorkflow(slug, getAttempt(slug, idOrName)).phases;
 }
@@ -432,7 +504,8 @@ export function attemptPhases(slug, idOrName) {
 // Playbooks declare per-phase gates (config.workflow.gates), flattened into the
 // persisted workflow.json at selection time (same precedent as
 // conditional_contract). Gate kinds:
-//   verify   — the phase must be advanced past WITH a recorded evidence record
+//   verify   — the phase must be advanced past WITH a recorded evidence record;
+//              it may also require an accepted implementation_evidence artifact
 //   decision — the phase must be advanced past WITH an accepted gate record
 //              (user-owned decision — see the Decision Ownership policy)
 //   soft     — tracked only; advance allowed without a record unless --strict
@@ -446,53 +519,189 @@ export function workflowGates(slug, idOrName) {
   return attemptWorkflow(slug, getAttempt(slug, idOrName)).gates;
 }
 
+// Deterministic audit derivation, recomputed from stored facts: an attempt is
+// unaudited exactly when its workflow declares gates but at least one gate
+// carries no captured verification (a CLI-run exit-0 or a passed built-in
+// check). Gateless workflows declare no verification contract and are never
+// flagged. Derived on read — it cannot be edited into or out of existence.
+// Accepts an already-loaded attempt (projections hold one) or an id/name —
+// the same object-or-id contract as attemptGateState.
+export function attemptAudit(slug, idOrAttempt) {
+  const attempt = idOrAttempt !== null && typeof idOrAttempt === "object" ? idOrAttempt : getAttempt(slug, idOrAttempt);
+  const gates = attemptWorkflow(slug, attempt).gates;
+  const gated = Object.keys(gates).length > 0;
+  if (!gated) return { gated: false, unaudited: false };
+  const evidence = attempt.evidence || {};
+  const unaudited = Object.entries(gates).some(([phase, gate]) => {
+    if (gate.check) {
+      const record = evidence[phase];
+      return !(record?.mode === "builtin" && record.check === gate.check && record.ok === true);
+    }
+    if ((gate.kind || "verify") === "decision" && !gate.verify) return false;
+    const record = evidence[phase];
+    return !(record?.exit !== undefined && record.exit === 0);
+  });
+  return { gated: true, unaudited };
+}
+
+// Built-in gate checks the CLI executes itself — no shell, no PATH, no typed
+// evidence. Registry of check name → validator(attempt folder) returning
+// { ok, output }.
+export function runBuiltinCheck(slug, idOrName, check) {
+  const attempt = getAttempt(slug, idOrName);
+  const validators = {
+    "review-json": validateAttemptReviewJson,
+  };
+  const validator = validators[check];
+  if (!validator) throw new Error(`Unknown built-in check ${JSON.stringify(check)} — known: ${Object.keys(validators).join(", ")}`);
+  return validator(join(attempt.folder));
+}
+
+// The pr-review playbook's verify gate: review.json must exist in the attempt
+// folder, parse, and satisfy the real review-report schema (the exact
+// validation `dirf review validate|ready review.json` performs — one schema,
+// one enforcer). The verdict is derived by that schema's own rule, so a PASS
+// can never carry findings: any published finding forces CONDITIONAL or FAIL,
+// which replaces the old hand-rolled "closed disposition" list.
+function validateAttemptReviewJson(attemptFolder) {
+  const path = join(attemptFolder, "review.json");
+  if (!existsSync(path)) return { ok: false, output: `review.json not found at ${path}` };
+  let review;
+  try {
+    review = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    return { ok: false, output: `review.json is not valid JSON: ${error.message}` };
+  }
+  try {
+    const verdict = deriveVerdict(review);
+    return { ok: true, output: `review.json valid: verdict ${verdict}, ${review.findings.length} finding(s), ${review.verification.length} verification item(s)` };
+  } catch (error) {
+    return { ok: false, output: `review.json invalid: ${error.message}` };
+  }
+}
+
 // Why a phase may not be advanced past yet, or null when it can.
 function gateRequirement(gates, records, evidence, attempt, phase, strict = false) {
   const gate = gates[phase];
   if (!gate) return null;
   const kind = gate.kind || "verify";
+  // A built-in check gate is satisfied only by the check the CLI itself ran
+  // and recorded (--run text or shell evidence can never open it).
+  if (gate.check) {
+    const record = evidence[phase];
+    if (!record || record.mode !== "builtin" || record.check !== gate.check || record.ok !== true) {
+      return { kind, reason: `Phase "${phase}" requires its built-in check "${gate.check}" — the CLI records it automatically when the check passes; typed evidence cannot satisfy it` };
+    }
+    return null;
+  }
   if (kind === "decision") {
     if (records[phase]?.status !== "accepted") {
       return { kind, reason: `Phase "${phase}" is a decision gate — record the decision first (dirf attempt gate ... accept|deny --comment "...")` };
     }
-    if (gate.artifact_type && !governingAttemptArtifact(attempt, gate.artifact_type)) {
+    const governing = gate.artifact_type ? governingAttemptArtifact(attempt, gate.artifact_type) : null;
+    if (gate.artifact_type && !governing) {
       return { kind, reason: `Phase "${phase}" requires an accepted governing artifact of type "${gate.artifact_type}"` };
+    }
+    if (gate.artifact_type === "implementation_evidence" && !governing.accepted_sha256) {
+      return { kind, reason: `Phase "${phase}" requires a SHA-bound accepted implementation_evidence artifact` };
+    }
+    const declared = String(gate.verify || "").trim();
+    if (declared && !evidence[phase]) {
+      return { kind, reason: `Phase "${phase}" also requires verification evidence — pass --run ${JSON.stringify(declared)} when advancing or completing it` };
+    }
+    if (declared && evidence[phase].command !== declared) {
+      return { kind, reason: `Phase "${phase}" evidence command must match its declared verify command: ${JSON.stringify(declared)}` };
+    }
+    if (declared && evidence[phase].exit !== undefined && evidence[phase].exit !== 0) {
+      return { kind, reason: `Phase "${phase}" recorded run exited ${evidence[phase].exit} — gates open only on exit 0` };
     }
     return null;
   }
-  if (evidence[phase]) return null;
+  if (evidence[phase]) {
+    const declared = String(gate.verify || "").trim();
+    if (declared && evidence[phase].command !== declared) {
+      return { kind, reason: `Phase "${phase}" evidence command must match its declared verify command: ${JSON.stringify(declared)}` };
+    }
+    if (evidence[phase].exit !== undefined && evidence[phase].exit !== 0) {
+      return { kind, reason: `Phase "${phase}" recorded run exited ${evidence[phase].exit} — gates open only on exit 0` };
+    }
+    const governing = gate.artifact_type ? governingAttemptArtifact(attempt, gate.artifact_type) : null;
+    if (gate.artifact_type && !governing) {
+      return { kind, reason: `Phase "${phase}" requires an accepted governing artifact of type "${gate.artifact_type}"` };
+    }
+    if (gate.artifact_type === "implementation_evidence" && !governing.accepted_sha256) {
+      return { kind, reason: `Phase "${phase}" requires a SHA-bound accepted implementation_evidence artifact` };
+    }
+    return null;
+  }
   if (kind === "soft" && !strict) return null;
-  return { kind, reason: `Phase "${phase}" is a ${kind} gate — record its evidence first (dirf attempt advance --evidence "<command>")` };
+  return { kind, reason: `Phase "${phase}" is a ${kind} gate — pass --run "<command>" when advancing or completing it` };
 }
 
 // All gate declarations for an attempt with their current record status,
 // resolved from an already-loaded attempt (one workflow read — projections
 // must not re-lookup per gate).
 // decision gates: pending (no record) / accepted / denied.
-// verify & soft gates: pending (no evidence) / satisfied (evidence recorded) —
-// a recorded accept also satisfies them.
+// verify gates: pending (no evidence) / satisfied (evidence recorded).
+// soft gates: pending until reached / passed once crossed / satisfied when
+// evidence was recorded. Accept/deny records are decisions only; a legacy
+// accept record on a verify or soft gate never substitutes for evidence, while
+// a legacy denial remains visible and is never rewritten as passed.
 export function attemptGateState(slug, attempt) {
   const { phases, gates } = attemptWorkflow(slug, attempt);
   const records = attempt.gates || {};
   const evidence = attempt.evidence || {};
+  const currentIndex = phases.indexOf(attempt.current_phase);
   return {
     phases,
     gates: phases.filter((phase) => gates[phase]).map((phase) => {
+      const phaseIndex = phases.indexOf(phase);
       const record = records[phase] || null;
       const kind = gates[phase].kind || "verify";
-      const satisfied = kind !== "decision" && Boolean(evidence[phase]);
+      const declaredVerify = String(gates[phase].verify || "").trim();
+      const phaseEvidenceRaw = evidence[phase] || null;
+      // Built-in check gates are satisfied only by their own recorded check;
+      // captured runs additionally require exit 0; legacy text stays compatible.
+      const evidenceMatches = Boolean(phaseEvidenceRaw) && (
+        gates[phase].check
+          ? phaseEvidenceRaw.mode === "builtin" && phaseEvidenceRaw.check === gates[phase].check && phaseEvidenceRaw.ok === true
+          : (phaseEvidenceRaw.exit === undefined || phaseEvidenceRaw.exit === 0) &&
+            (!declaredVerify || phaseEvidenceRaw.command === declaredVerify)
+      );
+      const satisfied = kind !== "decision" && evidenceMatches;
+      const crossedSoftGate = kind === "soft" && (
+        attempt.status === "done" || (currentIndex >= 0 && phaseIndex < currentIndex)
+      );
       const artifactType = gates[phase].artifact_type || null;
       const governingArtifact = artifactType ? governingAttemptArtifact(attempt, artifactType) : null;
-      const artifactPending = kind === "decision" && record?.status === "accepted" && artifactType && !governingArtifact;
+      // Existence alone is not enough for implementation_evidence: a historical
+      // accepted artifact without a digest cannot satisfy the binding contract,
+      // so the gate must project as pending exactly when enforcement would block.
+      const artifactPending = artifactType && record?.status !== "denied" &&
+        (!governingArtifact || (artifactType === "implementation_evidence" && !governingArtifact.accepted_sha256));
+      const decisionEvidencePending = kind === "decision" && record?.status === "accepted" && declaredVerify && !evidenceMatches;
+      let status = "pending";
+      if (kind === "decision" && record) status = record.status;
+      if (record?.status === "denied") status = "denied";
+      else if (satisfied) status = "satisfied";
+      else if (crossedSoftGate) status = "passed";
+      if (artifactPending || decisionEvidencePending) status = "pending";
+      const phaseEvidence = evidence[phase] || null;
       return {
         phase,
         kind,
         verify: gates[phase].verify || null,
+        ...(gates[phase].check ? { check: gates[phase].check } : {}),
         ...(artifactType ? { artifact_type: artifactType, artifact_id: governingArtifact?.id || null } : {}),
-        status: artifactPending ? "pending" : record ? record.status : satisfied ? "satisfied" : "pending",
+        status,
         comment: record?.comment || null,
         by: record?.by || null,
+        recorded_by: record?.recorded_by || null,
         at: record?.at || null,
+        // Deterministic verification facts: exit is present only when the CLI
+        // itself ran the command; built-in checks record ok instead.
+        run_exit: phaseEvidence && phaseEvidence.exit !== undefined ? phaseEvidence.exit : null,
+        check_ok: phaseEvidence && phaseEvidence.mode === "builtin" ? phaseEvidence.ok === true : null,
       };
     }),
   };
@@ -502,9 +711,15 @@ export function attemptGates(slug, idOrName) {
   return attemptGateState(slug, getAttempt(slug, idOrName)).gates;
 }
 
-// Gates not yet satisfied — what a resume must reconcile before continuing.
+export function gateIsPending(gate) {
+  return !["accepted", "satisfied", "passed"].includes(gate?.status);
+}
+
+// Gates that still block or await the current/future phase. Crossed soft gates
+// are history unless a legacy denial must remain visible.
 export function pendingGates(slug, idOrName) {
-  return attemptGateState(slug, getAttempt(slug, idOrName)).gates.filter((gate) => gate.status !== "accepted" && gate.status !== "satisfied");
+  return attemptGateState(slug, getAttempt(slug, idOrName)).gates
+    .filter(gateIsPending);
 }
 
 // Recorded verification evidence per phase (replay-don't-rerun).
@@ -541,24 +756,349 @@ export function handoffHasCompletionEvidence(markdown) {
 // lies about where a status came from). Reading is cheap (one tiny file per
 // attempt) and the store itself is never mutated by this.
 export function effectiveAttemptStatus(slug, attempt) {
-  if (attempt.status === "done" || attempt.status === "in_progress" || attempt.status === "blocked") {
+  if (["done", "in_progress", "blocked", "abandoned"].includes(attempt.status)) {
     return { status: attempt.status, status_source: "lifecycle" };
   }
-  if (handoffHasCompletionEvidence(readAttemptHandoffFile(slug, attempt.id))) {
+  // An unreadable gate (for example an accepted artifact edited or deleted
+  // after acceptance) must never upgrade the attempt to done — degrade to the
+  // lifecycle status instead of crashing read-only projections.
+  let gatesCleared = true;
+  try {
+    gatesCleared = !attemptGateState(slug, attempt).gates.some(gateIsPending);
+  } catch {
+    gatesCleared = false;
+  }
+  if (handoffHasCompletionEvidence(readAttemptHandoffFile(slug, attempt.id)) && gatesCleared) {
     return { status: "done", status_source: "handoff" };
   }
   return { status: attempt.status, status_source: "lifecycle" };
 }
 
-export function attemptNextAction(slug, idOrName) {
-  const handoff = readAttemptHandoff(slug, idOrName);
+function handoffNextAction(handoff) {
   if (!handoff) return null;
   const match = handoff.match(/^## Exact next action\s*\r?\n+([\s\S]*?)(?=^## |\s*$)/m);
   const value = match?.[1]?.trim();
   return value && !/^_\(.*\)_$/.test(value) ? value : null;
 }
 
-export function startTrackingAttempt(slug, idOrName, now = new Date()) {
+export function attemptNextAction(slug, idOrName) {
+  return handoffNextAction(readAttemptHandoff(slug, idOrName));
+}
+
+function handoffUpdatedAt(markdown, path, parsed = parseCurrentHandoff(markdown)) {
+  const recorded = Date.parse(parsed.lastUpdated || "");
+  if (Number.isFinite(recorded)) return recorded;
+  return existsSync(path) ? statSync(path).mtimeMs : 0;
+}
+
+function handoffWorkReferences(markdown) {
+  const references = new Set();
+  const current = parseCurrentHandoff(markdown);
+  if (current.workItem) references.add(current.workItem.trim().toLowerCase());
+  const legacyCurrentText = [current.objective, current.nextAction, current.currentPhase].filter(Boolean).join("\n");
+  for (const match of legacyCurrentText.matchAll(/\bPR\s*#?\s*(\d+)\b/gi)) {
+    references.add(`pr:${match[1]}`);
+  }
+  for (const match of legacyCurrentText.matchAll(/\/pull\/(\d+)\b/gi)) {
+    references.add(`pr:${match[1]}`);
+  }
+  for (const match of legacyCurrentText.matchAll(/\b[\w.-]+\/[\w.-]+#(\d+)\b/gi)) references.add(`pr:${match[1]}`);
+  if (/\b(?:pr|pull request|review|merge)\b/i.test(legacyCurrentText)) {
+    for (const match of legacyCurrentText.matchAll(/(?:^|\s)#(\d+)\b/g)) references.add(`pr:${match[1]}`);
+  }
+  return references;
+}
+
+function revisionRelation(target, currentRevision, candidateRevision) {
+  if (!/^[0-9a-f]{40}$/i.test(currentRevision || "") || !/^[0-9a-f]{40}$/i.test(candidateRevision || "")) return "unknown";
+  if (currentRevision.toLowerCase() === candidateRevision.toLowerCase()) return "same";
+  const commitExists = (revision) => {
+    try {
+      execFileSync("git", ["-C", target, "cat-file", "-e", `${revision}^{commit}`], {
+        timeout: GIT_TIMEOUT, windowsHide: true, stdio: "ignore",
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (!commitExists(currentRevision) || !commitExists(candidateRevision)) return "unknown";
+  const isAncestor = (older, newer) => {
+    try {
+      execFileSync("git", ["-C", target, "merge-base", "--is-ancestor", older, newer], {
+        timeout: GIT_TIMEOUT, windowsHide: true, stdio: "ignore",
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (isAncestor(currentRevision, candidateRevision)) return "candidate_newer";
+  if (isAncestor(candidateRevision, currentRevision)) return "current_newer";
+  return "conflict";
+}
+
+function buildRevisionGraph(target, revisions) {
+  if (revisions.length < 2) return new Map();
+  try {
+    const output = execFileSync("git", ["-C", target, "rev-list", "--parents", ...revisions], {
+      encoding: "utf8",
+      timeout: GIT_TIMEOUT,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    return new Map(output.trim().split(/\r?\n/).filter(Boolean).map((line) => {
+      const [commit, ...parents] = line.trim().split(/\s+/).map((value) => value.toLowerCase());
+      return [commit, parents];
+    }));
+  } catch {
+    return null;
+  }
+}
+
+function existingCommitRevisions(target, revisions) {
+  if (!revisions.length) return new Set();
+  try {
+    const output = execFileSync("git", ["-C", target, "cat-file", "--batch-check=%(objectname) %(objecttype)"], {
+      encoding: "utf8",
+      input: `${revisions.join("\n")}\n`,
+      timeout: GIT_TIMEOUT,
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    return new Set(output.trim().split(/\r?\n/).filter(Boolean).flatMap((line) => {
+      const [object, type] = line.trim().split(/\s+/);
+      return type === "commit" ? [object.toLowerCase()] : [];
+    }));
+  } catch {
+    return new Set();
+  }
+}
+
+function graphContainsAncestor(graph, ancestor, descendant) {
+  if (!graph) return false;
+  const wanted = ancestor.toLowerCase();
+  const pending = [descendant.toLowerCase()];
+  const visited = new Set();
+  while (pending.length) {
+    const current = pending.pop();
+    if (current === wanted) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    pending.push(...(graph.get(current) || []));
+  }
+  return false;
+}
+
+// An attempt can become stale when another attempt records newer work for the
+// same pull request. Keep the old handoff for audit history, but do not present
+// its old next step as safe current guidance.
+export function attemptContextState(slug, idOrName, options = {}) {
+  const attempts = options.attempts || listAttempts(slug);
+  const attempt = options.attempt?.id === idOrName
+    ? options.attempt
+    : getAttemptFromList(slug, attempts, idOrName);
+  if (options.bounded) {
+    // Keep startup output scoped to the active work item, but inspect other
+    // attempt handoffs for that same item. A rejected canonical write can leave
+    // newer or unverifiable work only in its attempt handoff; considering the
+    // canonical snapshot alone would then expose stale next-step guidance.
+    const entry = attemptContextEntry(slug, attempt);
+    const repositoryPath = repositoryPathForAttempts(slug, attempts);
+    const entries = [entry];
+    const canonicalPath = join(storeProjectDir(slug), "HANDOFF.md");
+    const canonical = readHandoff(slug) || "";
+    const canonicalParsed = parseCurrentHandoff(canonical);
+    if (canonicalParsed.attemptId) {
+      entries.push({
+        id: canonicalParsed.attemptId,
+        handoffPath: canonicalPath,
+        nextAction: handoffNextAction(canonical),
+        references: handoffWorkReferences(canonical),
+        updatedAt: handoffUpdatedAt(canonical, canonicalPath, canonicalParsed),
+        updateNumber: canonicalParsed.updateNumber,
+        reviewRevision: canonicalParsed.reviewRevision,
+      });
+    }
+    if (entry.references.size === 0) return contextForAttempt(entry, entries, repositoryPath);
+    const { entries: allAttemptEntries } = attemptContextEntries(slug, attempts, entry);
+    entries.unshift(...allAttemptEntries.filter((candidate) => candidate !== entry
+      && [...entry.references].some((reference) => candidate.references.has(reference))));
+    return contextForAttempt(entry, entries, repositoryPath);
+  }
+  const { entries, repositoryPath } = attemptContextEntries(slug, attempts);
+  const entry = entries.find((candidate) => candidate.id === attempt.id);
+  return contextForAttempt(entry, entries, repositoryPath);
+}
+
+function checkpointIsNewer(current, candidate) {
+  if (candidate.updateNumber && current.updateNumber) return candidate.updateNumber > current.updateNumber;
+  if (candidate.updateNumber) return true;
+  if (current.updateNumber) return false;
+  return candidate.updatedAt > current.updatedAt;
+}
+
+function contextForAttempt(entry, entries, repositoryPath, relationFor = revisionRelation) {
+  const relations = new Map();
+  const newerRelated = entries
+    .filter((candidate) => candidate !== entry
+      && (candidate.id === entry.id
+        || [...entry.references].some((reference) => candidate.references.has(reference))))
+    .map((candidate) => {
+      const revision = candidate.reviewRevision || "";
+      if (!relations.has(revision)) {
+        relations.set(revision, relationFor(repositoryPath, entry.reviewRevision, candidate.reviewRevision));
+      }
+      const relation = relations.get(revision);
+      return {
+        ...candidate,
+        relation,
+        supersedes: relation === "candidate_newer"
+          || relation === "conflict"
+          || (relation === "unknown" && entry.reviewRevision && candidate.reviewRevision && entry.reviewRevision !== candidate.reviewRevision)
+          || (["same", "unknown"].includes(relation) && checkpointIsNewer(entry, candidate)),
+      };
+    })
+    .filter((candidate) => candidate.supersedes)
+    .sort((left, right) => {
+      const priority = (value) => value === "candidate_newer" ? 2 : value === "conflict" ? 1 : 0;
+      return priority(right.relation) - priority(left.relation)
+        || (right.updateNumber || 0) - (left.updateNumber || 0)
+        || right.updatedAt - left.updatedAt;
+    })[0] || null;
+
+  const needsRefresh = Boolean(newerRelated);
+  const conflict = newerRelated?.relation === "conflict";
+  const unverifiedRevisions = newerRelated?.relation === "unknown"
+    && entry.reviewRevision
+    && newerRelated.reviewRevision
+    && entry.reviewRevision !== newerRelated.reviewRevision;
+  const requiresReconciliation = Boolean(conflict || unverifiedRevisions);
+  return {
+    needs_refresh: needsRefresh,
+    next_action: needsRefresh ? null : entry.nextAction,
+    related_task_relation: newerRelated?.relation || null,
+    related_task_requires_reconciliation: requiresReconciliation,
+    related_attempt_id: newerRelated?.id || null,
+    related_handoff_path: newerRelated?.handoffPath || null,
+    newer_attempt_id: requiresReconciliation ? null : newerRelated?.id || null,
+    newer_handoff_path: requiresReconciliation ? null : newerRelated?.handoffPath || null,
+    attention: needsRefresh
+      ? conflict
+        ? "Two tasks point to different PR commits. Check the current PR commit, update the task that matches it, and stop or update the other task before continuing."
+        : unverifiedRevisions
+          ? "DIRF cannot tell which task matches the current PR version. Check or fetch the current PR commit, update the matching task, and stop or update the other task before continuing."
+        : "Newer project work may have changed this task. Check the other review before continuing."
+      : null,
+  };
+}
+
+// Parse each handoff once so list views do not repeatedly re-read every task.
+// Work identity is checked before any Git ancestry command is run.
+function attemptContextEntry(slug, attempt) {
+  const handoffPath = join(storeAttemptDir(slug, attempt.id), "HANDOFF.md");
+  const handoff = readAttemptHandoffFile(slug, attempt.id) || "";
+  const parsed = parseCurrentHandoff(handoff);
+  return {
+    id: attempt.id,
+    handoffPath,
+    nextAction: handoffNextAction(handoff),
+    references: handoffWorkReferences(handoff),
+    updatedAt: handoffUpdatedAt(handoff, handoffPath, parsed),
+    updateNumber: parsed.updateNumber,
+    reviewRevision: parsed.reviewRevision,
+  };
+}
+
+function repositoryPathForAttempts(slug, attempts) {
+  const project = getProject(slug);
+  return attempts.find((attempt) => attempt.responsibility_path)?.responsibility_path
+    || project?.main_path
+    || process.cwd();
+}
+
+function attemptContextEntries(slug, attempts = listAttempts(slug), seededEntry = null) {
+  const entries = attempts.map((attempt) => seededEntry?.id === attempt.id
+    ? seededEntry
+    : attemptContextEntry(slug, attempt));
+  const repositoryPath = repositoryPathForAttempts(slug, attempts);
+  return { entries, repositoryPath };
+}
+
+export function attemptContextStates(slug) {
+  const { entries, repositoryPath } = attemptContextEntries(slug);
+  const referenceCounts = new Map();
+  for (const entry of entries) {
+    for (const reference of entry.references) referenceCounts.set(reference, (referenceCounts.get(reference) || 0) + 1);
+  }
+  const revisions = [...new Set(entries
+    .filter((entry) => [...entry.references].some((reference) => referenceCounts.get(reference) > 1))
+    .map((entry) => entry.reviewRevision?.toLowerCase())
+    .filter((revision) => /^[0-9a-f]{40}$/.test(revision || "")))];
+  const existingRevisions = existingCommitRevisions(repositoryPath, revisions);
+  const graph = buildRevisionGraph(repositoryPath, revisions.filter((revision) => existingRevisions.has(revision)));
+  const relations = new Map();
+  const relationFor = (_target, current, candidate) => {
+    const key = `${current || ""}:${candidate || ""}`;
+    if (!relations.has(key)) {
+      let relation = "unknown";
+      if (existingRevisions.has(current?.toLowerCase()) && existingRevisions.has(candidate?.toLowerCase())) {
+        if (current.toLowerCase() === candidate.toLowerCase()) relation = "same";
+        else if (graphContainsAncestor(graph, current, candidate)) relation = "candidate_newer";
+        else if (graphContainsAncestor(graph, candidate, current)) relation = "current_newer";
+        else if (graph) relation = "conflict";
+      }
+      relations.set(key, relation);
+    }
+    return relations.get(key);
+  };
+  return new Map(entries.map((entry) => [entry.id, contextForAttempt(entry, entries, repositoryPath, relationFor)]));
+}
+
+// Canonical project guidance is a fallback. If an attempt contains newer or
+// conflicting guidance for the same work item, withhold the fallback instead
+// of exposing an obsolete next step.
+export function projectHandoffContextState(slug) {
+  const handoff = readHandoff(slug);
+  if (handoff === null) return {
+    handoff: null,
+    needs_refresh: false,
+    related_task_relation: null,
+    related_task_requires_reconciliation: false,
+    related_attempt_id: null,
+    related_handoff_path: null,
+    newer_attempt_id: null,
+    newer_handoff_path: null,
+    attention: null,
+  };
+  const path = join(storeProjectDir(slug), "HANDOFF.md");
+  const parsed = parseCurrentHandoff(handoff);
+  const { entries, repositoryPath } = attemptContextEntries(slug);
+  const entry = {
+    id: "project-handoff",
+    handoffPath: path,
+    nextAction: handoffNextAction(handoff),
+    references: handoffWorkReferences(handoff),
+    updatedAt: handoffUpdatedAt(handoff, path, parsed),
+    updateNumber: parsed.updateNumber,
+    reviewRevision: parsed.reviewRevision,
+  };
+  const context = contextForAttempt(entry, entries, repositoryPath);
+  return { ...context, handoff: context.needs_refresh ? null : handoff };
+}
+export function attemptResponsibility(slug, worktreePath, options = {}) {
+  const key = normalizeIdentityKey(worktreePath);
+  const attempts = (options.attempts || listAttempts(slug)).filter((attempt) =>
+    attempt.status === "in_progress" &&
+    attempt.responsibility_path &&
+    normalizeIdentityKey(attempt.responsibility_path) === key);
+  if (!attempts.length) return { state: "idle", attempts: [] };
+  if (attempts.length === 1) return { state: "active", attempt: attempts[0], attempts };
+  return { state: "conflict", attempts };
+}
+
+function startTrackingAttemptLocked(slug, idOrName, now = new Date()) {
   const attempt = getAttempt(slug, idOrName);
   if (attempt.tracked) return attempt;
   return writeAttempt(slug, {
@@ -573,7 +1113,11 @@ export function startTrackingAttempt(slug, idOrName, now = new Date()) {
   });
 }
 
-export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now = new Date()) {
+export function startTrackingAttempt(slug, idOrName, now = new Date()) {
+  return withProgressLock(slug, () => startTrackingAttemptLocked(slug, idOrName, now));
+}
+
+function updateAttemptLifecycleLocked(slug, idOrName, action, options = {}, now = new Date()) {
   let attempt = getAttempt(slug, idOrName);
   if (!attempt.tracked) throw new Error(`Attempt ${attempt.id} is historical. Start tracking it first.`);
   const phases = attemptPhases(slug, attempt.id);
@@ -596,7 +1140,10 @@ export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now
     if (options.evidence) {
       const command = String(options.evidence.command || "").trim();
       if (!command) throw new Error("evidence command must not be empty");
-      evidence[leaving] = { command, output: options.evidence.output ? String(options.evidence.output) : null, at: timestamp };
+      // Spread the whole captured record: --run carries exit and an output
+      // digest, built-in checks carry mode/check/ok. The gate logic reads
+      // those facts; stripping them here would erase the verification.
+      evidence[leaving] = { ...options.evidence, command, output: options.evidence.output ? String(options.evidence.output) : null, at: timestamp };
     }
     const requirement = gateRequirement(workflowGates(slug, attempt.id), attempt.gates || {}, evidence, attempt, leaving, options.strict === true);
     if (requirement) throw new Error(requirement.reason);
@@ -614,33 +1161,145 @@ export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now
     const phase = String(options.phase || "").trim();
     if (!phase) throw new Error("gate phase is required");
     if (!phases.includes(phase)) throw new Error(`Unknown phase ${JSON.stringify(phase)} — no such workflow phase`);
+    const gate = workflowGates(slug, attempt.id)[phase];
+    if (gate?.kind !== "decision") {
+      throw new Error(`Phase ${JSON.stringify(phase)} is not a decision gate — record verification with dirf attempt advance --evidence instead`);
+    }
     const decision = options.decision;
     if (decision !== "accept" && decision !== "deny") throw new Error('gate decision must be "accept" or "deny"');
     const comment = String(options.comment || "").trim();
     if (decision === "deny" && !comment) throw new Error("denial requires a comment (revise-and-retry feedback)");
     const gates = {
       ...(attempt.gates || {}),
-      [phase]: { status: decision === "accept" ? "accepted" : "denied", comment: comment || null, by: attempt.worker || options.worker || null, at: timestamp },
+      // by = the human the decision belongs to; recorded_by = the agent
+      // harness that typed the command (captured from the environment by the
+      // CLI). Keeping them separate keeps Decision Ownership honest.
+      [phase]: { status: decision === "accept" ? "accepted" : "denied", comment: comment || null, by: attempt.worker || options.worker || null, recorded_by: options.recordedBy || null, at: timestamp },
     };
     attempt = { ...attempt, gates };
   } else if (action === "reopen") {
-    if (!new Set(["blocked", "done"]).has(attempt.status)) throw new Error("Only blocked or done attempts can reopen");
-    attempt = { ...attempt, status: "in_progress", current_phase: attempt.current_phase || phases[0] || null, blocker: null, wait: null, completed_at: null };
+    if (!new Set(["blocked", "done", "abandoned"]).has(attempt.status)) throw new Error("Only blocked, done, or abandoned attempts can reopen");
+    attempt = {
+      ...attempt,
+      status: "in_progress",
+      current_phase: attempt.current_phase || phases[0] || null,
+      blocker: null,
+      wait: null,
+      completed_at: null,
+      abandoned_at: null,
+      abandonment_reason: null,
+    };
+  } else if (action === "abandon") {
+    projectExecutionAuthority(slug, executionAuthorityHash(options.authorityToken));
+    const reason = String(options.reason || "").trim();
+    if (!reason) throw new Error("abandonment reason is required");
+    if (!new Set(["planned", "in_progress", "blocked"]).has(attempt.status)) {
+      throw new Error("Only planned, in-progress, or blocked attempts can be abandoned");
+    }
+    attempt = {
+      ...attempt,
+      status: "abandoned",
+      blocker: null,
+      wait: null,
+      current_execution: null,
+      abandoned_at: timestamp,
+      abandonment_reason: reason,
+    };
   } else if (action === "complete") {
     if (attempt.status !== "in_progress") throw new Error("Only an in-progress attempt can complete");
     if (!phases.length || attempt.current_phase !== phases.at(-1)) throw new Error("Attempt must reach its final phase before completion");
     if (options.confirm !== true) throw new Error("Confirm the final done-when checks before completion");
+    const finalPhase = phases.at(-1);
+    const evidence = { ...(attempt.evidence || {}) };
+    if (options.evidence) {
+      const command = String(options.evidence.command || "").trim();
+      if (!command) throw new Error("evidence command must not be empty");
+      evidence[finalPhase] = { ...options.evidence, command, output: options.evidence.output ? String(options.evidence.output) : null, at: timestamp };
+    }
+    const requirement = gateRequirement(
+      workflowGates(slug, attempt.id),
+      attempt.gates || {},
+      evidence,
+      attempt,
+      finalPhase,
+      options.strict === true,
+    );
+    if (requirement) throw new Error(requirement.reason);
+    // A gated workflow declares a verification contract: completion is
+    // deterministic about it. Every gate must carry captured facts (a run the
+    // CLI executed with exit 0, or a built-in check that passed), and the
+    // task handoff must be at least as fresh as the last phase write —
+    // Handoff-Before-Switch, checked instead of remembered.
+    const gatesMap = workflowGates(slug, attempt.id);
+    if (Object.keys(gatesMap).length > 0) {
+      // The check must see the evidence from THIS completion call, so read
+      // the gate state through the merged attempt, not the stale one.
+      const state = attemptGateState(slug, { ...attempt, evidence });
+      for (const gate of state.gates) {
+        // Decision gates without declared verification are pure records — the
+        // audit derivation exempts them, and so does completion.
+        const needsCapture = gate.check || gate.kind !== "decision" || gate.verify;
+        if (needsCapture && gate.run_exit === null && gate.check_ok === null) {
+          throw new Error(`Gate "${gate.phase}" has no captured verification; typed evidence cannot complete a gated attempt. No command can re-capture a gate after the fact — this attempt cannot be completed: abandon it (dirf attempt abandon ${attempt.id} --reason "...") and start a new attempt whose gates are crossed only by a recorded run (--run) or a passed built-in check`);
+        }
+      }
+      const scopedPath = join(storeAttemptDir(slug, attempt.id), "HANDOFF.md");
+      const scoped = parseCurrentHandoff(readAttemptHandoffFile(slug, attempt.id) || "");
+      if (scoped.attemptId && scoped.attemptId !== attempt.id) {
+        throw new Error(`Task handoff belongs to ${scoped.attemptId}, not ${attempt.id}`);
+      }
+      const hasScopedCheckpoint = scoped.attemptId === attempt.id;
+      if (hasScopedCheckpoint) {
+        if (scoped.currentPhase !== attempt.current_phase) {
+          throw new Error(`Task handoff phase does not match ${attempt.current_phase}; record the current result before completing`);
+        }
+        const context = attemptContextState(slug, attempt.id, { bounded: true });
+        if (context.needs_refresh) {
+          throw new Error(`${context.attention} Read ${context.related_handoff_path} before completing`);
+        }
+      }
+      // Legacy handoffs without a task identity retain the shared-summary
+      // check. A saved scoped checkpoint never requires overwriting another
+      // task's project summary, and a stale scoped checkpoint cannot fall back.
+      const handoffPath = hasScopedCheckpoint ? scopedPath : join(storeProjectDir(slug), "HANDOFF.md");
+      const label = hasScopedCheckpoint ? "Task handoff" : "Canonical handoff";
+      if (!existsSync(handoffPath)) {
+        throw new Error(`Write the ${label.toLowerCase()} before completing: ${handoffPath} does not exist`);
+      }
+      if (!hasScopedCheckpoint) {
+        const canonical = parseCurrentHandoff(readHandoff(slug) || "");
+        if (canonical.attemptId && canonical.attemptId !== attempt.id) {
+          throw new Error(`Record a task checkpoint before completing; the canonical handoff belongs to ${canonical.attemptId}`);
+        }
+      }
+      const handoffMtime = statSync(handoffPath).mtimeMs;
+      const lastWrite = Date.parse(attempt.updated_at || attempt.created_at);
+      if (handoffMtime < lastWrite) {
+        throw new Error(`${label} is older than the last phase write (${new Date(handoffMtime).toISOString()} < ${attempt.updated_at}) — record a current handoff before completing`);
+      }
+    }
     const governingPlan = governingAttemptArtifact(attempt, "plan");
     if (governingPlan && !governingAttemptArtifact(attempt, "plan_delta")) {
       throw new Error(`Attempt with governing plan "${governingPlan.id}" requires an accepted governing plan_delta before completion`);
     }
-    attempt = { ...attempt, status: "done", blocker: null, completed_at: timestamp };
+    attempt = {
+      ...attempt,
+      status: "done",
+      blocker: null,
+      current_execution: null,
+      completed_at: timestamp,
+      ...(Object.keys(evidence).length ? { evidence } : {}),
+    };
   } else {
     throw new Error(`Unknown attempt lifecycle action ${JSON.stringify(action)}`);
   }
 
   if (options.worker && action === "start") attempt.worker = String(options.worker).trim() || null;
   return writeAttempt(slug, { ...attempt, updated_at: timestamp });
+}
+
+export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now = new Date()) {
+  return withProgressLock(slug, () => updateAttemptLifecycleLocked(slug, idOrName, action, options, now));
 }
 
 // Guarded auto-advance: covered transitions auto-start the next
@@ -650,7 +1309,7 @@ export function updateAttemptLifecycle(slug, idOrName, action, options = {}, now
 // `evidence` (from `advance --auto --evidence`) is recorded for the FIRST
 // leaving phase, so a verify gate is satisfiable in the same pass; a decision
 // gate still stops and nothing is recorded for it.
-export function autoAdvance(slug, idOrName, { strict = false, evidence, now = new Date() } = {}) {
+function autoAdvanceLocked(slug, idOrName, { strict = false, evidence, now = new Date() } = {}) {
   let attempt = getAttempt(slug, idOrName);
   if (!attempt.tracked) throw new Error(`Attempt ${attempt.id} is historical. Start tracking it first.`);
   const phases = attemptPhases(slug, attempt.id);
@@ -667,13 +1326,17 @@ export function autoAdvance(slug, idOrName, { strict = false, evidence, now = ne
     // verify gate blocks the very step that would satisfy it.
     const view = stepEvidence ? { ...(attempt.evidence || {}), [leaving]: stepEvidence } : attempt.evidence || {};
     if (gateRequirement(gates, attempt.gates || {}, view, attempt, leaving, strict)) { stoppedAt = leaving; break; }
-    attempt = updateAttemptLifecycle(slug, attempt.id, "advance", stepEvidence ? { evidence: stepEvidence } : {}, now);
+    attempt = updateAttemptLifecycleLocked(slug, attempt.id, "advance", stepEvidence ? { evidence: stepEvidence } : {}, now);
     advanced += 1;
   }
   return { attempt, advanced, stopped_at_gate: stoppedAt };
 }
 
-export function linkAttemptWorktree(slug, idOrName, worktreePath, now = new Date()) {
+export function autoAdvance(slug, idOrName, options = {}) {
+  return withProgressLock(slug, () => autoAdvanceLocked(slug, idOrName, options));
+}
+
+function linkAttemptWorktreeLocked(slug, idOrName, worktreePath, now = new Date()) {
   const attempt = getAttempt(slug, idOrName);
   if (!attempt.tracked) throw new Error(`Attempt ${attempt.id} is historical. Start tracking it first.`);
   const resolvedPath = resolve(String(worktreePath || ""));
@@ -682,20 +1345,256 @@ export function linkAttemptWorktree(slug, idOrName, worktreePath, now = new Date
   return writeAttempt(slug, { ...attempt, worktree_path: portable(resolvedPath), updated_at: now.toISOString() });
 }
 
+export function linkAttemptWorktree(slug, idOrName, worktreePath, now = new Date()) {
+  return withProgressLock(slug, () => linkAttemptWorktreeLocked(slug, idOrName, worktreePath, now));
+}
+
+function claimAttemptCheckoutLocked(slug, idOrName, worktreePath, now = new Date()) {
+  const attempt = getAttempt(slug, idOrName);
+  if (!attempt.tracked) return attempt;
+  const resolvedPath = resolve(String(worktreePath || ""));
+  const branch = git(resolvedPath, ["branch", "--show-current"], { allowFailure: true }) || null;
+  const key = normalizeIdentityKey(resolvedPath);
+  const project = getProject(slug);
+  // Claim needs membership, not cleanup details from status/log in every
+  // worktree. Git's registered worktree list preserves the same boundary.
+  const match = parseWorktreeList(git(project.main_path, ["worktree", "list", "--porcelain"]))
+    .some((entry) => normalizeIdentityKey(entry.path) === key);
+  if (!match) throw new Error("checkout must belong to the attempt's registered project");
+  const owner = listAttempts(slug).find((candidate) =>
+    candidate.id !== attempt.id &&
+    candidate.status === "in_progress" &&
+    candidate.responsibility_path &&
+    (normalizeIdentityKey(candidate.responsibility_path) === key || (branch && candidate.responsibility_branch === branch)));
+  if (owner) throw new Error(`checkout is already governed by ${owner.id}`);
+  if (!attempt.responsibility_path) {
+    return writeAttempt(slug, { ...attempt, responsibility_path: portable(resolvedPath), responsibility_branch: branch, updated_at: now.toISOString() });
+  }
+  if (normalizeIdentityKey(attempt.responsibility_path) !== key) {
+    throw new Error(`attempt ${attempt.id} is already responsible for ${attempt.responsibility_path}`);
+  }
+  return attempt;
+}
+
+export function claimAttemptCheckout(slug, idOrName, worktreePath, now = new Date()) {
+  return withProgressLock(slug, () => claimAttemptCheckoutLocked(slug, idOrName, worktreePath, now));
+}
+
+function executionIsFresh(execution, now) {
+  if (!execution) return false;
+  const observedAt = Date.parse(execution.observed_at || 0) || 0;
+  return now.getTime() - observedAt <= LIVE_OBSERVATION_TTL_MS;
+}
+
+function executionIsActive(execution) {
+  return execution?.status === "active" || (execution?.children || []).some((child) => child.status === "active");
+}
+
+function requiredBoundedText(value, label, maxLength) {
+  const text = String(value || "").trim();
+  if (!text) throw new Error(`${label} is required`);
+  if (text.length > maxLength) throw new Error(`${label} must be ${maxLength} characters or fewer`);
+  return text;
+}
+
+function optionalBoundedText(value, label, maxLength) {
+  if (value === undefined || value === null || value === "") return null;
+  return requiredBoundedText(value, label, maxLength);
+}
+
+function executionAuthorityHash(token) {
+  const value = requiredBoundedText(token, "execution authority token", 4_096);
+  if (value.length < 32) throw new Error("execution authority token must be at least 32 characters");
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function projectExecutionAuthority(slug, authorityHash) {
+  const path = join(storeProjectDir(slug), "execution-authority.json");
+  if (!existsSync(path)) {
+    throw new Error(`execution authority is not initialized for project ${slug}; the trusted harness must bind DIRF_ORCHESTRATOR_TOKEN during setup before agents run`);
+  }
+  const record = JSON.parse(readFileSync(path, "utf8"));
+  if (record.authority_hash !== authorityHash) {
+    throw new Error(`execution authority rejected for project ${slug}; the trusted harness adapter must retain the original project capability`);
+  }
+}
+
+export function bindExecutionAuthority(slug, token) {
+  return withProgressLock(slug, () => {
+    if (!getProject(slug)) throw new Error(`Unknown DIRF project ${slug}`);
+    const authorityHash = executionAuthorityHash(token);
+    const path = join(storeProjectDir(slug), "execution-authority.json");
+    if (existsSync(path)) {
+      const record = JSON.parse(readFileSync(path, "utf8"));
+      if (record.authority_hash !== authorityHash) {
+        throw new Error(`execution authority is already initialized for project ${slug}`);
+      }
+      return { changed: false, path };
+    }
+    atomicWrite(path, JSON.stringify({ schema_version: 1, authority_hash: authorityHash }, null, 2) + "\n");
+    return { changed: true, path };
+  });
+}
+
+function normalizeChildExecutions(children, harness) {
+  if (!Array.isArray(children)) throw new Error("execution children must be an array");
+  if (children.length > MAX_CHILD_EXECUTIONS) throw new Error(`execution children cannot exceed ${MAX_CHILD_EXECUTIONS}`);
+  const seen = new Set();
+  return children.map((child, index) => {
+    if (!child || typeof child !== "object" || Array.isArray(child)) throw new Error(`execution child ${index + 1} must be an object`);
+    const childHarness = optionalBoundedText(child.harness, `execution child ${index + 1} harness`, 100) || harness;
+    const sessionId = requiredBoundedText(child.sessionId || child.session_id, `execution child ${index + 1} session id`, 200);
+    const key = `${childHarness}\0${sessionId}`;
+    if (seen.has(key)) throw new Error(`duplicate execution child ${childHarness}:${sessionId}`);
+    seen.add(key);
+    const status = requiredBoundedText(child.status, `execution child ${index + 1} status`, 20);
+    if (!CHILD_EXECUTION_STATUSES.has(status)) {
+      throw new Error(`Invalid child execution status ${JSON.stringify(status)} — use active, idle, blocked, completed, or unknown`);
+    }
+    const assignment = requiredBoundedText(child.assignment, `execution child ${index + 1} assignment`, 500);
+    const blocker = optionalBoundedText(child.blocker, `execution child ${index + 1} blocker`, 2_000);
+    if (status === "blocked" && !blocker) throw new Error(`execution child ${index + 1} blocker is required when status is blocked`);
+    return {
+      harness: childHarness,
+      session_id: sessionId,
+      assignment,
+      status,
+      blocker,
+      result: optionalBoundedText(child.result, `execution child ${index + 1} result`, 4_000),
+      handoff: optionalBoundedText(child.handoff, `execution child ${index + 1} handoff`, 4_000),
+      blocks_parent: child.blocksParent === true || child.blocks_parent === true,
+    };
+  });
+}
+
+function observeAttemptLocked(slug, idOrName, options, now) {
+  const attempt = getAttempt(slug, idOrName);
+  if (!attempt.tracked) throw new Error(`Attempt ${attempt.id} is historical. Start tracking it first.`);
+  if (attempt.status === "done" || attempt.status === "abandoned") throw new Error(`Attempt ${attempt.id} is ${attempt.status} and cannot be observed`);
+  const harness = requiredBoundedText(options.harness, "execution harness", 100);
+  const sessionId = requiredBoundedText(options.sessionId, "execution session id", 200);
+  const status = requiredBoundedText(options.status, "execution status", 20);
+  const authorityHash = executionAuthorityHash(options.authorityToken);
+  projectExecutionAuthority(slug, authorityHash);
+  if (!EXECUTION_STATUSES.has(status)) {
+    throw new Error(`Invalid execution status ${JSON.stringify(status)} — use active, idle, or unknown`);
+  }
+  const observedAt = options.observedAt ? new Date(options.observedAt) : now;
+  if (!Number.isFinite(observedAt.getTime())) throw new Error("execution observed time must be a valid date");
+  if (observedAt.getTime() > now.getTime()) throw new Error("execution observed time cannot be in the future");
+
+  let worktreePath = null;
+  let branch = null;
+  if (options.worktreePath) {
+    const resolvedPath = resolve(String(options.worktreePath));
+    const project = getProject(slug);
+    if (identityKeyForPath(resolvedPath) !== project.git_common_dir) {
+      throw new Error("execution worktree must belong to the attempt's registered project");
+    }
+    worktreePath = portable(resolvedPath);
+    branch = git(resolvedPath, ["branch", "--show-current"], { allowFailure: true }) || null;
+  }
+
+  const previous = attempt.current_execution || null;
+  const sameOwner = previous?.harness === harness && previous?.session_id === sessionId;
+  if (sameOwner && !worktreePath) {
+    worktreePath = previous.worktree_path || null;
+    branch = previous.branch || null;
+  }
+  if (previous?.authority_hash && previous.authority_hash !== authorityHash) {
+    throw new Error(`execution authority rejected for attempt ${attempt.id}; the trusted harness adapter must retain the original project capability`);
+  }
+  if (previous && !previous.authority_hash) {
+    throw new Error(`attempt ${attempt.id} has an observation without an authority capability; explicitly abandon and reopen it before recording new execution`);
+  }
+  const previousIsActive = executionIsFresh(previous, now) && executionIsActive(previous);
+  if (previous && !sameOwner && previousIsActive) {
+    throw new Error(`attempt ${attempt.id} has active orchestrator ${previous.harness}:${previous.session_id}; continue from ${join(attempt.folder, "HANDOFF.md")} because a fresh owner cannot be transferred`);
+  }
+  if (previous && !sameOwner && !String(options.transferReason || "").trim()) {
+    throw new Error(`attempt ${attempt.id} has recorded orchestrator ${previous.harness}:${previous.session_id}; continue from ${join(attempt.folder, "HANDOFF.md")} or pass an explicit transfer reason`);
+  }
+  if (sameOwner && Date.parse(previous.observed_at || 0) > observedAt.getTime()) {
+    throw new Error("execution observation is older than the current orchestrator snapshot");
+  }
+  if (worktreePath) {
+    const worktreeKey = normalizeIdentityKey(worktreePath);
+    const otherOwner = listAttempts(slug).find((candidate) => {
+      if (candidate.id === attempt.id || ["done", "abandoned", "historical"].includes(candidate.status)) return false;
+      const owner = candidate.current_execution;
+      const ownerPath = owner?.worktree_path || candidate.responsibility_path || candidate.worktree_path;
+      const sameWorktree = ownerPath && normalizeIdentityKey(ownerPath) === worktreeKey;
+      const sameBranch = branch && owner?.branch && owner.branch === branch;
+      return sameWorktree || sameBranch;
+    });
+    if (otherOwner) {
+      const owner = otherOwner.current_execution;
+      const ownerLabel = owner ? `${owner.harness}:${owner.session_id}` : "the recorded Attempt responsibility";
+      throw new Error(`worktree or branch is owned by ${otherOwner.id} (${ownerLabel}); continue from ${join(otherOwner.folder, "HANDOFF.md")} or explicitly abandon that attempt first`);
+    }
+  }
+
+  const children = options.children === undefined
+    ? (sameOwner ? previous.children || [] : [])
+    : normalizeChildExecutions(options.children, harness);
+  const transferReason = !sameOwner ? optionalBoundedText(options.transferReason, "execution transfer reason", 2_000) : null;
+
+  return writeAttempt(slug, {
+    ...attempt,
+    current_execution: {
+      harness,
+      session_id: sessionId,
+      status,
+      observed_at: observedAt.toISOString(),
+      worktree_path: worktreePath,
+      branch,
+      children,
+      authority_hash: authorityHash,
+      ...(sameOwner && previous?.previous_owner ? { previous_owner: previous.previous_owner } : {}),
+      ...(previous && !sameOwner ? {
+        previous_owner: {
+          harness: previous.harness,
+          session_id: previous.session_id,
+          transferred_at: observedAt.toISOString(),
+          reason: transferReason,
+        },
+      } : {}),
+    },
+  });
+}
+
+// A trusted harness adapter submits one orchestrator-owned snapshot. Children
+// report to that orchestrator; they never get an independent DIRF writer. The
+// project lock makes worktree and branch ownership checks atomic.
+export function observeAttempt(slug, idOrName, options = {}, now = new Date()) {
+  return withProgressLock(slug, () => observeAttemptLocked(slug, idOrName, options, now));
+}
+
 // Backfill: promote handoff completion evidence into the lifecycle. Only
 // planned/historical attempts are upgraded (in_progress/blocked stay put —
 // open work is authoritative). completed_at comes from the handoff file mtime,
 // i.e. when the work was actually written. Never touches the handoff itself.
-export function syncAttemptFromHandoff(slug, idOrName) {
+function syncAttemptFromHandoffLocked(slug, idOrName) {
   const attempt = getAttempt(slug, idOrName);
   if (attempt.status === "done") return { ...attempt, changed: false, reason: "already done" };
-  if (attempt.status === "in_progress" || attempt.status === "blocked") {
-    return { ...attempt, changed: false, reason: `status is ${attempt.status} — open work wins` };
+  if (["in_progress", "blocked", "abandoned"].includes(attempt.status)) {
+    const reason = attempt.status === "abandoned"
+      ? "status is abandoned — explicit lifecycle state wins"
+      : `status is ${attempt.status} — open work wins`;
+    return { ...attempt, changed: false, reason };
   }
   const handoffPath = join(storeAttemptDir(slug, attempt.id), "HANDOFF.md");
   const handoff = readAttemptHandoffFile(slug, attempt.id);
   if (!handoffHasCompletionEvidence(handoff)) {
     return { ...attempt, changed: false, reason: "no completion evidence in HANDOFF.md" };
+  }
+  const pending = attemptGateState(slug, attempt).gates.filter(gateIsPending);
+  if (pending.length) {
+    return {
+      ...attempt,
+      changed: false,
+      reason: `workflow gates remain pending: ${pending.map(({ phase }) => phase).join(", ")}`,
+    };
   }
   const completedAt = statSync(handoffPath).mtime.toISOString();
   const phases = attemptPhases(slug, attempt.id);
@@ -714,32 +1613,65 @@ export function syncAttemptFromHandoff(slug, idOrName) {
   };
 }
 
+export function syncAttemptFromHandoff(slug, idOrName) {
+  return withProgressLock(slug, () => syncAttemptFromHandoffLocked(slug, idOrName));
+}
+
 // Automation: keep the lifecycle honest as work progresses. Called by
 // `dirf record-progress`. planned → start (needs workflow phases); in_progress
 // → advance until current_phase matches the reported phase (unknown phases are
 // left alone — conservative). Returns the updated attempt, or null when
 // nothing changed.
-export function syncLifecycleFromProgress(slug, idOrName, phase, now = new Date()) {
+// The decision half (progressLifecyclePlanLocked) is separated from the
+// mutation half so recordProgress can validate adjacency and gate
+// satisfaction BEFORE it writes any handoff or consumes an update number —
+// a rejected checkpoint must leave nothing to duplicate on retry.
+function progressLifecyclePlanLocked(slug, idOrName, phase) {
   const attempt = getAttempt(slug, idOrName);
   if (!attempt?.tracked) return null;
   const phases = attemptPhases(slug, attempt.id);
   if (attempt.status === "planned") {
     if (!phases.length) return null;
-    return updateAttemptLifecycle(slug, attempt.id, "start", {}, now);
+    if (phase && phases.includes(phase) && phase !== phases[0]) {
+      throw new Error(`recorded phase ${JSON.stringify(phase)} must be the first phase for a planned attempt — phases cannot be backfilled out of order`);
+    }
+    return { action: "start" };
   }
   if (attempt.status === "in_progress" && phase && phases.includes(phase)) {
-    let current = attempt;
-    let steps = 0;
-    const gates = workflowGates(slug, attempt.id);
-    while (current.current_phase !== phase && steps < phases.length) {
-      // Stop at unsatisfied gates — the lifecycle must never cross one.
-      if (gateRequirement(gates, current.gates || {}, current.evidence || {}, current, current.current_phase, false)) break;
-      current = updateAttemptLifecycle(slug, attempt.id, "advance", {}, now);
-      steps += 1;
+    // Deterministic adjacency: a checkpoint may name the current phase or the
+    // immediate next one — never a later phase. Multi-hop jumps would let a
+    // retroactive handoff pretend earlier phases happened in order.
+    const currentIndex = phases.indexOf(attempt.current_phase);
+    const targetIndex = phases.indexOf(phase);
+    if (targetIndex !== currentIndex && targetIndex !== currentIndex + 1) {
+      throw new Error(`recorded phase ${JSON.stringify(phase)} is not the current phase (${JSON.stringify(attempt.current_phase)}) or its immediate successor — phases cannot be backfilled out of order`);
     }
-    return current.current_phase === phase ? current : null;
+    if (targetIndex === currentIndex + 1) {
+      const gates = workflowGates(slug, attempt.id);
+      const blocker = gateRequirement(gates, attempt.gates || {}, attempt.evidence || {}, attempt, attempt.current_phase, false);
+      if (blocker) {
+        throw new Error(`cannot record phase ${JSON.stringify(phase)} — the gate on ${JSON.stringify(attempt.current_phase)} is unsatisfied: ${blocker.reason}`);
+      }
+      return { action: "advance" };
+    }
+    return { unchanged: attempt };
   }
   return null;
+}
+
+function applyProgressLifecyclePlanLocked(slug, idOrName, plan, now = new Date()) {
+  if (!plan) return null;
+  if (plan.action) return updateAttemptLifecycleLocked(slug, idOrName, plan.action, {}, now);
+  return plan.unchanged;
+}
+
+function syncLifecycleFromProgressLocked(slug, idOrName, phase, now = new Date()) {
+  const plan = progressLifecyclePlanLocked(slug, idOrName, phase);
+  return applyProgressLifecyclePlanLocked(slug, idOrName, plan, now);
+}
+
+export function syncLifecycleFromProgress(slug, idOrName, phase, now = new Date()) {
+  return withProgressLock(slug, () => syncLifecycleFromProgressLocked(slug, idOrName, phase, now));
 }
 
 const DEFAULT_SETTINGS = Object.freeze({ schema_version: 1, dirf_cli_path: null, stale_worktree_days: 14, archive_reminder_days: 30, stale_project_days: 30 });
@@ -816,7 +1748,7 @@ export function inspectProjectWorktrees(slug, now = new Date()) {
     const lastCommitRaw = git(path, ["log", "-1", "--format=%cI"], { allowFailure: true });
     const lastCommitAt = lastCommitRaw || null;
     const activity = Math.max(Date.parse(attempt?.updated_at || attempt?.created_at || 0) || 0, Date.parse(lastCommitAt || 0) || 0);
-    const stale = !attempt?.status || attempt.status !== "done" ? now.getTime() - activity >= settings.stale_worktree_days * 86_400_000 : false;
+    const stale = !attempt?.status || !["done", "abandoned"].includes(attempt.status) ? now.getTime() - activity >= settings.stale_worktree_days * 86_400_000 : false;
     const archived = archives.find((item) => normalizeIdentityKey(item.path) === key) || null;
     const archiveDue = archived ? now.getTime() >= Date.parse(archived.next_prompt_at) : false;
     let cleanup_state = "active";
@@ -825,6 +1757,7 @@ export function inspectProjectWorktrees(slug, now = new Date()) {
     else if (archived) cleanup_state = "archived";
     else if (!attempt) cleanup_state = "unlinked";
     else if (attempt.status === "done") cleanup_state = "completed";
+    else if (attempt.status === "abandoned") cleanup_state = "abandoned";
     else if (stale) cleanup_state = "stale";
     return {
       path: portable(path), branch: entry.branch || null, head: entry.head || null,
@@ -875,12 +1808,14 @@ export function removeArchivedWorktree(slug, worktreePath, { approved = false } 
 }
 
 export function readHandoff(slug) {
+  recoverPendingProgress(slug);
   const path = join(storeProjectDir(slug), "HANDOFF.md");
   if (!existsSync(path)) return null;
   return readFileSync(path, "utf8");
 }
 
 export function writeHandoff(slug, markdown) {
+  recoverPendingProgress(slug);
   atomicWrite(join(storeProjectDir(slug), "HANDOFF.md"), markdown);
 }
 
@@ -987,6 +1922,35 @@ function reclaimDeadProgressLock(lockPath, expectedOwner, claimantToken) {
   }
 }
 
+const heldProgressLocks = new Set();
+
+function pendingProgressPath(slug) {
+  return join(storeProjectDir(slug), ".pending-progress.json");
+}
+
+function recoverPendingProgress(slug) {
+  if (!heldProgressLocks.has(storeProjectDir(slug)) && existsSync(pendingProgressPath(slug))) {
+    withProgressLock(slug, () => {});
+  }
+}
+
+function replayPendingProgressLocked(slug) {
+  const path = pendingProgressPath(slug);
+  if (!existsSync(path)) return;
+  const pending = JSON.parse(readFileSync(path, "utf8"));
+  // A replay failure must name the journal file: it survives until a read
+  // succeeds, so without the path every operation for the project fails with
+  // no indication of where the blocking artifact lives or how to clear it.
+  const escapeHatch = `Inspect or remove ${path} to clear this error.`;
+  if (pending.schema_version !== 1 || !pending.update || typeof pending.update.message !== "string") {
+    throw new Error(`Invalid pending progress checkpoint in ${path}; preserve it for recovery. ${escapeHatch}`);
+  }
+  const result = recordProgressLocked(slug, pending.update);
+  if (!result.recorded) {
+    throw new Error(`Pending progress could not be recovered (${result.reason}); journal: ${path}. ${escapeHatch}`);
+  }
+}
+
 function withProgressLock(slug, action) {
   const lockPath = join(storeProjectDir(slug), ".record-progress.lock");
   const token = randomUUID();
@@ -999,11 +1963,15 @@ function withProgressLock(slug, action) {
   }), "utf8");
   const deadline = Date.now() + PROGRESS_LOCK_WAIT_MS;
   while (true) {
+    if (Date.now() >= deadline) {
+      rmSync(candidatePath, { recursive: true, force: true });
+      throw new Error("Another progress update is still running; retry this checkpoint.");
+    }
     try {
       renameSync(candidatePath, lockPath);
       break;
     } catch (error) {
-      if (!existsSync(lockPath)) throw error;
+      if (!existsSync(lockPath) && !["EEXIST", "ENOTEMPTY", "EPERM"].includes(error.code)) throw error;
       try {
         const owner = readProgressLockOwner(lockPath);
         if (reclaimDeadProgressLock(lockPath, owner, token)) continue;
@@ -1011,51 +1979,216 @@ function withProgressLock(slug, action) {
         if (statError.code !== "ENOENT") throw statError;
         continue;
       }
-      if (Date.now() >= deadline) {
-        rmSync(candidatePath, { recursive: true, force: true });
-        throw new Error("Another progress update is still running; retry this checkpoint.");
-      }
       Atomics.wait(LOCK_WAIT_ARRAY, 0, 0, 25);
     }
   }
+  heldProgressLocks.add(storeProjectDir(slug));
   try {
+    replayPendingProgressLocked(slug);
     return action();
   } finally {
+    heldProgressLocks.delete(storeProjectDir(slug));
     const owner = readProgressLockOwner(lockPath);
-    if (owner?.token === token) rmSync(lockPath, { recursive: true, force: true });
+    if (owner?.token === token) {
+      // Detach the owned directory before deleting its contents. Otherwise a
+      // contender can replace the emptied directory while rmSync is finishing.
+      const releasedPath = `${lockPath}.released-${token}`;
+      renameSync(lockPath, releasedPath);
+      rmSync(releasedPath, { recursive: true, force: true });
+    }
     rmSync(candidatePath, { recursive: true, force: true });
   }
 }
 
+function nextProgressUpdateNumber(slug) {
+  const path = join(storeProjectDir(slug), ".progress-sequence");
+  let current = 0;
+  try {
+    const stored = readFileSync(path, "utf8").trim();
+    if (/^\d+$/.test(stored)) {
+      current = Number(stored);
+      if (!Number.isSafeInteger(current) || current < 0) current = 0;
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  const handoffs = [readHandoff(slug), ...listAttempts(slug).map((attempt) => readAttemptHandoffFile(slug, attempt.id))];
+  for (const handoff of handoffs) {
+    const recorded = parseCurrentHandoff(handoff || "").updateNumber;
+    if (Number.isSafeInteger(recorded) && recorded > current) current = recorded;
+  }
+  const next = current + 1;
+  if (!Number.isSafeInteger(next)) {
+    throw new Error("DIRF cannot safely save this update because the project update counter is too large.");
+  }
+  atomicWrite(path, `${next}\n`);
+  return next;
+}
+
+function normalizeWorkItemIdentity(value) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+}
+
+function progressAcceptance(slug, handoffBase, { workItem, reviewRevision }) {
+  const current = parseCurrentHandoff(handoffBase);
+  const currentWorkItem = normalizeWorkItemIdentity(current.workItem);
+  const proposedWorkItem = normalizeWorkItemIdentity(workItem);
+  if (workItem !== null && workItem !== undefined && !proposedWorkItem) {
+    return { accepted: false, reason: "invalid_work_item" };
+  }
+  if (currentWorkItem && !proposedWorkItem) {
+    return { accepted: false, reason: "missing_work_item" };
+  }
+  if (currentWorkItem && !/^[0-9a-f]{40}$/i.test(reviewRevision || "")) {
+    return { accepted: false, reason: "missing_review_revision" };
+  }
+  if (!proposedWorkItem || !/^[0-9a-f]{40}$/i.test(reviewRevision || "")) {
+    return { accepted: true, reason: null };
+  }
+  if (currentWorkItem !== proposedWorkItem) {
+    return { accepted: true, reason: null };
+  }
+  if (!/^[0-9a-f]{40}$/i.test(current.reviewRevision || "")) {
+    return { accepted: true, reason: null };
+  }
+  const project = getProject(slug);
+  const relation = revisionRelation(project?.main_path || process.cwd(), current.reviewRevision, reviewRevision);
+  if (relation === "current_newer") return { accepted: false, reason: "stale_review_revision" };
+  if (relation === "conflict") return { accepted: false, reason: "conflicting_review_revision" };
+  if (relation === "unknown") return { accepted: false, reason: "unverified_review_revision" };
+  return { accepted: true, reason: null };
+}
+
+function attemptProgressAcceptance(slug, handoffBase, update, establishedWorkItem) {
+  const expectedWorkItem = normalizeWorkItemIdentity(establishedWorkItem);
+  const proposedWorkItem = normalizeWorkItemIdentity(update.workItem);
+  if (update.workItem !== null && update.workItem !== undefined && !proposedWorkItem) {
+    return { accepted: false, reason: "invalid_work_item" };
+  }
+  if (expectedWorkItem && !proposedWorkItem) {
+    return { accepted: false, reason: "missing_work_item" };
+  }
+  if (expectedWorkItem && proposedWorkItem !== expectedWorkItem) {
+    return { accepted: false, reason: "work_item_mismatch" };
+  }
+  return progressAcceptance(slug, handoffBase, update);
+}
+
 // Record one progress checkpoint through the canonical core so CLI and MCP
-// cannot drift. Canonical and attempt handoffs are updated from their own
-// bases; the attempt write happens first and the authoritative canonical write
-// happens last. Concurrent attempts therefore keep scoped history while the
-// project handoff remains a last-writer-wins snapshot.
-export function recordProgress(slug, { message, timestamp, phase, next, files, attemptId }) {
+// cannot drift. Canonical and attempt handoffs independently reject revisions
+// older than their current work, while an explicit attempt rejection vetoes
+// the whole checkpoint. Accepted scoped history is written before the
+// canonical handoff so the canonical view never claims an unrecorded attempt.
+export function recordProgress(slug, { message, timestamp, phase, next, files, attemptId, workItem, reviewRevision }) {
   if (!getProject(slug)) throw new Error(`Unknown DIRF project ${slug}`);
-  return withProgressLock(slug, () => {
+  return withProgressLock(slug, () => recordProgressLocked(slug, { message, timestamp, phase, next, files, attemptId, workItem, reviewRevision }));
+}
+
+function recordProgressLocked(slug, { message, timestamp, phase, next, files, attemptId, workItem, reviewRevision }) {
     const attempt = progressAttempt(slug, attemptId);
     const attemptHandoff = attempt ? readAttemptHandoffFile(slug, attempt.id) : null;
     const fallback = "# DIRF Handoff\n\n## Objective\n\n(Work in progress)\n";
     const canonicalBase = readHandoff(slug) || fallback;
-    const update = {
+    const recordedAttemptContext = parseCurrentHandoff(attemptHandoff || "");
+    const draftUpdate = {
       message,
       timestamp: timestamp || new Date().toISOString(),
       phase: phase || null,
       next,
       files: files || [],
+      workItem: workItem ?? recordedAttemptContext.workItem ?? null,
+      reviewRevision: reviewRevision || recordedAttemptContext.reviewRevision || null,
+      attemptId: attempt?.id || null,
     };
-    const updatedHandoff = updateProgressSection(canonicalBase, update);
-    const updatedAttemptHandoff = attempt
-      ? updateProgressSection(attemptHandoff || canonicalBase, update)
+    const attemptBase = attempt ? attemptHandoff || canonicalBase : null;
+    const canonicalDecision = progressAcceptance(slug, canonicalBase, draftUpdate);
+    const attemptDecision = attempt
+      ? attempt.status === "abandoned"
+        ? { accepted: false, reason: "attempt_abandoned" }
+        : attemptProgressAcceptance(slug, attemptBase, draftUpdate, recordedAttemptContext.workItem)
       : null;
+    // An explicit attempt is the assignment authority for its checkpoint. If
+    // that scoped handoff rejects a delayed revision, do not let an unrelated
+    // canonical work item accidentally publish the rejected attempt data.
+    const attemptRejected = Boolean(attempt && !attemptDecision.accepted);
+    const canonicalAccepted = !attemptRejected && canonicalDecision.accepted;
+    const recorded = !attemptRejected && (canonicalAccepted || Boolean(attemptDecision?.accepted));
+    const rejectionReason = attemptRejected ? attemptDecision.reason : canonicalDecision.reason;
 
-    if (attempt) atomicWrite(join(storeAttemptDir(slug, attempt.id), "HANDOFF.md"), updatedAttemptHandoff);
-    writeHandoff(slug, updatedHandoff);
-    const lifecycle = attempt ? syncLifecycleFromProgress(slug, attempt.id, phase || null) : null;
-    return { handoff: updatedHandoff, attempt_handoff: updatedAttemptHandoff, attempt, lifecycle };
-  });
+    // Rejected checkpoints are observational results. They must not consume a
+    // sequence number, rewrite either handoff, or advance attempt lifecycle.
+    if (!recorded) {
+      return {
+        handoff: canonicalBase,
+        attempt_handoff: attemptHandoff,
+        attempt,
+        lifecycle: null,
+        recorded: false,
+        accepted: false,
+        reason: rejectionReason,
+        attempt_accepted: attemptDecision?.accepted ?? null,
+        attempt_reason: attemptDecision?.reason ?? null,
+      };
+    }
+
+    // Validate-then-write: the lifecycle decision (adjacency + gate
+    // enforcement) is computed BEFORE any handoff write or update-number
+    // consumption, so a rejected checkpoint appends no progress section and
+    // consumes no update number — a corrected retry cannot duplicate an entry.
+    const lifecyclePlan = attemptDecision?.accepted
+      ? progressLifecyclePlanLocked(slug, attempt.id, phase || null)
+      : null;
+    const lifecycleTime = new Date();
+    // Rendering validates timestamp and file inputs. Do this before persisting
+    // intent so invalid input cannot become a permanently failing recovery.
+    if (canonicalAccepted) updateProgressSection(canonicalBase, draftUpdate);
+    if (attemptDecision?.accepted) updateProgressSection(attemptBase, draftUpdate);
+    // Persist the validated intent before changing its multiple projections.
+    // Recovery reuses this operation; repeated history entries are deduplicated.
+    if (attemptDecision?.accepted) {
+      atomicWrite(pendingProgressPath(slug), JSON.stringify({ schema_version: 1, update: draftUpdate }) + "\n");
+    }
+    const update = { ...draftUpdate, updateNumber: nextProgressUpdateNumber(slug) };
+    // A process can exit after saving the attempt but before projecting it to
+    // the project handoff. Preserve that same attempt's newer durable history
+    // on the next accepted write, without replacing project-specific sections.
+    let canonicalProgressBase = canonicalBase;
+    const canonicalContext = parseCurrentHandoff(canonicalBase);
+    if (canonicalAccepted && attemptDecision?.accepted
+      && canonicalContext.attemptId === attempt.id
+      && recordedAttemptContext.updateNumber > (canonicalContext.updateNumber || 0)) {
+      for (const message of recordedAttemptContext.completedSteps) {
+        canonicalProgressBase = updateProgressSection(canonicalProgressBase, {
+          message, files: recordedAttemptContext.changedFiles,
+        });
+      }
+    }
+    const updatedHandoff = canonicalAccepted
+      ? updateProgressSection(canonicalProgressBase, update)
+      : canonicalBase;
+    const updatedAttemptHandoff = attemptDecision?.accepted
+      ? updateProgressSection(attemptBase, update)
+      : attemptHandoff;
+
+    if (attemptDecision?.accepted) {
+      atomicWrite(join(storeAttemptDir(slug, attempt.id), "HANDOFF.md"), updatedAttemptHandoff);
+    }
+    if (canonicalAccepted) writeHandoff(slug, updatedHandoff);
+    const lifecycle = applyProgressLifecyclePlanLocked(slug, attempt.id, lifecyclePlan, lifecycleTime);
+    if (attemptDecision?.accepted) rmSync(pendingProgressPath(slug));
+    return {
+      handoff: updatedHandoff,
+      attempt_handoff: updatedAttemptHandoff,
+      attempt,
+      lifecycle,
+      recorded: true,
+      accepted: canonicalAccepted,
+      reason: canonicalAccepted ? null : canonicalDecision.reason,
+      attempt_accepted: attemptDecision?.accepted ?? null,
+      attempt_reason: attemptDecision?.reason ?? null,
+    };
 }
 
 // Detect whether a target has migratable legacy state.
@@ -1172,7 +2305,7 @@ export function migrateCleanup(targetPath) {
 // ─── Side observations (`dirf notice`) ─────────────────────────────────────
 // A non-derailing channel for anything NOT the current task: a side bug, a doc
 // staleness, a "fix later." Append-only markdown, one entry per line, numbered
-// and timestamped. Default target: the current (most-recent) attempt's
+// and timestamped. Default target: the checkout owner's attempt's
 // OBSERVATIONS.md. Promotable to the project-level OBSERVATIONS.md so an entry
 // survives across sessions. Never flows into workflow.json or HANDOFF.md.
 
@@ -1200,7 +2333,14 @@ function parseObservations(content) {
   return entries;
 }
 
-export function listObservations(slug, { attemptId, project = false } = {}) {
+function observationAttempt(slug, attemptId, checkoutPath = process.cwd()) {
+  if (attemptId) return getAttempt(slug, attemptId);
+  const responsibility = attemptResponsibility(slug, checkoutPath);
+  if (responsibility.state === "active") return responsibility.attempt;
+  throw new Error(`No unique active attempt owns this checkout (${responsibility.state}). Use --attempt <id> or --project.`);
+}
+
+export function listObservations(slug, { attemptId, project = false, checkoutPath } = {}) {
   // Default target: the current attempt (symmetric with appendObservation).
   // project:true short-circuits to the project-level file.
   let target = attemptId;
@@ -1209,8 +2349,7 @@ export function listObservations(slug, { attemptId, project = false } = {}) {
   } else if (target) {
     target = getAttempt(slug, target).id;
   } else if (!target) {
-    const cur = latestAttempt(slug);
-    target = cur ? cur.id : null;
+    target = observationAttempt(slug, null, checkoutPath).id;
   }
   const file = observationsFile(slug, target);
   if (!existsSync(file)) return [];
@@ -1220,7 +2359,7 @@ export function listObservations(slug, { attemptId, project = false } = {}) {
 // Append an observation. Default target: the current attempt (throws clearly if
 // none exists). Options: { attemptId, project } — attemptId wins over default,
 // project wins over both (writes the project-level file).
-export function appendObservation(slug, text, { attemptId, project = false } = {}) {
+export function appendObservation(slug, text, { attemptId, project = false, checkoutPath } = {}) {
   const trimmed = String(text || "").trim().replace(/\s*\r?\n+\s*/g, " ");
   if (!trimmed) throw new Error("observation text must not be empty");
   let target = attemptId;
@@ -1229,9 +2368,7 @@ export function appendObservation(slug, text, { attemptId, project = false } = {
   } else if (target) {
     target = getAttempt(slug, target).id;
   } else if (!target) {
-    const cur = latestAttempt(slug);
-    if (!cur) throw new Error("No attempt to attach the observation to — run `dirf build` first, or pass --attempt <id>.");
-    target = cur.id;
+    target = observationAttempt(slug, null, checkoutPath).id;
   }
   const file = observationsFile(slug, target);
   mkdirSync(dirname(file), { recursive: true });
@@ -1245,9 +2382,8 @@ export function appendObservation(slug, text, { attemptId, project = false } = {
 // Promote entry N from an attempt to the project-level file. Non-destructive:
 // the source attempt keeps its log; the promoted entry is copied (re-numbered)
 // into the project file.
-export function promoteObservation(slug, entryN, { attemptId } = {}) {
-  const cur = attemptId ? { id: attemptId } : latestAttempt(slug);
-  if (!cur) throw new Error("No attempt to promote from — run `dirf build` first, or pass --attempt <id>.");
+export function promoteObservation(slug, entryN, { attemptId, checkoutPath } = {}) {
+  const cur = observationAttempt(slug, attemptId, checkoutPath);
   const source = listObservations(slug, { attemptId: cur.id });
   const entry = source.find((e) => e.n === entryN);
   if (!entry) throw new Error(`No observation #${entryN} in attempt ${cur.id}. Run \`dirf notice list\` to see entries.`);
@@ -1283,9 +2419,8 @@ export function setProjectStatus(slug, status) {
 const HANDOFF_COMPLETE_RE = /^##\s*Status:\s*Complete\.?\s*$/m;
 
 // Classification ladder (first match wins):
-//   explicit override -> empty (no attempts) -> active (open work)
-//   -> completed (all tracked done | handoff says Complete)
-//   -> active (recent activity within stale_project_days) -> stale.
+//   explicit override -> empty -> active (fresh harness evidence)
+//   -> completed -> idle (open but recently observed/updated) -> stale.
 export function portfolioSnapshot(now = new Date()) {
   const settings = readSettings();
   const staleDays = Number.isInteger(settings.stale_project_days) && settings.stale_project_days > 0
@@ -1295,35 +2430,38 @@ export function portfolioSnapshot(now = new Date()) {
   const nowMs = now.getTime();
 
   const projects = listProjects().map((project) => {
-    const attempts = listAttempts(project.slug);
-    const counts = { planned: 0, in_progress: 0, blocked: 0, done: 0, historical: 0 };
-    const effective = new Map();
+    const workRegistry = projectWorkSnapshot(project.slug, now);
+    const attempts = workRegistry.attempts;
+    const counts = { planned: 0, in_progress: 0, blocked: 0, abandoned: 0, done: 0, historical: 0 };
     let evidenceDone = 0;
     let lastActivity = Date.parse(project.last_seen || 0) || 0;
     for (const attempt of attempts) {
-      const { status, status_source: source } = effectiveAttemptStatus(project.slug, attempt);
-      effective.set(attempt.id, { status, status_source: source });
+      const status = attempt.lifecycle_status;
+      const source = attempt.status_source;
       if (status === "done" && source === "handoff") evidenceDone += 1;
-      const key = ["planned", "in_progress", "blocked", "done", "historical"].includes(status) ? status : "historical";
+      const key = ["planned", "in_progress", "blocked", "abandoned", "done", "historical"].includes(status) ? status : "historical";
       counts[key] += 1;
       const ts = Date.parse(attempt.updated_at || attempt.created_at || 0) || 0;
       if (ts > lastActivity) lastActivity = ts;
+      const observedAt = Date.parse(attempt.execution?.observed_at || 0) || 0;
+      if (observedAt > lastActivity) lastActivity = observedAt;
     }
     const tracked = attempts.filter((attempt) => attempt.tracked);
-    const latest = attempts.at(-1) || null;
+    const latest = attempts.reduce((candidate, attempt) => !candidate || attempt.id > candidate.id ? attempt : candidate, null);
     const handoffPath = join(storeProjectDir(project.slug), "HANDOFF.md");
     const handoff = readHandoff(project.slug);
     if (handoff !== null) lastActivity = Math.max(lastActivity, statSync(handoffPath).mtimeMs);
     const handoffComplete = handoff !== null && HANDOFF_COMPLETE_RE.test(handoff);
     const hasOpenWork = counts.in_progress > 0 || counts.blocked > 0;
-    const allTrackedDone = tracked.length > 0 && tracked.every((attempt) => effective.get(attempt.id).status === "done");
+    const allTrackedDone = tracked.length > 0 && tracked.every((attempt) => attempt.lifecycle_status === "done");
+    const hasLiveWork = (workRegistry.summary.active || 0) > 0;
 
     let status;
     if (project.status === "complete" || project.status === "archived") status = project.status;
     else if (attempts.length === 0) status = "empty";
-    else if (hasOpenWork) status = "active";
-    else if (allTrackedDone || handoffComplete) status = "completed";
-    else if (nowMs - lastActivity < staleMs) status = "active";
+    else if (hasLiveWork) status = "active";
+    else if (!hasOpenWork && (allTrackedDone || handoffComplete)) status = "completed";
+    else if (nowMs - lastActivity < staleMs) status = "idle";
     else status = "stale";
 
     return {
@@ -1338,14 +2476,15 @@ export function portfolioSnapshot(now = new Date()) {
       days_since_activity: lastActivity ? Math.max(0, Math.floor((nowMs - lastActivity) / 86_400_000)) : null,
       handoff: handoff !== null,
       attempts: { total: attempts.length, tracked: tracked.length, evidence_done: evidenceDone, ...counts },
+      work_registry: workRegistry,
       latest: latest ? {
         id: latest.id,
         name: latest.name,
-        status: effective.get(latest.id).status,
-        status_source: effective.get(latest.id).status_source,
+        status: latest.lifecycle_status,
+        status_source: latest.status_source,
         current_phase: latest.current_phase || null,
         updated_at: latest.updated_at || latest.created_at,
-        next_action: attemptNextAction(project.slug, latest.id),
+        ...attemptContextState(project.slug, latest.id),
       } : null,
     };
   });
@@ -1364,5 +2503,107 @@ export function portfolioSnapshot(now = new Date()) {
     stale_project_days: staleDays,
     summary,
     projects,
+  };
+}
+
+// Point-in-time, project-scoped view for humans and board adapters. Lifecycle
+// remains authoritative for completion; a host observation only answers who
+// owns the work and whether that execution is live now.
+export function projectWorkSnapshot(slug, now = new Date()) {
+  const project = getProject(slug);
+  if (!project) throw new Error(`Unknown DIRF project ${slug}`);
+  const staleMs = readSettings().stale_worktree_days * 86_400_000;
+  const stateOrder = ["active", "blocked", "resumable", "stale", "abandoned", "planned", "completed", "historical", "unknown"];
+  const storedAttempts = listAttempts(slug);
+  const attempts = storedAttempts.map((attempt) => {
+    const effective = effectiveAttemptStatus(slug, attempt);
+    const nextAction = handoffNextAction(readAttemptHandoffFile(slug, attempt.id));
+    const execution = attempt.current_execution || null;
+    const observedAt = Date.parse(execution?.observed_at || 0) || 0;
+    const updatedAt = Date.parse(attempt.updated_at || attempt.created_at || 0) || 0;
+    const observationIsFresh = executionIsFresh(execution, now);
+    const observationIsActive = observationIsFresh && executionIsActive(execution);
+    const observationIsExpired = Boolean(execution) && !observationIsFresh;
+    const hasBlockingChild = observationIsFresh &&
+      (execution.children || []).some((child) => child.status === "blocked" && child.blocks_parent === true);
+    const isStale = now.getTime() - Math.max(updatedAt, observedAt) >= staleMs;
+
+    let liveState = "unknown";
+    if (effective.status === "done") liveState = "completed";
+    else if (effective.status === "abandoned") liveState = "abandoned";
+    else if (observationIsActive) liveState = "active";
+    else if (attempt.status === "blocked" || hasBlockingChild) liveState = "blocked";
+    else if (observationIsExpired || isStale) liveState = "stale";
+    else if (attempt.status === "planned") liveState = "planned";
+    else if (attempt.status === "historical") liveState = "historical";
+    else if (nextAction) liveState = "resumable";
+
+    const executionView = execution ? {
+      harness: execution.harness,
+      session_id: execution.session_id,
+      status: execution.status,
+      observed_at: execution.observed_at,
+      branch: execution.branch || null,
+      fresh: observationIsFresh,
+      children: execution.children || [],
+      ...(execution.previous_owner ? { previous_owner: execution.previous_owner } : {}),
+    } : null;
+    const worktreePath = execution?.worktree_path || attempt.responsibility_path || attempt.worktree_path || null;
+    const handoffPath = join(attempt.folder, "HANDOFF.md");
+    return {
+      id: attempt.id,
+      name: attempt.name,
+      tracked: attempt.tracked,
+      created_at: attempt.created_at,
+      lifecycle_status: effective.status,
+      status_source: effective.status_source,
+      live_state: liveState,
+      current_phase: attempt.current_phase || null,
+      worker: attempt.worker || null,
+      blocker: attempt.blocker || null,
+      abandonment_reason: attempt.abandonment_reason || null,
+      updated_at: attempt.updated_at || attempt.created_at,
+      execution: executionView,
+      worktree_path: worktreePath,
+      handoff_path: existsSync(handoffPath) ? handoffPath : null,
+      next_action: nextAction,
+    };
+  }).sort((left, right) => {
+    const state = stateOrder.indexOf(left.live_state) - stateOrder.indexOf(right.live_state);
+    return state || right.updated_at.localeCompare(left.updated_at);
+  });
+
+  const summary = { total: attempts.length };
+  for (const attempt of attempts) summary[attempt.live_state] = (summary[attempt.live_state] || 0) + 1;
+  const projectHandoffPath = join(storeProjectDir(slug), "HANDOFF.md");
+  const projectHandoff = readHandoff(slug);
+  const scoped = attempts.find((attempt) => ["active", "blocked", "resumable", "stale"].includes(attempt.live_state) && attempt.handoff_path) || null;
+  const projectUpdatedAt = projectHandoff !== null ? statSync(projectHandoffPath).mtime : null;
+  const scopedUpdatedAt = scoped?.handoff_path ? statSync(scoped.handoff_path).mtime : null;
+  const useProjectHandoff = projectHandoff !== null && (!scopedUpdatedAt || projectUpdatedAt >= scopedUpdatedAt);
+  const continuation = useProjectHandoff ? {
+    source: "project",
+    attempt_id: null,
+    handoff_path: projectHandoffPath,
+    next_action: handoffNextAction(projectHandoff),
+    updated_at: projectUpdatedAt.toISOString(),
+  } : scoped ? {
+    source: "attempt",
+    attempt_id: scoped.id,
+    handoff_path: scoped.handoff_path,
+    next_action: scoped.next_action,
+    updated_at: scopedUpdatedAt.toISOString(),
+  } : null;
+  return {
+    generated_at: now.toISOString(),
+    project: {
+      slug: project.slug,
+      name: project.name,
+      main_path: project.main_path,
+      handoff_path: projectHandoff !== null ? projectHandoffPath : null,
+    },
+    summary,
+    continuation,
+    attempts,
   };
 }

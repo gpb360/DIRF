@@ -4,14 +4,17 @@
 // installed skill folders (there can be several), builds an index of what's
 // actually present, and resolves the curated registry references against it.
 //
-// A referenced skill that isn't installed is flagged "recommended" — never fatal.
+// A referenced skill that isn't installed is normally flagged "recommended".
+// Explicit human routers fail closed later in flow assembly when one of their
+// declared model dependencies is unavailable; partially running a named router
+// would misrepresent the workflow the user selected.
 //
 // Discovery is broadened to fix blind spots from the parent repo:
 //   - read SKILL.md first, fall back to skill.json then README.md frontmatter
 //     (catches skills like ui-ux-pro-max that ship no SKILL.md)
 //   - scan ~/.zcode/.../skills roots too (catches skills like superpowers)
-import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, readdirSync, statSync, realpathSync, existsSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import { loadJson, SKILLS, ROOT } from "./paths.js";
 import { loadUnit } from "./folders.js";
@@ -29,6 +32,30 @@ const PROJECT_ROOT_NAMES = [".agents/skills", ".codex/skills", ".claude/skills",
 // Candidate files inside a skill folder, in priority order.
 const SKILL_FILES = ["SKILL.md", "skill.json", "README.md"];
 const FM_RE = /^([A-Za-z0-9_-]+):\s*(.*)$/;
+
+export const SKILL_STATUS = Object.freeze({
+  installed: "installed",
+  incomplete: "incomplete",
+  recommended: "recommended",
+  fallback: "fallback",
+  missing: "missing",
+});
+export const SNAPSHOT_SKILL_STATUSES = Object.freeze([
+  SKILL_STATUS.installed,
+  SKILL_STATUS.incomplete,
+  SKILL_STATUS.recommended,
+  SKILL_STATUS.fallback,
+]);
+
+export function skillIsIncomplete(skill) {
+  return typeof skill === "string"
+    ? skill === SKILL_STATUS.incomplete
+    : skill?.readiness === SKILL_STATUS.incomplete || skill?.status === SKILL_STATUS.incomplete;
+}
+
+export function missingSkillFiles(skill) {
+  return Array.isArray(skill?.missing_files) ? skill.missing_files : [];
+}
 
 // The kit ships zero installed skills. Anything under the kit's own skills/
 // folder is a bundled fallback — never part of the host's installed index.
@@ -115,6 +142,13 @@ function readSkillFile(path) {
     return ["", {}, 0, ""];
   }
   const fm = parseFrontmatter(text);
+  // A required_files declaration the tolerant parser cannot read (block YAML
+  // under metadata:, or an indented list) would silently bypass fail-closed
+  // readiness. Flag it so lint surfaces the unreadable declaration instead.
+  const fmEnd = text.startsWith("---") ? text.indexOf("\n---", 4) : -1;
+  if (fmEnd !== -1 && /(^|\n)\s*required_files\s*:/.test(text.slice(4, fmEnd)) && !requiredFilesMetadata(fm).length) {
+    fm.required_files_unreadable = true;
+  }
   const body = stripFrontmatter(text);
   return [fm.name || basenameDir(path), fm, body.split(/\r?\n/).length, body];
 }
@@ -145,10 +179,101 @@ function backtickSkillRefs(body) {
 // Claude Code convention). Returns undefined when absent or unparseable.
 function parseBool(value) {
   if (value === undefined || value === null) return undefined;
-  const v = String(value).trim().toLowerCase();
+  const v = String(value).trim().replace(/^(["'])(.*)\1$/, "$2").toLowerCase();
   if (["yes", "on", "1", "true"].includes(v)) return true;
   if (["no", "off", "0", "false"].includes(v)) return false;
   return undefined;
+}
+
+function metadataList(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
+  const text = String(value || "").trim();
+  if (!text) return [];
+  if (text.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) return parsed.map((item) => String(item).trim()).filter(Boolean);
+    } catch {
+      // Fall through to the tolerant comma-separated form.
+    }
+  }
+  return text.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function requiredFilesMetadata(metadata) {
+  if (!metadata || typeof metadata !== "object") return [];
+  let nested = metadata.metadata;
+  if (typeof nested === "string" && nested.trim().startsWith("{")) {
+    try { nested = JSON.parse(nested); } catch { nested = null; }
+  }
+  const declared = nested && typeof nested === "object"
+    ? nested.required_files
+    : metadata.required_files;
+  return metadataList(declared);
+}
+
+function skillResourceReadiness(folder, metadata) {
+  const requiredFiles = requiredFilesMetadata(metadata)
+    .map((file) => file.replace(/\\/g, "/"));
+  if (!requiredFiles.length) return {};
+  let realFolder;
+  try { realFolder = realpathSync(folder); } catch { return { readiness: SKILL_STATUS.incomplete, required_files: requiredFiles, missing_files: requiredFiles }; }
+  const missingFiles = requiredFiles.filter((file) => {
+    if (isAbsolute(file)) return true;
+    const candidate = resolve(folder, file);
+    const fromFolder = relative(folder, candidate).replace(/\\/g, "/");
+    if (fromFolder === ".." || fromFolder.startsWith("../") || isAbsolute(fromFolder)) return true;
+    try {
+      // Symlinks are resolved through realpathSync like any intermediate
+      // directory: an in-folder link passes containment, an escaping one is
+      // caught by the same check — no special final-component rule.
+      const realCandidate = realpathSync(candidate);
+      const realRelative = relative(realFolder, realCandidate).replace(/\\/g, "/");
+      if (realRelative === ".." || realRelative.startsWith("../") || isAbsolute(realRelative)) return true;
+      return !statSync(realCandidate).isFile();
+    } catch { return true; }
+  });
+  return {
+    readiness: missingFiles.length ? SKILL_STATUS.incomplete : "ready",
+    required_files: requiredFiles,
+    ...(missingFiles.length ? { missing_files: missingFiles } : {}),
+  };
+}
+
+export function inspectSkillReadiness(entryPath, metadata) {
+  if (!entryPath) return {};
+  const resolvedMetadata = metadata ?? readSkillFile(entryPath)[1];
+  return skillResourceReadiness(dirname(entryPath), resolvedMetadata);
+}
+
+function codexAllowsImplicitInvocation(folder) {
+  const policyFile = join(folder, "agents", "openai.yaml");
+  if (!existsSync(policyFile)) return undefined;
+  let text;
+  try {
+    text = readFileSync(policyFile, "utf-8");
+  } catch {
+    return undefined;
+  }
+  let policyIndent;
+  for (const line of text.split(/\r?\n/)) {
+    const content = line.trim();
+    if (!content || content.startsWith("#")) continue;
+    const indent = line.length - line.trimStart().length;
+    if (policyIndent === undefined) {
+      if (/^policy:\s*(?:#.*)?$/.test(content)) policyIndent = indent;
+      continue;
+    }
+    if (indent <= policyIndent) return undefined;
+    const match = /^allow_implicit_invocation:\s*([^#]+?)(?:\s+#.*)?$/.exec(content);
+    if (match) return parseBool(match[1]);
+  }
+  return undefined;
+}
+
+function skillInvocation(folder, metadata) {
+  const claudeHumanOnly = parseBool(typeof metadata === "object" ? metadata["disable-model-invocation"] : undefined) === true;
+  return claudeHumanOnly || codexAllowsImplicitInvocation(folder) === false ? "user" : "model";
 }
 
 function collectDisclosures(folder, indexFile) {
@@ -283,12 +408,10 @@ function indexOne(path, index) {
   const normalized = path.replace(/\\/g, "/");
   const folder = normalized.replace(/\/[^/]+$/, "");
   const file = normalized.split("/").pop();
-  // Invocation class (the ecosystem's master routing attribute). A skill that
-  // declares `disable-model-invocation` is user-invoked: its description is
-  // written for a person, NOT a routing hint — flow.js must not score it.
-  // Absent flag ⇒ model-invoked (the default). DIRF only reads the skill's
-  // own declaration; it never imposes one.
-  const invocation = parseBool(typeof fm === "object" ? fm["disable-model-invocation"] : undefined) === true ? "user" : "model";
+  // Claude and Codex declare human-only skills differently. Either declaration
+  // keeps the skill out of automatic routing; absent flags keep the default.
+  const invocation = skillInvocation(folder, fm);
+  const capabilities = metadataList(typeof fm === "object" ? fm.capabilities : undefined);
   // Self-references (a skill's help text mentioning its own /name) are not
   // dependencies — drop them so the reference graph stays meaningful.
   const references = backtickSkillRefs(body).filter((ref) => ref !== name);
@@ -302,7 +425,10 @@ function indexOne(path, index) {
     disclosures: collectDisclosures(folder, file),
     body_lines: lineCount,
     body_chars: body.length,
+    ...inspectSkillReadiness(path, fm),
     // Only emitted when present — plain skills keep their historical shape.
+    ...(fm.required_files_unreadable ? { required_files_unreadable: true } : {}),
+    ...(capabilities.length ? { capabilities } : {}),
     ...(references.length ? { references } : {}),
   };
 }
@@ -343,6 +469,31 @@ export function discoverAgents(projectRoot) {
   return index;
 }
 
+// Harness detection scans its own dot-folder set — .claude, .codex, .cursor,
+// .zcode, .opencode — at both levels, project and global, so harness identity
+// is discovered from what is actually installed, never assumed. It overlaps
+// with the skill scan's roots but is not the same list: the skill scan also
+// reads .agents/skills (and a plain skills/), and has no .cursor or .opencode
+// roots. Sorted; callers decide how to join.
+const HARNESS_FOLDER_NAMES = [
+  [".claude", "claude"],
+  [".codex", "codex"],
+  [".cursor", "cursor"],
+  [".zcode", "zcode"],
+  [".opencode", "opencode"],
+];
+// .agents is deliberately absent: it is a shared convention several tools
+// read, not a harness — naming it as one would put a folder where the record
+// expects an identity.
+
+export function detectHarnesses(projectRoot, home = homedir()) {
+  const scan = (base) => HARNESS_FOLDER_NAMES
+    .filter(([folder]) => isDir(join(base, folder)))
+    .map(([, name]) => name)
+    .sort();
+  return { project: scan(projectRoot || ""), global: scan(home || "") };
+}
+
 export function providerForPath(path) {
   const normalized = String(path || "").replace(/\\/g, "/");
   const markers = [["/.agents/", "agents"], ["/.claude/", "claude"], ["/.codex/", "codex"], ["/.zcode/", "zcode"]];
@@ -370,6 +521,10 @@ export function lintSkillMetadata(entry) {
   const dir = String(entry?.path || "").replace(/\\/g, "/").split("/").pop();
   if (dir && dir !== name) warnings.push(`name "${name}" does not match parent directory "${dir}" (breaks installers' routing)`);
   if (entry?.body_lines && entry.body_lines > 500) warnings.push(`SKILL.md body is ${entry.body_lines} lines (keep under 500 — progressive disclosure)`);
+  if (skillIsIncomplete(entry)) warnings.push(`missing required files: ${missingSkillFiles(entry).join(", ") || "unknown"}`);
+  if (entry?.required_files_unreadable) {
+    warnings.push("required_files is declared but cannot be read (block YAML is not parsed); use the single-line JSON form — metadata: {\"required_files\": [\"path\"]}");
+  }
   return warnings;
 }
 
@@ -401,13 +556,16 @@ export function bundledSkills() {
     try {
       const unit = loadUnit(join(BUNDLED_DIR, entry.name));
       if (unit.meta.kind !== "skill") continue;
+      const readiness = skillResourceReadiness(unit.folder, unit.meta);
       index[unit.meta.name] = {
         name: unit.meta.name,
         path: unit.folder,
         description: unit.meta.description || "",
         capabilities: unit.meta.capabilities || [],
         provider: "dirf",
+        invocation: skillInvocation(unit.folder, unit.meta),
         body_lines: unit.body.split(/\r?\n/).length,
+        ...readiness,
       };
     } catch { /* a malformed bundled unit is validate's problem, not discovery's */ }
   }
@@ -452,11 +610,13 @@ export function resolveAgentSkills(agentName, agentSkillRefs, baselineSkillRefs,
     seen.add(ref);
     const entry = registry[ref] || {};
     const installed = discovered[ref];
+    const incomplete = skillIsIncomplete(installed);
     const item = {
       name: ref,
-      status: installed ? "installed" : "recommended",
+      status: incomplete ? SKILL_STATUS.incomplete : installed ? SKILL_STATUS.installed : SKILL_STATUS.recommended,
       summary: entry.summary || (installed ? installed.description || "" : ""),
       category: entry.category || "",
+      ...(incomplete ? { missing_files: missingSkillFiles(installed) } : {}),
     };
     if (installed) item.provider = installed.provider || "project";
     out.push(item);

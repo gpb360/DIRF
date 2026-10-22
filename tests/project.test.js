@@ -52,7 +52,10 @@ test("setup reuses existing context and ADR locations without overwriting", () =
   assert.equal(config.context.path, "docs/CONTEXT.md");
   assert.equal(config.context.mode, "multi");
   assert.equal(config.adr_path, "docs/adr");
-  assert.equal(readFileSync(join(root, "docs", "CONTEXT.md"), "utf8"), "existing context\n");
+  const context = readFileSync(join(root, "docs", "CONTEXT.md"), "utf8");
+  assert.ok(context.startsWith("existing context\n"), "existing content is preserved");
+  assert.ok(context.includes("dirf:bootstrap"), "bootstrap block is appended, never a rewrite");
+  assert.ok(readFileSync(join(root, "AGENTS.md"), "utf8").includes("dirf:bootstrap"));
 });
 
 test("setup validates and stores a custom context reserve", () => {

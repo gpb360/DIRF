@@ -21,10 +21,10 @@ function withProject() {
   return { home, dir, slug };
 }
 
-test("appendObservation writes to the current attempt's OBSERVATIONS.md", () => {
+test("appendObservation writes to the explicit attempt's OBSERVATIONS.md", () => {
   const { slug } = withProject();
   createAttemptInStore(slug, "demo", new Date("2026-07-26T10:00:00.000Z"));
-  appendObservation(slug, "Sidebar has 23 text-white — not this task");
+  appendObservation(slug, "Sidebar has 23 text-white — not this task", { attemptId: "demo" });
   const file = join(storeProjectDir(slug), "attempts", "20260726T100000000Z-demo", "OBSERVATIONS.md");
   assert.ok(existsSync(file), "OBSERVATIONS.md must exist in the attempt dir");
   const content = readFileSync(file, "utf8");
@@ -35,10 +35,10 @@ test("appendObservation writes to the current attempt's OBSERVATIONS.md", () => 
 test("appendObservation is append-only across calls (no clobber)", () => {
   const { slug } = withProject();
   createAttemptInStore(slug, "demo", new Date("2026-07-26T10:00:00.000Z"));
-  appendObservation(slug, "first observation");
-  appendObservation(slug, "second observation");
-  appendObservation(slug, "third observation");
-  const entries = listObservations(slug);
+  appendObservation(slug, "first observation", { attemptId: "demo" });
+  appendObservation(slug, "second observation", { attemptId: "demo" });
+  appendObservation(slug, "third observation", { attemptId: "demo" });
+  const entries = listObservations(slug, { attemptId: "demo" });
   assert.equal(entries.length, 3);
   assert.match(entries[0].text, /first observation/);
   assert.match(entries[2].text, /third observation/);
@@ -71,8 +71,8 @@ test("explicit observation targets must name an existing attempt", () => {
 test("observation text stays a single append-only record", () => {
   const { slug } = withProject();
   createAttemptInStore(slug, "demo", new Date("2026-07-26T10:00:00.000Z"));
-  appendObservation(slug, "first line\n2. forged — entry");
-  const entries = listObservations(slug);
+  appendObservation(slug, "first line\n2. forged — entry", { attemptId: "demo" });
+  const entries = listObservations(slug, { attemptId: "demo" });
   assert.equal(entries.length, 1);
   assert.equal(entries[0].text, "first line 2. forged — entry");
 });
@@ -94,7 +94,7 @@ test("latestAttempt returns null when no attempts exist", () => {
 test("appendObservation without an attempt throws a clear error", () => {
   const { slug } = withProject();
   // no attempt created
-  assert.throws(() => appendObservation(slug, "nothing to attach to"), /no attempt|build first/i);
+  assert.throws(() => appendObservation(slug, "nothing to attach to"), /no unique active attempt/i);
 });
 
 test("appendObservation to project-level writes to the project OBSERVATIONS.md", () => {
@@ -116,9 +116,9 @@ test("listObservations --project reads the project-level file", () => {
 test("promoteObservation moves entry N from an attempt to the project level", () => {
   const { slug } = withProject();
   const att = createAttemptInStore(slug, "demo", new Date("2026-07-26T10:00:00.000Z"));
-  appendObservation(slug, "ephemeral one");
-  appendObservation(slug, " keeper — this one matters ");
-  appendObservation(slug, "another ephemeral");
+  appendObservation(slug, "ephemeral one", { attemptId: "demo" });
+  appendObservation(slug, " keeper — this one matters ", { attemptId: "demo" });
+  appendObservation(slug, "another ephemeral", { attemptId: "demo" });
   // Promote entry #2 from the attempt to project-level.
   promoteObservation(slug, 2, { attemptId: att.id });
   // Attempt still has all 3 (promote copies, doesn't delete — non-destructive).

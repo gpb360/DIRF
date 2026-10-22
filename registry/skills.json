@@ -198,6 +198,18 @@
       ]
     },
     {
+      "name": "model-advice",
+      "category": "planning",
+      "applies_to": [
+        "agent-organizer",
+        "workflow-orchestrator"
+      ],
+      "summary": "Portable preflight model suggestions from host-declared capabilities and cost tiers without invocation, monitoring, or live pricing",
+      "capabilities": [
+        "model selection advice"
+      ]
+    },
+    {
       "name": "agent-organizer",
       "category": "orchestration",
       "applies_to": [
@@ -365,7 +377,7 @@
       "applies_to": [
         "backend-architect"
       ],
-      "summary": "Supabase/Postgres patterns, RLS, table constants, withTimeout wrapper",
+      "summary": "PostgreSQL schema, query performance, and row-level security guidance for Supabase projects",
       "capabilities": [
         "backend architecture"
       ]
@@ -581,6 +593,21 @@
       "capabilities": [
         "worktree hygiene",
         "governed maintenance"
+      ]
+    },
+    {
+      "name": "reverse-engineer-anything",
+      "category": "research",
+      "applies_to": [
+        "research-analyst",
+        "security-auditor",
+        "backend-architect"
+      ],
+      "summary": "Evidence-led analysis of shipped binaries, packages, firmware, network captures, and live runtimes; explain features, compare versions, and decompile when source is not enough",
+      "capabilities": [
+        "binary analysis",
+        "evidence-led investigation",
+        "runtime observation"
       ]
     }
   ]

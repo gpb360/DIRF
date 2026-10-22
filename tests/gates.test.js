@@ -5,13 +5,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   attemptGates,
   autoAdvance,
   createAttemptInStore,
+  effectiveAttemptStatus,
   getAttempt,
   pendingGates,
   recordAttemptArtifact,
@@ -19,7 +20,9 @@ import {
   recordedEvidence,
   registerProject,
   syncLifecycleFromProgress,
+  syncAttemptFromHandoff,
   updateAttemptLifecycle,
+  writeHandoff,
 } from "../src/state.js";
 import { reconcile } from "../src/flow.js";
 import { validateSnapshot } from "../src/validate.js";
@@ -44,7 +47,7 @@ function attemptFixture() {
       phases: ["define", "design", "build", "verify", "ship"],
       gates: {
         "design": { kind: "decision" },
-        "build": { kind: "verify" },
+        "build": { kind: "verify", verify: "node --test" },
         "verify": { kind: "soft" },
       },
     },
@@ -81,9 +84,46 @@ function artifactGateFixture() {
   return { home, root, slug, attempt };
 }
 
+function implementationEvidenceGateFixture() {
+  const home = mkdtempSync(join(tmpdir(), "dirf-evidence-gate-home-"));
+  process.env.DIRF_HOME = home;
+  const root = repo();
+  const { slug } = registerProject(root);
+  const attempt = createAttemptInStore(slug, "evidence-gated", new Date("2026-08-01T00:00:00.000Z"));
+  writeFileSync(join(attempt.folder, "workflow.json"), JSON.stringify({
+    workflow: {
+      phases: ["define", "verify", "ship"],
+      gates: { verify: { kind: "verify", verify: "node --test", artifact_type: "implementation_evidence" } },
+    },
+  }));
+  writeFileSync(join(attempt.folder, "implementation-evidence.md"), "# Verified implementation\n");
+  return { home, root, slug, attempt };
+}
+
+function finalGateFixture(gate) {
+  const home = mkdtempSync(join(tmpdir(), "dirf-final-gate-home-"));
+  process.env.DIRF_HOME = home;
+  const root = repo();
+  const { slug } = registerProject(root);
+  const attempt = createAttemptInStore(slug, "final-gated", new Date("2026-08-01T00:00:00.000Z"));
+  writeFileSync(join(attempt.folder, "workflow.json"), JSON.stringify({
+    workflow: { phases: ["define", "approve"], gates: { approve: gate } },
+  }));
+  return { home, root, slug, attempt };
+}
+
 function acceptPlan(slug, attempt) {
   recordAttemptArtifact(slug, attempt.id, { id: "plan-v1", type: "plan", path: "plan.md" });
   return acceptAttemptArtifact(slug, attempt.id, "plan-v1");
+}
+
+function acceptImplementationEvidence(slug, attempt) {
+  recordAttemptArtifact(slug, attempt.id, {
+    id: "implementation-evidence-v1",
+    type: "implementation_evidence",
+    path: "implementation-evidence.md",
+  });
+  return acceptAttemptArtifact(slug, attempt.id, "implementation-evidence-v1");
 }
 
 test("verify gates block advance until evidence is recorded", () => {
@@ -99,13 +139,108 @@ test("verify gates block advance until evidence is recorded", () => {
   // leaving "build" (verify gate) requires an evidence record
   assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "advance"), /verify gate/);
   assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "" } }), /evidence command must not be empty/);
-  // gate record alone does NOT satisfy a verify gate — evidence does
-  updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "build", decision: "accept", comment: "not how verify works" });
+  // decision records are rejected for verify gates — evidence is the only contract
+  assert.throws(
+    () => updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "build", decision: "accept", comment: "not how verify works" }),
+    /not a decision gate/,
+  );
+  assert.equal(attemptGates(slug, attempt.id).find((gate) => gate.phase === "build").status, "pending");
+  assert.ok(pendingGates(slug, attempt.id).some((gate) => gate.phase === "build"));
   assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "advance"), /verify gate/);
+  assert.throws(
+    () => updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "npm test" } }),
+    /evidence command must match its declared verify command/,
+  );
   current = updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "node --test", output: "tests.log" } });
   assert.equal(current.current_phase, "verify");
   assert.equal(current.evidence.build.command, "node --test");
   assert.equal(current.evidence.build.output, "tests.log");
+});
+
+test("implementation-evidence verify gates require exact command evidence and an accepted governing artifact", () => {
+  const { slug, attempt } = implementationEvidenceGateFixture();
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+
+  assert.deepEqual(
+    attemptGates(slug, attempt.id).map(({ phase, status, artifact_type, artifact_id }) => ({ phase, status, artifact_type, artifact_id })),
+    [{ phase: "verify", status: "pending", artifact_type: "implementation_evidence", artifact_id: null }],
+  );
+  assert.throws(
+    () => updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "node --test", output: "all pass" } }),
+    /accepted governing artifact.*implementation_evidence/,
+  );
+  recordAttemptArtifact(slug, attempt.id, {
+    id: "implementation-evidence-v1",
+    type: "implementation_evidence",
+    path: "implementation-evidence.md",
+  });
+  assert.throws(
+    () => updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "node --test", output: "all pass" } }),
+    /accepted governing artifact.*implementation_evidence/,
+  );
+  acceptAttemptArtifact(slug, attempt.id, "implementation-evidence-v1");
+  assert.deepEqual(
+    attemptGates(slug, attempt.id).map(({ phase, status, artifact_type, artifact_id }) => ({ phase, status, artifact_type, artifact_id })),
+    [{ phase: "verify", status: "pending", artifact_type: "implementation_evidence", artifact_id: "implementation-evidence-v1" }],
+  );
+  const advanced = updateAttemptLifecycle(slug, attempt.id, "advance", {
+    evidence: { command: "node --test", output: "all pass" },
+  });
+  assert.equal(advanced.current_phase, "ship");
+  assert.equal(attemptGates(slug, attempt.id).find((gate) => gate.phase === "verify").status, "satisfied");
+});
+
+test("implementation-evidence verify gates fail closed when accepted content changes or disappears", () => {
+  for (const change of ["mutated", "deleted"]) {
+    const { slug, attempt } = implementationEvidenceGateFixture();
+    updateAttemptLifecycle(slug, attempt.id, "start");
+    updateAttemptLifecycle(slug, attempt.id, "advance");
+    acceptImplementationEvidence(slug, attempt);
+
+    if (change === "mutated") {
+      writeFileSync(join(attempt.folder, "implementation-evidence.md"), "# Changed after acceptance\n");
+      assert.throws(() => attemptGates(slug, attempt.id), /Artifact content changed after acceptance/);
+      assert.throws(
+        () => updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "node --test" } }),
+        /Artifact content changed after acceptance/,
+      );
+    } else {
+      rmSync(join(attempt.folder, "implementation-evidence.md"));
+      assert.throws(() => attemptGates(slug, attempt.id), /Artifact content does not exist/);
+      assert.throws(
+        () => updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "node --test" } }),
+        /Artifact content does not exist/,
+      );
+    }
+  }
+});
+
+test("completion enforces an implementation-evidence verify gate on the final phase", () => {
+  const { slug, attempt } = finalGateFixture({
+    kind: "verify",
+    verify: "node --test",
+    artifact_type: "implementation_evidence",
+  });
+  writeFileSync(join(attempt.folder, "implementation-evidence.md"), "# Verified implementation\n");
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+
+  assert.throws(
+    () => updateAttemptLifecycle(slug, attempt.id, "complete", {
+      confirm: true,
+      evidence: { command: "node --test", output: "all pass", exit: 0 },
+    }),
+    /accepted governing artifact.*implementation_evidence/,
+  );
+  acceptImplementationEvidence(slug, attempt);
+  writeHandoff(slug, "# Handoff\n");
+  const done = updateAttemptLifecycle(slug, attempt.id, "complete", {
+    confirm: true,
+    evidence: { command: "node --test", output: "all pass", exit: 0 },
+  });
+  assert.equal(done.status, "done");
+  assert.equal(attemptGates(slug, attempt.id).find((gate) => gate.phase === "approve").status, "satisfied");
 });
 
 test("decision gates block advance until an accepted record; deny requires a comment", () => {
@@ -125,6 +260,118 @@ test("decision gates block advance until an accepted record; deny requires a com
   current = updateAttemptLifecycle(slug, attempt.id, "advance");
   assert.equal(current.current_phase, "build");
 });
+
+test("decision gates with verification require both acceptance and exact evidence", () => {
+  const { slug, attempt } = attemptFixture();
+  const workflowPath = join(attempt.folder, "workflow.json");
+  const snapshot = JSON.parse(readFileSync(workflowPath, "utf8"));
+  snapshot.workflow.gates.design.verify = "node scripts/check-decision.js";
+  writeFileSync(workflowPath, JSON.stringify(snapshot));
+
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+  updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "design", decision: "accept", comment: "scope approved" });
+  assert.equal(attemptGates(slug, attempt.id).find((gate) => gate.phase === "design").status, "pending");
+  assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "advance"), /also requires verification evidence/);
+  assert.throws(
+    () => updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "npm test" } }),
+    /must match its declared verify command/,
+  );
+  const current = updateAttemptLifecycle(slug, attempt.id, "advance", {
+    evidence: { command: "node scripts/check-decision.js", output: "allow" },
+  });
+  assert.equal(current.current_phase, "build");
+  assert.equal(attemptGates(slug, attempt.id).find((gate) => gate.phase === "design").status, "accepted");
+});
+
+test("completion enforces a final decision gate and its governing artifact", () => {
+  const { slug, attempt } = finalGateFixture({ kind: "decision", artifact_type: "research" });
+  writeFileSync(join(attempt.folder, "research.md"), "# Accepted research\n");
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+  assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "complete", { confirm: true }), /decision gate/);
+  updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "approve", decision: "accept", comment: "route approved" });
+  assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "complete", { confirm: true }), /accepted governing artifact.*research/);
+  recordAttemptArtifact(slug, attempt.id, { id: "research-v1", type: "research", path: "research.md" });
+  acceptAttemptArtifact(slug, attempt.id, "research-v1");
+  writeHandoff(slug, "# Handoff\n");
+  assert.equal(updateAttemptLifecycle(slug, attempt.id, "complete", { confirm: true }).status, "done");
+});
+
+test("handoff completion evidence cannot bypass pending workflow gates", () => {
+  const { slug, attempt } = finalGateFixture({ kind: "decision", artifact_type: "research" });
+  writeFileSync(join(attempt.folder, "HANDOFF.md"), "# DIRF Handoff\n\n## Status: Complete.\n");
+  assert.deepEqual(effectiveAttemptStatus(slug, getAttempt(slug, attempt.id)), {
+    status: "planned",
+    status_source: "lifecycle",
+  });
+  const synced = syncAttemptFromHandoff(slug, attempt.id);
+  assert.equal(synced.changed, false);
+  assert.match(synced.reason, /workflow gates remain pending: approve/);
+});
+
+test("completion records and enforces evidence for a final verify gate", () => {
+  const { slug, attempt } = finalGateFixture({ kind: "verify", verify: "node --test" });
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+  assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "complete", { confirm: true }), /verify gate/);
+  assert.throws(
+    () => updateAttemptLifecycle(slug, attempt.id, "complete", { confirm: true, evidence: { command: "npm test", exit: 0 } }),
+    /must match its declared verify command/,
+  );
+  assert.throws(
+    () => updateAttemptLifecycle(slug, attempt.id, "complete", {
+      confirm: true,
+      evidence: { command: "node --test", output: "all pass", exit: 1 },
+    }),
+    /recorded run exited 1/,
+  );
+  writeHandoff(slug, "# Handoff\n");
+  const done = updateAttemptLifecycle(slug, attempt.id, "complete", {
+    confirm: true,
+    evidence: { command: "node --test", output: "all pass", exit: 0 },
+  });
+  assert.equal(done.status, "done");
+  assert.equal(done.evidence.approve.command, "node --test");
+  assert.equal(attemptGates(slug, attempt.id).find((gate) => gate.phase === "approve").status, "satisfied");
+});
+
+test("dirf attempt complete accepts final-phase evidence through the CLI", () => {
+  const { home, root, attempt } = finalGateFixture({ kind: "verify", verify: "node --test" });
+  const cli = (...args) => execFileSync(process.execPath, [join(process.cwd(), "src", "cli.js"), ...args], {
+    cwd: root, encoding: "utf8", timeout: 30000, env: { ...process.env, DIRF_HOME: home },
+  });
+  cli("attempt", "start", attempt.id, "--path", root);
+  cli("attempt", "advance", attempt.id, "--path", root);
+  // Typed evidence can no longer complete a gated attempt: the CLI must run
+  // the check itself, and the canonical handoff must be synced.
+  assert.throws(
+    () => cli("attempt", "complete", attempt.id, "--confirm", "--evidence", "node --test", "--path", root),
+    /no captured verification/,
+  );
+  // --run lets the CLI capture the fact (exit 0); the command must be the
+  // declared verify, and the handoff must be at least as fresh as the last
+  // phase write.
+  assert.throws(
+    () => cli("attempt", "complete", attempt.id, "--confirm", "--run", "node -e \"process.exit(0)\"", "--path", root),
+    /must match its declared verify command/,
+  );
+  assert.throws(
+    () => cli("attempt", "complete", attempt.id, "--confirm", "--run", "node --test", "--path", root),
+    /[Cc]anonical handoff/,
+  );
+  const handoffFile = join(home, "handoff.md");
+  writeFileSync(handoffFile, "# DIRF Handoff\n\n## Status: In progress\n");
+  cli("state", "write-handoff", "--path", root, "--file", handoffFile);
+  const done = JSON.parse(cli(
+    "attempt", "complete", attempt.id, "--confirm", "--run", "node --test", "--path", root, "--json",
+  ));
+  assert.equal(done.status, "done");
+  assert.equal(done.evidence.approve.command, "node --test");
+  assert.equal(done.evidence.approve.exit, 0);
+  assert.equal(done.unaudited, false);
+});
+
 
 test("manual advance requires the accepted governing artifact declared by a decision gate", () => {
   const { slug, attempt } = artifactGateFixture();
@@ -182,6 +429,19 @@ test("soft gates advance without a record unless --strict", () => {
   assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "advance", { strict: true }), /soft gate/);
   let current = updateAttemptLifecycle(slug, attempt.id, "advance");
   assert.equal(current.current_phase, "ship");
+});
+
+test("crossed soft gates preserve satisfied status when evidence was recorded", () => {
+  const { slug, attempt } = attemptFixture();
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+  updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "design", decision: "accept", comment: "ok" });
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+  updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "node --test" } });
+  updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "manual verification" } });
+
+  assert.equal(attemptGates(slug, attempt.id).find((gate) => gate.phase === "verify").status, "satisfied");
+  assert.ok(!pendingGates(slug, attempt.id).some((gate) => gate.phase === "verify"));
 });
 
 test("autoAdvance crosses covered phases and stops at the first unsatisfied gate", () => {
@@ -290,7 +550,7 @@ test("block records wait types; reopen clears them", () => {
   assert.equal(current.wait, null); // absent = blocker by default
 });
 
-test("pendingGates reflects the tri-state: pending → accepted/satisfied", () => {
+test("pendingGates excludes accepted, satisfied, and crossed soft gates", () => {
   const { slug, attempt } = attemptFixture();
   updateAttemptLifecycle(slug, attempt.id, "start");
   assert.deepEqual(pendingGates(slug, attempt.id).map((g) => g.phase), ["design", "build", "verify"]);
@@ -304,6 +564,10 @@ test("pendingGates reflects the tri-state: pending → accepted/satisfied", () =
   assert.equal(gates.find((g) => g.phase === "design").status, "accepted");
   assert.equal(gates.find((g) => g.phase === "build").status, "satisfied");
   assert.equal(gates.find((g) => g.phase === "verify").status, "pending");
+
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+  assert.equal(attemptGates(slug, attempt.id).find((g) => g.phase === "verify").status, "passed");
+  assert.deepEqual(pendingGates(slug, attempt.id), []);
 });
 
 test("evidence is recorded per phase and replayable via recordedEvidence", () => {
@@ -324,7 +588,28 @@ test("gate decisions validate phase, state, and decision value", () => {
   assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "design", decision: "accept" }), /in-progress/);
   updateAttemptLifecycle(slug, attempt.id, "start");
   assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "nope", decision: "accept" }), /Unknown phase/);
+  assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "build", decision: "accept" }), /not a decision gate/);
+  assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "verify", decision: "deny", comment: "unsafe" }), /not a decision gate/);
   assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "design", decision: "maybe" }), /must be "accept" or "deny"/);
+});
+
+test("legacy denied soft-gate records remain denied after the phase is crossed", () => {
+  const { slug, attempt } = attemptFixture();
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+  updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "design", decision: "accept", comment: "ok" });
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+  updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "node --test" } });
+
+  const attemptFile = join(attempt.folder, "attempt.json");
+  const stored = JSON.parse(readFileSync(attemptFile, "utf8"));
+  stored.gates = { ...stored.gates, verify: { status: "denied", comment: "unsafe", at: "2026-08-01T00:00:02.000Z" } };
+  writeFileSync(attemptFile, JSON.stringify(stored, null, 2));
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+
+  const gate = attemptGates(slug, attempt.id).find((item) => item.phase === "verify");
+  assert.equal(gate.status, "denied");
+  assert.equal(gate.comment, "unsafe");
 });
 
 test("gate-free attempts advance exactly as before", () => {
@@ -337,22 +622,30 @@ test("gate-free attempts advance exactly as before", () => {
   assert.equal(current.gates, undefined);
 });
 
-test("syncLifecycleFromProgress stops at gates instead of crossing them", () => {
+test("syncLifecycleFromProgress enforces adjacency and stops at gates", () => {
   const { slug, attempt } = attemptFixture();
   updateAttemptLifecycle(slug, attempt.id, "start");
-  const synced = syncLifecycleFromProgress(slug, attempt.id, "ship");
-  assert.equal(synced, null);
-  assert.equal(getAttempt(slug, attempt.id).current_phase, "design");
+  // Multi-hop jumps are rejected outright — phases cannot be backfilled.
+  assert.throws(() => syncLifecycleFromProgress(slug, attempt.id, "ship"), /immediate successor/);
+  assert.equal(getAttempt(slug, attempt.id).current_phase, "define");
+  // The adjacent phase is reachable: "define" has no gate.
+  assert.equal(syncLifecycleFromProgress(slug, attempt.id, "design").current_phase, "design");
+  // From "design" (decision gate), the adjacent "build" stays blocked until
+  // the gate is satisfied.
+  assert.throws(() => syncLifecycleFromProgress(slug, attempt.id, "build"), /gate on "design" is unsatisfied/);
+  updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "design", decision: "accept", comment: "ok" });
+  assert.equal(syncLifecycleFromProgress(slug, attempt.id, "build").current_phase, "build");
+  // The current phase itself is always a valid checkpoint target.
+  assert.equal(syncLifecycleFromProgress(slug, attempt.id, "build").current_phase, "build");
 });
 
 test("progress sync uses the artifact-aware gate seam", () => {
   const { slug, attempt } = artifactGateFixture();
   updateAttemptLifecycle(slug, attempt.id, "start");
-  assert.equal(syncLifecycleFromProgress(slug, attempt.id, "build"), null);
-  assert.equal(getAttempt(slug, attempt.id).current_phase, "design");
+  assert.throws(() => syncLifecycleFromProgress(slug, attempt.id, "build"), /immediate successor/);
+  assert.equal(syncLifecycleFromProgress(slug, attempt.id, "design").current_phase, "design");
   updateAttemptLifecycle(slug, attempt.id, "gate", { phase: "design", decision: "accept", comment: "approved" });
-  assert.equal(syncLifecycleFromProgress(slug, attempt.id, "build"), null);
-  assert.equal(getAttempt(slug, attempt.id).current_phase, "design");
+  assert.throws(() => syncLifecycleFromProgress(slug, attempt.id, "build"), /accepted governing artifact/);
   acceptPlan(slug, attempt);
   assert.equal(syncLifecycleFromProgress(slug, attempt.id, "build").current_phase, "build");
 });
@@ -377,9 +670,11 @@ test("resume reconciles pending gates and replays recorded evidence", () => {
   const cli = (...args) => execFileSync(process.execPath, [join(process.cwd(), "src", "cli.js"), ...args], { cwd: root, encoding: "utf8", timeout: 30000, env: { ...process.env, DIRF_HOME: home } });
   cli("attempt", "start", attempt.id, "--path", root);
   const out = cli("resume", attempt.id, "--path", root);
-  assert.match(out, /Pending gates \(reconcile before continuing\)/);
-  assert.match(out, /design \(decision\)/);
-  assert.match(out, /build \(verify\)/);
+  assert.match(out, /Pending decisions or checks: 3/);
+  const full = cli("resume", attempt.id, "--path", root, "--full");
+  assert.match(full, /Pending gates \(reconcile before continuing\)/);
+  assert.match(full, /design \(decision\)/);
+  assert.match(full, /build \(verify\)/);
 });
 
 test("reconcile validates gate declarations against declared phases", () => {
@@ -398,10 +693,16 @@ test("reconcile validates gate declarations against declared phases", () => {
   assert.ok(badKind.some((e) => /kind must be verify, decision, or soft/.test(e)));
   const emptyVerify = reconcile({ triage: base, gated: { ...withGates, workflow: { ...base.workflow, gates: { b: { kind: "verify", verify: "" } } } } });
   assert.ok(emptyVerify.some((e) => /verify must be a non-empty string/.test(e)));
+  const missingVerify = reconcile({ triage: base, gated: { ...withGates, workflow: { ...base.workflow, gates: { b: { kind: "verify" } } } } });
+  assert.ok(missingVerify.some((e) => /verify must be a non-empty string for verify gates/.test(e)));
   const unknownArtifact = reconcile({ triage: base, gated: { ...withGates, workflow: { ...base.workflow, gates: { b: { kind: "decision", artifact_type: "wat" } } } } });
   assert.ok(unknownArtifact.some((e) => /artifact_type must be one of/.test(e)));
+  const evidenceArtifactOnVerify = { ...base, workflow: { ...base.workflow, gates: { b: { kind: "verify", verify: "node --test", artifact_type: "implementation_evidence" } } } };
+  assert.deepEqual(reconcile({ triage: base, gated: evidenceArtifactOnVerify }), []);
   const artifactOnVerify = reconcile({ triage: base, gated: { ...withGates, workflow: { ...base.workflow, gates: { b: { kind: "verify", artifact_type: "plan" } } } } });
-  assert.ok(artifactOnVerify.some((e) => /artifact_type is only valid for decision gates/.test(e)));
+  assert.ok(artifactOnVerify.some((e) => /verify gates may only require implementation_evidence/.test(e)));
+  const artifactOnSoft = reconcile({ triage: base, gated: { ...withGates, workflow: { ...base.workflow, gates: { b: { kind: "soft", artifact_type: "implementation_evidence" } } } } });
+  assert.ok(artifactOnSoft.some((e) => /only valid for decision gates or implementation_evidence verify gates/.test(e)));
   const notObject = reconcile({ triage: base, gated: { ...withGates, workflow: { ...base.workflow, gates: "x" } } });
   assert.ok(notObject.some((e) => /workflow.gates must be an object/.test(e)));
 });
@@ -424,8 +725,140 @@ test("validateSnapshot accepts valid gates and rejects malformed ones", () => {
   assert.ok(unknown.some((e) => /gates references unknown phase nope/.test(e)));
   const badKind = validateSnapshot({ ...base, workflow: { ...base.workflow, gates: { b: { kind: "wat" } } } }, "demo.json");
   assert.ok(badKind.some((e) => /kind must be verify, decision, or soft/.test(e)));
+  const missingVerify = validateSnapshot({ ...base, workflow: { ...base.workflow, gates: { b: { kind: "verify" } } } }, "demo.json");
+  assert.ok(missingVerify.some((e) => /verify must be a non-empty string for verify gates/.test(e)));
   const unknownArtifact = validateSnapshot({ ...base, workflow: { ...base.workflow, gates: { b: { kind: "decision", artifact_type: "wat" } } } }, "demo.json");
   assert.ok(unknownArtifact.some((e) => /artifact_type must be one of/.test(e)));
+  assert.deepEqual(validateSnapshot({ ...base, workflow: { ...base.workflow, gates: { b: { kind: "verify", verify: "node --test", artifact_type: "implementation_evidence" } } } }, "demo.json"), []);
   const artifactOnVerify = validateSnapshot({ ...base, workflow: { ...base.workflow, gates: { b: { kind: "verify", artifact_type: "plan" } } } }, "demo.json");
-  assert.ok(artifactOnVerify.some((e) => /artifact_type is only valid for decision gates/.test(e)));
+  assert.ok(artifactOnVerify.some((e) => /verify gates may only require implementation_evidence/.test(e)));
+  const artifactOnSoft = validateSnapshot({ ...base, workflow: { ...base.workflow, gates: { b: { kind: "soft", artifact_type: "implementation_evidence" } } } }, "demo.json");
+  assert.ok(artifactOnSoft.some((e) => /only valid for decision gates or implementation_evidence verify gates/.test(e)));
+});
+
+test("source playbooks and snapshots share agent contract validation", () => {
+  const contract = {
+    phases: ["a", "b"],
+    output: "an owned result",
+    verification: "the result is checked",
+  };
+  const playbook = {
+    description: "d", keywords: [], agents: ["owner"],
+    workflow: {
+      phases: ["a", "b"], output: "o", validation: "v", recovery: "r",
+      agent_contracts: { owner: contract },
+    },
+    skill_flow: { label: "l", steps: [{ stage: "s", reason: "why", capability: "cap" }] },
+  };
+  assert.deepEqual(reconcile({ triage: playbook }), []);
+
+  const snapshot = {
+    schema_version: 5,
+    name: "x", task: "t", playbook: "p", playbook_description: "pd",
+    agents: [{ name: "owner", skills: [] }], baseline_skills: [], questions: [],
+    skill_flow: { label: "l", steps: [] }, policy: "policies/workflow-policy.md",
+    capability_gaps: [], attempt: { id: "1", path: "attempts/1" },
+    lifecycle: { clarify: "c", prototype: "p", split: "s", implement: "i", review: "r" },
+    workflow: { ...playbook.workflow },
+  };
+  assert.deepEqual(validateSnapshot(snapshot, "demo.json"), []);
+
+  const unowned = reconcile({
+    triage: {
+      ...playbook,
+      workflow: { ...playbook.workflow, agent_contracts: { owner: { ...contract, phases: ["a"] } } },
+    },
+  });
+  assert.ok(unowned.some((error) => /workflow phase b must have exactly one agent owner; found none/.test(error)));
+
+  const duplicated = reconcile({
+    triage: {
+      ...playbook,
+      agents: ["owner", "second"],
+      workflow: {
+        ...playbook.workflow,
+        agent_contracts: {
+          owner: contract,
+          second: { ...contract, phases: ["a"] },
+        },
+      },
+    },
+  });
+  assert.ok(duplicated.some((error) => /workflow phase a must have exactly one agent owner; found owner, second/.test(error)));
+
+  const badContract = { ...contract, phases: ["missing"], verification: "" };
+  const badPlaybook = {
+    ...playbook,
+    workflow: { ...playbook.workflow, agent_contracts: { stranger: badContract } },
+  };
+  const sourceErrors = reconcile({ triage: badPlaybook });
+  assert.ok(sourceErrors.some((error) => /references undeclared agent stranger/.test(error)));
+  assert.ok(sourceErrors.some((error) => /references unknown phase missing/.test(error)));
+  assert.ok(sourceErrors.some((error) => /verification must be a non-empty string/.test(error)));
+
+  const malformedAgents = reconcile({ triage: { ...playbook, agents: "owner" } });
+  assert.ok(malformedAgents.some((error) => /agents must be an array/.test(error)));
+
+  const snapshotErrors = validateSnapshot({
+    ...snapshot,
+    workflow: { ...snapshot.workflow, agent_contracts: { stranger: badContract } },
+  }, "demo.json");
+  assert.ok(snapshotErrors.some((error) => /references undeclared agent stranger/.test(error)));
+  assert.ok(snapshotErrors.some((error) => /references unknown phase missing/.test(error)));
+  assert.ok(snapshotErrors.some((error) => /verification must be a non-empty string/.test(error)));
+});
+
+test("historical accepted evidence without a digest keeps the gate pending and blocked", () => {
+  const { slug, attempt } = implementationEvidenceGateFixture();
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  updateAttemptLifecycle(slug, attempt.id, "advance");
+  recordAttemptArtifact(slug, attempt.id, {
+    id: "implementation-evidence-v1",
+    type: "implementation_evidence",
+    path: "implementation-evidence.md",
+  });
+  acceptAttemptArtifact(slug, attempt.id, "implementation-evidence-v1");
+  // Simulate a historical record accepted before digests existed.
+  const attemptFile = join(attempt.folder, "attempt.json");
+  const record = JSON.parse(readFileSync(attemptFile, "utf8"));
+  const artifact = record.artifacts.find((entry) => entry.id === "implementation-evidence-v1");
+  delete artifact.accepted_sha256;
+  writeFileSync(attemptFile, JSON.stringify(record, null, 2) + "\n");
+
+  assert.deepEqual(
+    attemptGates(slug, attempt.id).map(({ phase, status, artifact_id }) => ({ phase, status, artifact_id })),
+    [{ phase: "verify", status: "pending", artifact_id: "implementation-evidence-v1" }],
+  );
+  assert.throws(
+    () => updateAttemptLifecycle(slug, attempt.id, "advance", { evidence: { command: "node --test", output: "all pass" } }),
+    /SHA-bound/,
+  );
+});
+
+test("an unreadable accepted artifact degrades projections instead of crashing them", () => {
+  const { home, root, slug, attempt } = implementationEvidenceGateFixture();
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  recordAttemptArtifact(slug, attempt.id, {
+    id: "implementation-evidence-v1",
+    type: "implementation_evidence",
+    path: "implementation-evidence.md",
+  });
+  acceptAttemptArtifact(slug, attempt.id, "implementation-evidence-v1");
+  rmSync(join(attempt.folder, "implementation-evidence.md"));
+
+  // Enforcement still fails closed...
+  assert.throws(() => getAttempt(slug, attempt.id) && attemptGates(slug, attempt.id), /does not exist/);
+  // ...while read-only projections stay usable and never claim done.
+  const loaded = getAttempt(slug, attempt.id);
+  const status = effectiveAttemptStatus(slug, loaded);
+  assert.notEqual(status.status, "done");
+  const listing = execFileSync(process.execPath, [new URL("../src/cli.js", import.meta.url).pathname.replace(/^\/(.:\/)/, "$1"), "list", "--json"], {
+    cwd: root,
+    env: { ...process.env, DIRF_HOME: home },
+    encoding: "utf8",
+  });
+  const parsed = JSON.parse(listing);
+  const degraded = parsed.find((entry) => entry.id === attempt.id);
+  assert.match(degraded.gate_error, /does not exist/);
+  assert.deepEqual(degraded.gates, []);
 });

@@ -48,6 +48,7 @@ test("dirf learn creates canonical learning artifacts without changing the host 
   const result = JSON.parse(output);
   assert.equal(result.source.kind, "paste");
   assert.equal(result.repository_modified, false);
+  assert.equal(result.agent_action, "continue_to_decision_gate");
   assert.match(result.next, /^dirf resume /);
 
   const after = execFileSync("git", ["status", "--short", "--untracked-files=all"], { cwd: root, encoding: "utf8" });
@@ -69,6 +70,20 @@ test("dirf learn creates canonical learning artifacts without changing the host 
   const attempt = JSON.parse(readFileSync(artifacts.find((path) => path.endsWith("attempt.json")), "utf8"));
   assert.equal(attempt.artifacts.find((artifact) => artifact.id === "learning-source").type, "source");
   assert.ok(artifacts.every((path) => statSync(path).isFile()));
+});
+
+test("dirf learn reports its safe continuation in one plain-English line", () => {
+  const root = mkdtempSync(join(tmpdir(), "dirf-cli-project-"));
+  const home = mkdtempSync(join(tmpdir(), "dirf-cli-home-"));
+  execFileSync("git", ["init", "-q"], { cwd: root, timeout: TIMEOUT });
+  run(["setup", root], root, home);
+
+  const output = run([
+    "learn", "A source proposes one bounded workflow improvement.",
+    "--path", root, "--name", "plain-status",
+  ], root, home);
+
+  assert.equal(output.trim(), "DIRF source saved; repo unchanged. Continuing review unless a decision is needed.");
 });
 
 test("dirf learn requires an accepted recommendation and human decision before implementation", () => {

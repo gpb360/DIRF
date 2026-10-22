@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { lookup as dnsLookup } from "node:dns/promises";
 import {
   existsSync,
   mkdtempSync,
@@ -15,9 +14,8 @@ import { tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 
 export const MAX_PASTED_BYTES = 2 * 1024 * 1024;
-export const MAX_REMOTE_BYTES = 5 * 1024 * 1024;
-export const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
-export const MAX_REDIRECTS = 5;
+import { fetchTextSafely, MAX_REMOTE_BYTES } from "./public-http.js";
+export { fetchTextSafely, assertPublicHttpsUrl, isPrivateAddress, MAX_REMOTE_BYTES, DEFAULT_FETCH_TIMEOUT_MS, MAX_REDIRECTS } from "./public-http.js";
 
 const YOUTUBE_HOSTS = new Set([
   "youtube.com",
@@ -27,16 +25,6 @@ const YOUTUBE_HOSTS = new Set([
   "www.youtube-nocookie.com",
   "youtu.be",
 ]);
-
-const PRIVATE_IPV4 = [
-  /^0\./,
-  /^10\./,
-  /^127\./,
-  /^169\.254\./,
-  /^192\.168\./,
-  /^224\./,
-  /^2(?:2[5-9]|3\d)\./,
-];
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -93,116 +81,6 @@ export function htmlToMarkdown(html) {
     .replace(/\n{3,}/g, "\n\n");
   body = body.replace(/DIRF_CODE_BLOCK_(\d+)/g, (_, index) => `\`\`\`\n${codeBlocks[Number(index)]}\n\`\`\``);
   return { title, markdown: normalizedText(body) };
-}
-
-function isPrivateIpv4(address) {
-  if (PRIVATE_IPV4.some((pattern) => pattern.test(address))) return true;
-  const parts = address.split(".").map(Number);
-  return parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31;
-}
-
-export function isPrivateAddress(address) {
-  const value = String(address || "").toLowerCase().split("%")[0];
-  if (value.includes(".")) return isPrivateIpv4(value);
-  return value === "::" || value === "::1" || value.startsWith("fc") || value.startsWith("fd") || value.startsWith("fe8") || value.startsWith("fe9") || value.startsWith("fea") || value.startsWith("feb") || value.startsWith("::ffff:127.") || value.startsWith("::ffff:10.") || value.startsWith("::ffff:192.168.");
-}
-
-export async function assertPublicHttpsUrl(input, dependencies = {}) {
-  let url;
-  try { url = new URL(input); }
-  catch { throw new Error("learning URL must be a valid HTTPS URL"); }
-  if (url.protocol !== "https:") throw new Error("learning URLs must use HTTPS");
-  if (url.username || url.password) throw new Error("learning URLs must not contain credentials");
-  const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
-  if (!hostname || hostname === "localhost" || hostname.endsWith(".localhost") || hostname.endsWith(".local") || hostname.endsWith(".internal")) {
-    throw new Error("learning URLs must use a public host");
-  }
-  const lookup = dependencies.lookup || dnsLookup;
-  let addresses;
-  try { addresses = await lookup(hostname, { all: true, verbatim: true }); }
-  catch (error) { throw new Error(`could not resolve learning URL host: ${error.message}`); }
-  if (!addresses.length || addresses.some((entry) => isPrivateAddress(entry.address))) {
-    throw new Error("learning URLs must not resolve to private or local addresses");
-  }
-  return url;
-}
-
-function responseHeader(response, name) {
-  return response.headers?.get?.(name) || null;
-}
-
-async function readResponseBytes(response, maxBytes) {
-  if (!response.body?.getReader) {
-    const bytes = Buffer.from(await response.arrayBuffer());
-    if (bytes.length > maxBytes) throw new Error(`learning URL exceeds the ${maxBytes} byte limit`);
-    return bytes;
-  }
-  const reader = response.body.getReader();
-  const chunks = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      const chunk = Buffer.from(value);
-      total += chunk.length;
-      if (total > maxBytes) {
-        await reader.cancel();
-        throw new Error(`learning URL exceeds the ${maxBytes} byte limit`);
-      }
-      chunks.push(chunk);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return Buffer.concat(chunks, total);
-}
-
-export async function fetchTextSafely(input, options = {}, dependencies = {}) {
-  const maxBytes = options.maxBytes || MAX_REMOTE_BYTES;
-  const timeoutMs = options.timeoutMs || DEFAULT_FETCH_TIMEOUT_MS;
-  const fetchImpl = dependencies.fetch || globalThis.fetch;
-  if (typeof fetchImpl !== "function") throw new Error("this Node runtime does not provide fetch");
-  let current = String(input);
-  for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
-    const url = await assertPublicHttpsUrl(current, dependencies);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    let response;
-    try {
-      response = await fetchImpl(url, {
-        redirect: "manual",
-        signal: controller.signal,
-        headers: {
-          accept: "text/html,text/plain,application/json,application/xml;q=0.9,*/*;q=0.1",
-          "user-agent": "DIRF-Learn/1.0 (+local research ingestion)",
-        },
-      });
-    } catch (error) {
-      if (error?.name === "AbortError") throw new Error(`learning URL timed out after ${timeoutMs} ms`);
-      throw new Error(`could not fetch learning URL: ${error.message}`);
-    } finally {
-      clearTimeout(timeout);
-    }
-    if (response.status >= 300 && response.status < 400) {
-      const location = responseHeader(response, "location");
-      if (!location) throw new Error(`learning URL redirect ${response.status} had no location`);
-      if (redirects === MAX_REDIRECTS) throw new Error("learning URL exceeded the redirect limit");
-      current = new URL(location, url).toString();
-      continue;
-    }
-    if (!response.ok) throw new Error(`learning URL returned HTTP ${response.status}`);
-    const declaredLength = Number(responseHeader(response, "content-length") || 0);
-    if (declaredLength > maxBytes) throw new Error(`learning URL exceeds the ${maxBytes} byte limit`);
-    const bytes = await readResponseBytes(response, maxBytes);
-    return {
-      body: bytes.toString("utf8"),
-      bytes,
-      contentType: responseHeader(response, "content-type") || "application/octet-stream",
-      finalUrl: url.toString(),
-    };
-  }
-  throw new Error("learning URL exceeded the redirect limit");
 }
 
 export function youtubeVideoId(input) {

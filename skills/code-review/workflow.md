@@ -1,17 +1,17 @@
 # Review workflow
 
-## 1. Freeze context
+## 1. Get the current PR version
 
 Resolve the canonical repository and target before analysis. Prefer immutable SHAs over branch names. Capture:
 
-- repository and PR identifier when available;
-- merge base or requested base SHA;
+- canonical repository URL and GitHub PR number;
+- current merge-base SHA;
 - exact head SHA;
 - full or incremental mode;
 - issue, specification, PR body, and repository instructions;
 - existing review comments and the latest DIRF review marker.
 
-Stop and refresh if the head changes before publication.
+Stop and refresh if the commit changes before publication.
 
 ## 2. Build the walkthrough
 
@@ -31,8 +31,45 @@ For a candidate finding, attempt to disprove it. Use static tracing, focused tes
 
 Verification is complete when each published comment has a reproducible failure path and each clean axis has enough evidence to justify its status.
 
-## 5. Publish once
+## 5. Fix, test, and review again
+
+If the validated artifact contains any P0-P3 finding, fix every finding, run the narrowest checks that prove the corrected behavior, refresh the exact head, and start a new full or justified incremental review. Do not mark the workflow done because comments were resolved or a build is green.
+
+The review ledger is the trigger for this handoff. Run `dirf review trigger
+review.json` after validation. When it returns `fix_and_update_same_pr`, pass the
+request to the harness-owned fixer. The fixer must update the same PR and base;
+DIRF compares the report targets with `dirf review verify-update
+request.json updated-review.json`. This checks artifact consistency only; the
+harness must verify the live repository, PR, base and head before re-review.
+A complete full review with passing evidence returns `verify_merge_readiness`;
+run `dirf review ready review.json` before requesting merge approval. An
+incomplete or conditional review returns `continue_review`. Neither action
+authorizes a merge or a new PR.
+
+`verify-update` is not the end of the loop. On success it emits
+`trigger_review_ledger` and the new exact head; the harness must run the review
+again and publish a fresh ledger before another fix or merge decision.
+
+The loop is complete only when the current review has no findings and the
+corrected behavior works under the applicable checks.
+
+## 6. Publish once
 
 Create the structured artifact described in `findings-contract.md`. Validate and render it with the bundled script. Re-check the remote head and existing markers immediately before posting. Publish inline comments first, then one concise summary containing the walkthrough, verification, limitations, verdict, and marker.
 
-The publication is complete when there is one review for the exact head and every inline finding also appears in the summary ledger.
+The publication is complete when there is one review for the current commit and
+every inline finding also appears in the detailed report. Publication does not
+complete the workflow while any finding remains. Record `completion` and a
+structured status for every verification in the schema-v2 `review.json`, then run
+`dirf review ready review.json` before asking to merge. When recording progress,
+store the stable PR identity with `--work-item pr:NUMBER` and the reviewed commit
+with `--review-revision SHA` so newer work can invalidate an older next step.
+The final readiness check requires a full review; incremental reports can guide
+the fix loop but cannot authorize merge approval.
+
+For an open PR, readiness also requires a clean checkout (including untracked
+files) and a live merge ref whose parents match the current PR head and base.
+These checks replace the retired review cycle's mergeability and clean-merge
+labels with Git evidence. A changed merge base requires a fresh review.
+Already-merged PRs use commit ancestry proof; local edits do not change that
+historical proof. Readiness never grants permission to merge.

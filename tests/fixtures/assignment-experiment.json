@@ -1,0 +1,47 @@
+[
+  {
+    "id": "email-preview",
+    "task": "Build an email preview for the website. Do not send email or add blockchain features.",
+    "output": "A local email preview; no email was sent.",
+    "requirements": ["Only use local fixtures.", "Do not add dependencies."],
+    "constraints": ["Build an email preview for the website. Do not send email or add blockchain features.", "A local email preview; no email was sent.", "Only use local fixtures.", "Do not add dependencies."]
+  },
+  {
+    "id": "ambiguous-objective",
+    "task": "Improve the account page only after the user explains what improvement means.",
+    "output": "An agreed objective, not an assumed redesign.",
+    "questions": ["Which account-page problem should be fixed?"],
+    "requirements": ["Do not implement before the objective is agreed."],
+    "constraints": ["Improve the account page only after the user explains what improvement means.", "An agreed objective, not an assumed redesign.", "Which account-page problem should be fixed?", "Do not implement before the objective is agreed."]
+  },
+  {
+    "id": "negation-and-exception",
+    "task": "Never delete account records except the explicitly approved fixture record.",
+    "output": "Only fixture record acct-007 removed; all other records unchanged.",
+    "requirements": ["No production access.", "Keep 2 recent results for 24 hours."],
+    "constraints": ["Never delete account records except the explicitly approved fixture record.", "Only fixture record acct-007 removed; all other records unchanged.", "No production access.", "Keep 2 recent results for 24 hours."]
+  },
+  {
+    "id": "human-approval",
+    "task": "Prepare a reversible schema change, but do not apply it.",
+    "output": "A reviewed migration and rollback plan, not a deployed migration.",
+    "requirements": ["Obtain explicit human approval before any database mutation."],
+    "phases": ["prepare", "human approval", "verify"],
+    "gates": {"human approval": {"kind": "decision"}, "verify": {"kind": "verify", "verify": "node --test"}},
+    "constraints": ["Prepare a reversible schema change, but do not apply it.", "A reviewed migration and rollback plan, not a deployed migration.", "Obtain explicit human approval before any database mutation.", "2. human approval (decision gate)", "> Verify verify: `node --test`"]
+  },
+  {
+    "id": "exact-technical-text",
+    "task": "Diagnose error `E_ACCESS_DENIED: token missing` in C:\\projects\\mail\\src\\client.js; do not invent credentials.",
+    "output": "A diagnosis citing `E_ACCESS_DENIED: token missing` without exposing a secret.",
+    "requirements": ["Preserve command `node --test tests/mail.test.js` exactly.", "Do not change `if (!token) throw new Error(\"token missing\");`."],
+    "constraints": ["Diagnose error `E_ACCESS_DENIED: token missing` in C:\\projects\\mail\\src\\client.js; do not invent credentials.", "A diagnosis citing `E_ACCESS_DENIED: token missing` without exposing a secret.", "Preserve command `node --test tests/mail.test.js` exactly.", "Do not change `if (!token) throw new Error(\"token missing\");`."]
+  },
+  {
+    "id": "execution-receipts-unicode",
+    "task": "Verify résumé email preview for Zoë. Installed or selected does not mean executed.",
+    "output": "Actual instruction-read, invocation, and completion receipts; no activation inferred from metadata.",
+    "requirements": ["Record the parent attempt ID and exactly one next action.", "Record the failing TDD check before its passing check."],
+    "constraints": ["Verify résumé email preview for Zoë. Installed or selected does not mean executed.", "Actual instruction-read, invocation, and completion receipts; no activation inferred from metadata.", "Record the parent attempt ID and exactly one next action.", "Record the failing TDD check before its passing check."]
+  }
+]

@@ -16,6 +16,8 @@ function fixture() {
   const root = mkdtempSync(join(tmpdir(), "filing-cabinet-"));
   const wts = mkdtempSync(join(tmpdir(), "filing-cabinet-wts-"));
   git(root, ["init", "-q", "-b", "main"]);
+  git(root, ["config", "user.name", "DIRF test"]);
+  git(root, ["config", "user.email", "dirf-test@example.test"]);
   writeFileSync(join(root, "base.txt"), "base\n");
   git(root, ["add", "."]);
   git(root, ["commit", "-q", "-m", "base"]);

@@ -18,6 +18,32 @@ pre-cutover artifact or a migration backup. Reading it directly is how state
 context. That exact failure has broken real multi-session work before. Don't
 repeat it.
 
+## How a fresh agent discovers DIRF
+
+You should never have to grep a repo for "dirf" to find its state. Three
+surfaces make discovery automatic, in order of strength:
+
+1. **SessionStart hook.** `dirf host setup --settings <settings.json>` merges a
+   SessionStart hook (`node …/src/cli.js state active --hook`) into the host's
+   settings, adapting to the file's existing schema — Claude Code/Codex-style
+   `hooks.<Event>` or ZCode-style `hooks.events.<Event>` (setting
+   `hooks.enabled = true` when the ZCode shape requires it). Every new session
+   then receives a small envelope: active attempt + phase + exact next action +
+   lazy paths, or idle/conflict instructions. This is the strongest surface
+   because it costs the agent nothing.
+2. **In-repo bootstrap block.** `dirf setup` appends a marker-guarded block to
+   the project's `AGENTS.md` and context file. It names the one command that
+   matters (`dirf state active`), the canonical store path for this project,
+   and the `resume`/handoff commands. Append-only and idempotent — existing
+   content is never rewritten.
+3. **Global `dirf` skill.** `dirf host setup` also installs a machine-wide
+   `dirf` skill (default `~/.zcode/skills/dirf/SKILL.md`) any agent can invoke
+   from any repo; it teaches the same bootstrap in five lines.
+
+`dirf host hook-snippet` prints the hook JSON without touching anything, and
+`dirf state which` prints the canonical handoff path alongside the slug and
+store path.
+
 ## Setup (one-time, per machine)
 
 `dirf` is a shell function/alias pointing at `node <path-to-DIRF>/src/cli.js`.
@@ -32,22 +58,33 @@ node /path/to/DIRF/src/cli.js state which
 
 ## Session lifecycle
 
-### 1. Orient (start of every session)
+### 1. Resolve responsibility (start of every session)
 
 ```bash
-dirf state which              # confirm which project this checkout resolves to
-dirf state read-handoff       # the canonical handoff — read this FIRST
-dirf state list-attempts      # see prior runs
+dirf state active
 ```
 
-`dirf state which` tells you the slug and store path. The slug is derived from
-`git rev-parse --git-common-dir`, so **the main tree and any worktree resolve to
-the same store entry** — you'll get the same handoff regardless of which
-checkout you start in. That's the point.
+This bounded query reports one of three states without loading the portfolio or
+full handoffs:
 
-`dirf state read-handoff` prints the canonical handoff. This is your starting
-context: objective, current phase, what's done, decisions, blockers, the exact
-next action. Treat it as authoritative.
+- **idle** — DIRF is available and new work can be routed normally;
+- **active** — one in-progress attempt owns this checkout; reuse it instead of
+  building a duplicate;
+- **conflict** — multiple attempts claim the checkout; stop and select one
+  explicitly instead of choosing the latest.
+
+`dirf resume <id>` is the claim operation. It starts a planned attempt and
+binds it to the current Git worktree. Blocking or completing it makes the
+checkout idle again.
+
+Use `dirf state which`, `state read-handoff`, and `state list-attempts` for
+diagnosis or recovery, not as an unconditional session bootstrap. The project
+slug still comes from `git rev-parse --git-common-dir`, so every worktree shares
+canonical project state while responsibility remains checkout-scoped.
+
+Hosts with session hooks can run `dirf state active --hook`. The command emits
+the small `SessionStart` context envelope directly; it contains the active
+phase, exact next action, and lazy paths to the workflow and attempt handoff.
 
 ### 2. Plan / start a workflow
 
@@ -61,11 +98,26 @@ the store at `~/.dirf/projects/<slug>/attempts/<id>/`. It prints the attempt id.
 Open that attempt's `README.md` — it's the operating workflow (ordered phases,
 agent roles, done-when checks, policy). Execute it one phase at a time.
 
+An entrypoint alone does not prove that a skill is runnable. See
+[Declare required skill resources](writing-great-playbooks.md#declare-required-skill-resources)
+for the readiness and routing contract.
+
 To see the routed skill flow without building:
 
 ```bash
 dirf flow "<task>"
 ```
+
+**Optional: diagnostic preflight model advice.** Add `--models <file>` to `build`,
+`plan`, `create`, or `flow` when the host can provide a portable catalog:
+
+```json
+{"models":[{"name":"fast-model","cost_tier":"low","capabilities":["testing"]}]}
+```
+
+DIRF records a suggestion for capabilities known before work begins, or says
+that advice is unavailable. See the [model-advice contract](../skills/model-advice/README.md)
+for the matching rules, recorded evidence, and boundaries.
 
 **Optional: project playbooks.** `dirf build|plan|create ... --playbooks <dir>`
 lets one explicitly supplied directory of playbooks participate in routing,
@@ -97,14 +149,36 @@ user-owned, per the Decision Ownership policy), `soft` (tracked; enforced only
 with `--strict`). Record them explicitly:
 
 ```bash
-dirf attempt advance <id> --evidence "<verify command>" [--output F]   # verify gates
-dirf attempt gate <id> "<phase>" accept|deny --comment "…"             # decision gates (deny requires a comment)
-dirf attempt advance <id> --auto [--strict]                            # cross covered phases, stop at gates
+dirf attempt advance <id> --run "<verify command>"   # verify gates — the CLI runs the command and records exit code + output digest
+dirf attempt gate <id> "<phase>" accept|deny --comment "…"   # decision gates (deny requires a comment)
+dirf attempt advance <id> --auto [--strict]          # cross covered phases, stop at gates (--run cannot combine with --auto)
 ```
 
-`dirf resume` lists any **pending gates** first so you reconcile them before
-continuing, and replays recorded evidence for completed phases instead of
-re-running them.
+Gates are deterministic: a verify gate opens only on a run the CLI executed
+with exit 0 (or a built-in `check` the CLI ran itself). Completion also requires
+a current task handoff with the matching task ID and phase. Legacy handoffs
+without a task ID use the canonical handoff freshness check. Legacy `--evidence "text"` still crosses mid-flow gates
+for in-flight attempts, but it can never complete a gated attempt — the error
+says to abandon and restart — and such attempts project as `unaudited`. Every
+shipped playbook ends its final phase in a user-owned decision gate, so a
+gated attempt cannot complete without a recorded human accept.
+
+Decision gate records keep `by` — the human the decision belongs to — separate
+from `recorded_by` — the harness and session that executed the command.
+Identity resolves explicit-over-detected: `DIRF_HARNESS` / `DIRF_SESSION_ID` /
+`DIRF_MODEL` win, then session-scoped harness markers (`CODEX_THREAD_ID`,
+`CLAUDECODE`/`CLAUDE_CODE_ENTRYPOINT`, `CURSOR_AGENT`/`CURSOR_TRACE_ID`;
+`ANTHROPIC_MODEL` fills the model), then the dot-folder scan (`.claude`,
+`.codex`, `.cursor`, `.zcode`, `.opencode`). When a session or model resolves
+but no harness does, the harness is recorded as `unknown`. `dirf setup` prints
+what it detects.
+
+`dirf resume` shows the current task, stage, next action, file paths, and pending
+check count. Use `--full` to read project context, the gate list, and recorded
+evidence. The JSON view retains its complete contract. A soft gate crossed
+without evidence is reported as `passed`;
+it is history, not a pending blocker. Use `--strict` when soft gates must require
+evidence before they can be crossed.
 
 ### Typed artifacts
 
@@ -122,9 +196,18 @@ Metadata requires a stable `id`, a supported `type`, and an attempt-relative
 types are `source`, `research_questions`, `research`, `lesson`, `design`,
 `structure`, `plan`, `implementation_evidence`, and `plan_delta`. Recording
 never implies acceptance. New acceptances bind the exact artifact bytes with
-`accepted_sha256`; historical accepted artifacts without a digest remain valid.
+`accepted_sha256`; historical accepted artifacts without a digest remain valid
+for gates that only require acceptance. Any gate declaring
+`artifact_type: "implementation_evidence"` requires the digest: a historical
+accepted evidence artifact without one reports as pending until a SHA-bound
+superseding artifact is accepted.
 When a decision gate declares `artifact_type`, both its accepted
 decision record and the governing accepted artifact are required to advance.
+A verify gate may opt into `artifact_type: "implementation_evidence"`; that
+gate requires both its exact command-match evidence record and the governing
+accepted, SHA-bound implementation-evidence artifact. Other artifact types
+remain decision-only, soft gates remain artifact-free, and verify gates without
+`artifact_type` keep their existing command-evidence behavior.
 For `plan_delta`, the referenced JSON must name the governing accepted plan and
 contain all four evidence buckets: `implemented_as_planned`, `additions`,
 `omissions`, and `unverifiable`.
@@ -138,20 +221,17 @@ bound as evidence exactly like an accepted experiment.
 To resume an attempt later:
 
 ```bash
-dirf resume <name-or-id>     # prints that attempt's workflow + handoff
+dirf resume <name-or-id>          # claim the task and show its next action
+dirf resume <name-or-id> --full   # include project context and evidence
 ```
 
-### 4. Write the canonical handoff back (end of session)
+### 4. Save the task handoff (end of session)
 
-This is the step that prevents drift for the next agent. When you stop, capture
-the current state into the **canonical project handoff** so whoever (or whatever)
-runs next — in this checkout, a worktree, or a fresh session — starts from
-reality. Write it **before** switching sessions, agents, or worktrees — the
-handoff comes first, the switch after (workflow policy: Handoff-Before-Switch):
+Before you stop or switch sessions, save the result and next action for the
+task you own. Use the existing task ID and current phase:
 
 ```bash
-# Write your updated handoff to a file, then promote it to the canonical store:
-dirf state write-handoff --file new-handoff.md
+dirf record-progress "Result and evidence" --attempt <id> --phase "<current phase>" --next "<one next action>"
 ```
 
 The handoff should contain: objective, current phase, what you completed this
@@ -159,30 +239,48 @@ session (with file refs, not duplicated content), decisions/assumptions,
 changed files, validation status, blockers, and the **exact next action**.
 Reference existing specs/tickets/decisions rather than restating them.
 
+If DIRF says the task was saved but the shared summary was unchanged, keep the
+saved checkpoint. Do not repeat it or overwrite another task's summary to
+finish your task. The command still exits with code 1 for this partial result.
+Use `state write-handoff --file F` only when you intend to replace the shared
+summary and have reconciled its existing owner and content.
+
 ## Commands at a glance
 
 | Command | Purpose |
 |---|---|
-| `dirf state which` | which project am I in? (slug + store path) |
-| `dirf state read-handoff` | print the canonical handoff (read this first) |
+| `dirf state which` | which project am I in? (slug + store path + canonical handoff path) |
+| `dirf state read-handoff` | read the project-wide handoff for diagnosis or recovery |
 | `dirf state write-handoff --file F` | write the canonical handoff (end of session) |
 | `dirf state list-attempts` | prior runs for this project |
 | `dirf state get-attempt <id>` | one attempt's detail |
+| `dirf state active [--json\|--hook]` | checkout-scoped idle, active, or conflict state |
 | `dirf build <name> "<task>"` | route a task → instruction set in the store |
-| `dirf learn [URL\|FILE\|TEXT]` | ingest one authorized source, prepare an approvable recommendation, then allow at most one accepted reversible experiment |
-| `dirf resume <name-or-id>` | load one attempt's workflow + handoff (lists pending gates) |
-| `dirf attempt advance <id> [--evidence "CMD"] [--output F] [--strict] [--auto]` | advance one phase (gates enforced); `--auto` crosses covered phases and stops at gates |
+| `dirf learn [URL\|FILE\|TEXT]` | ingest one authorized source; a connected agent continues through read-only analysis to the decision gate without another user command |
+| `dirf resume <name-or-id> [--full]` | show the task and next action; `--full` includes project context and evidence |
+| `dirf attempt advance <id> [--run "CMD" \| --evidence "TEXT"] [--strict] [--auto]` | advance one phase (gates enforced); `--run` makes the CLI execute the command and record exit code + output digest; `--auto` crosses covered phases and stops at gates |
+| `dirf attempt complete <id> --confirm [--run "CMD"]` | complete from the final phase after accepted decisions, required captured checks, and a current task handoff |
 | `dirf attempt gate <id> <phase> accept\|deny [--comment "…"]` | record a user-owned decision on a decision-gated phase (deny requires a comment) |
 | `dirf attempt block <id> --reason R [--wait input\|blocker]` | block an attempt; `--wait input` marks it as awaiting user input |
+| `dirf attempt observe <id> [--execution-status active\|idle\|unknown] [--file SNAPSHOT]` | trusted harness adapter refreshes the orchestrator-owned execution snapshot; requires `DIRF_ORCHESTRATOR_TOKEN` |
+| `dirf attempt abandon <id> --reason "..."` | explicitly abandon an unfinished Attempt; requires the pre-bound `DIRF_ORCHESTRATOR_TOKEN` |
 | `dirf artifact record <id> --file F` | validate and record one typed artifact metadata object (`add` is an alias) |
 | `dirf artifact list <id> [--json]` | list artifacts and governing accepted versions |
 | `dirf artifact accept <id> <artifact-id>` | explicitly accept a recorded artifact |
+| `dirf review validate <review.json>` | validate a review artifact |
+| `dirf review render <review.json>` | render a review artifact as Markdown |
+| `dirf review ready <review.json>` | fail closed unless the exact PR is merge-ready |
+| `dirf review trigger <review.json>` | emit a fix, continued review, or live-readiness check action |
+| `dirf review verify-update <request.json> <updated-review.json>` | compare artifact targets and emit a re-review trigger; the harness must verify the live PR head |
 | `dirf list` | list attempts (alias for state list-attempts scoped here) |
 | `dirf state list` | all registered projects (works from anywhere) |
-| `dirf portfolio` | cross-project status view: every project + attempt classified active/stale/completed/archived/empty |
-| `dirf project complete\|archive\|reopen\|status` | explicit project status override (derived classification otherwise) |
+| `dirf portfolio` | cross-project status view: every project + attempt classified active/idle/stale/completed/archived/empty |
+| `dirf project status [--json]` | reconciled project work view; JSON contains every attempt and continuation handoff |
+| `dirf project complete\|archive\|reopen` | explicit project status override (derived classification otherwise) |
 | `dirf export obsidian` | render the portfolio into an Obsidian vault (notes + canvas dashboard) |
 | `dirf export graphify` | render the portfolio as a graphify graph + interactive HTML |
+| `dirf host setup [--settings FILE] [--skill-dir DIR] [--skip-hook] [--skip-skill] [--force]` | one-time host bootstrap: SessionStart hook + global dirf skill |
+| `dirf host hook-snippet` | print the SessionStart hook JSON only |
 | `dirf skills scan` | show installed skills + resolved refs on this host |
 | `dirf validate` | validate registries + workflows |
 
@@ -240,17 +338,88 @@ state which` resolves to the same store entry as the main tree (via
 per-worktree setup, no per-worktree state. Two agents in two worktrees of the
 same repo see each other's handoff updates through the store.
 
+## Live work registry
+
+`dirf project status --json` reconciles every Attempt in the current Project.
+Each item keeps lifecycle state separate from observed runtime state and shows
+the current harness session, worktree, Attempt Handoff, and exact next action.
+
+Before any agents run, the trusted harness generates a high-entropy
+`DIRF_ORCHESTRATOR_TOKEN` and binds it through the normal idempotent setup path:
+
+```bash
+DIRF_ORCHESTRATOR_TOKEN=<secret> dirf setup <project-path>
+```
+
+Observation cannot create or replace this authority record. The adapter keeps
+the token stable for the Project and does not pass it to child agents. It then
+reports ownership through one small command, providing its identity through
+`DIRF_HARNESS` and `DIRF_SESSION_ID`; Codex may use `CODEX_THREAD_ID` instead:
+
+```bash
+DIRF_HARNESS=<name> DIRF_SESSION_ID=<id> DIRF_ORCHESTRATOR_TOKEN=<secret> \
+  dirf attempt observe <attempt> --execution-status active --worktree <path>
+```
+
+`active` means the observation is fresh; it expires after five minutes without
+a refresh. An old or missing observation never proves that work is running. A
+fresh owner cannot be replaced by a different session, even with a transfer
+reason. Once the owner is dormant, changing the owning session for that same
+Attempt requires `--transfer-reason "..."`; DIRF records the previous owner and
+reason rather than treating expiry as permission to take over. A worktree or
+branch tied to another unfinished Attempt remains unavailable until that Attempt
+is explicitly abandoned.
+
+The orchestrator is the sole registry writer. It tells every child agent to
+report its session, assignment, state, result, blocker, and handoff back to the
+orchestrator. The adapter may submit those reports atomically with `--file`:
+
+```json
+{
+  "children": [
+    {
+      "session_id": "child-17",
+      "assignment": "Check the API contract",
+      "status": "completed",
+      "result": "Contract verified"
+    }
+  ]
+}
+```
+
+Child status is bounded data, not authority: children do not call DIRF state
+commands. Trusted setup pins only the token hash in the Project store; later
+execution writes require the matching capability. A child marked
+`blocked` changes the parent view only when the
+orchestrator also sets `"blocks_parent": true`; child completion never completes
+the Attempt. The owning adapter may use
+`dirf attempt abandon <id> --reason "..."` with the same capability for explicit
+abandonment; `dirf attempt reopen <id>` resumes it. DIRF never infers abandonment
+from a stale heartbeat.
+
+This guard prevents unauthorized CLI takeover. It is not a security boundary
+against a process that can freely edit the DIRF store; harnesses must keep the
+token and canonical state mutation tools out of untrusted child sandboxes.
+
+Codex refreshes automatically when `CODEX_THREAD_ID` and
+`DIRF_ORCHESTRATOR_TOKEN` are present during `dirf state active`. Other harnesses
+set `DIRF_HARNESS`, `DIRF_SESSION_ID`, `DIRF_ORCHESTRATOR_TOKEN`, and optional
+`DIRF_EXECUTION_STATUS` before the same startup command.
+
 ## Portfolio (cross-project overview)
 
 `dirf portfolio` shows **every registered project on the machine**, not just the
 one you're in — useful at session start to see what's live, what's abandoned,
 and what's finished:
 
-- **active** — open work (in_progress/blocked attempts) or activity within the
-  staleness threshold (`settings set --stale-project-days N`, default 30).
+- **active** — at least one Attempt has a fresh harness observation reporting
+  active work.
+- **idle** — unfinished work exists, but no fresh harness observation reports
+  active work.
 - **completed** — all tracked attempts done, or the canonical handoff carries
   `## Status: Complete.`
-- **stale** — nothing open and no activity past the threshold.
+- **stale** — no live work and no project activity past the threshold;
+  abandonment is never inferred.
 - **archived** / **empty** — explicitly parked, or registered with no attempts.
 
 Status is derived from store data, so it can't drift; `dirf project
@@ -260,7 +429,8 @@ form — the flow-board desktop app consumes the same shape.
 
 Status is **evidence-aware**: an attempt whose HANDOFF.md carries a completion
 marker (`## Status: Complete.` or a filled-in `## Completed` section) is
-reported as `done` even when its lifecycle was never updated. If past sessions
+reported as `done` even when its lifecycle was never updated, provided its
+workflow has no pending gates. If past sessions
 did the work without updating lifecycle state, promote the evidence once:
 
 ```bash
@@ -270,9 +440,20 @@ dirf attempt sync-from-handoff            # backfill done status from handoff ev
 And keep it honest going forward — `dirf resume` auto-starts a planned attempt,
 and `dirf record-progress "what changed" --attempt <id> --phase X --next "next step"`
 advances that attempt's lifecycle to match the phase being reported (start →
-in_progress → advance). `--attempt` may be omitted only when the project has zero
+in_progress → advance). A checkpoint may name only the current phase or its
+immediate successor, and a rejected checkpoint writes nothing — no progress
+section, no consumed update number — so a corrected retry cannot duplicate an
+entry. `--attempt` may be omitted only when the project has zero
 or one attempt; use the full attempt ID when a name is reused. Explicit
 completion (`dirf attempt complete --confirm`) stays a deliberate final gate.
+If the final phase declares a verify command, cross it with
+`--run "<exact command>"` so the CLI captures the exit code — typed
+`--evidence` text cannot complete a gated attempt. Final decision and
+artifact gates must also be satisfied, and the canonical handoff must be at
+least as fresh as the last phase write, before completion succeeds. If a
+process dies mid-checkpoint, the update journals to `.pending-progress.json`
+in the store and replays under the progress lock on the next handoff read or
+write; a replay failure names that journal file.
 
 To hand the portfolio to a human: `dirf export obsidian` writes notes + a
 color-coded `.canvas` dashboard into the active Obsidian vault, and `dirf export
@@ -317,11 +498,12 @@ dirf state migrate-cleanup     # removes migration backups once the store looks 
 - **Copying a handoff between checkouts by hand.** Unnecessary — both checkouts
   share the store entry. Write once, read from either.
 - **Treating the per-attempt `HANDOFF.md` as the project handoff.** The attempt
-  handoff is run-scoped (for resuming that attempt via `dirf resume`). The
-  canonical project handoff (`dirf state read/write-handoff`) is what the next
-  session should read.
-- **Starting work without reading the canonical handoff.** Always
-  `dirf state read-handoff` first — it's the current truth.
+  handoff is run-scoped. The canonical handoff is project-wide state, but normal
+  startup still begins with `dirf state active` so DIRF can name the right
+  workflow and handoff for the current checkout.
+- **Starting work without resolving checkout responsibility.** Run
+  `dirf state active` first. Reuse the reported active attempt, build new work
+  only when idle, and never select the latest attempt automatically.
 
 ## Zero dependencies
 

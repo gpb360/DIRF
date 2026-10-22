@@ -1,11 +1,12 @@
 // Skill discovery tests via node:test. Run: npm run test:skills
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ROOT } from "../src/paths.js";
 import * as skills from "../src/skills.js";
+import { buildFlow } from "../src/flow.js";
 
 function makeRoot() {
   // Fresh temp project root with a skills/ folder.
@@ -26,6 +27,24 @@ test("discover finds local SKILL.md skills", () => {
   const idx = skills.discover(root);
   assert.ok("demo-skill" in idx);
   assert.equal(idx["demo-skill"].description, "a demo");
+});
+
+test("discover distinguishes runnable skills from incomplete packages", () => {
+  const root = makeRoot();
+  const ready = join(root, "skills", "ready-skill");
+  const broken = join(root, "skills", "broken-skill");
+  write(ready, "SKILL.md",
+    "---\nname: ready-skill\ndescription: ready\nmetadata: {\"required_files\":[\"scripts/run.cjs\"]}\n---\nbody");
+  write(join(ready, "scripts"), "run.cjs", "console.log('ready');\n");
+  write(broken, "SKILL.md",
+    "---\nname: broken-skill\ndescription: broken\nmetadata: {\"required_files\":[\"scripts/run.cjs\"]}\n---\nbody");
+
+  const idx = skills.discover(root);
+  assert.equal(idx["ready-skill"].readiness, "ready");
+  assert.deepEqual(idx["ready-skill"].required_files, ["scripts/run.cjs"]);
+  assert.equal(idx["ready-skill"].missing_files, undefined);
+  assert.equal(idx["broken-skill"].readiness, "incomplete");
+  assert.deepEqual(idx["broken-skill"].missing_files, ["scripts/run.cjs"]);
 });
 
 test("discover reads skill.json when no SKILL.md (ui-ux-pro-max case)", () => {
@@ -59,6 +78,24 @@ test("resolve marks installed vs recommended without persisting runtime paths", 
   assert.equal(byName.ponytail.provider, "agents");
   assert.equal(byName.impeccable.status, "recommended");
   assert.equal(byName.impeccable.path, undefined);
+});
+
+test("resolve reports an incomplete installed package without hiding its missing resources", () => {
+  const discovered = {
+    "broken-skill": {
+      name: "broken-skill",
+      path: "/skills/broken-skill",
+      file: "SKILL.md",
+      description: "broken",
+      provider: "agents",
+      readiness: "incomplete",
+      missing_files: ["scripts/run.cjs"],
+    },
+  };
+  const [resolved] = skills.resolveAgentSkills("worker", ["broken-skill"], [], discovered);
+  assert.equal(resolved.status, "incomplete");
+  assert.deepEqual(resolved.missing_files, ["scripts/run.cjs"]);
+  assert.equal(resolved.path, undefined);
 });
 
 test("resolve dedupes baseline and agent-specific", () => {
@@ -107,7 +144,7 @@ test("bundledSkills exposes kit units with declared capabilities", () => {
   assert.ok(bundled["minimal-implementation"].body_lines > 0, "bundled entries carry body size for the lint");
 });
 
-test("discover indexes invocation class from disable-model-invocation", () => {
+test("discover indexes invocation class from Claude and Codex metadata", () => {
   const root = makeRoot();
   write(join(root, "skills", "user-skill"), "SKILL.md",
     "---\nname: user-skill\ndescription: A one-line summary for a person.\ndisable-model-invocation: true\n---\nRun a session.");
@@ -115,11 +152,42 @@ test("discover indexes invocation class from disable-model-invocation", () => {
     "---\nname: model-skill\ndescription: Use when the user mentions X or Y.\n---\nbody");
   write(join(root, "skills", "yes-skill"), "SKILL.md",
     "---\nname: yes-skill\ndescription: d\nuser-invocable: false\ndisable-model-invocation: yes\n---\nbody");
+  write(join(root, "skills", "codex-user"), "SKILL.md",
+    "---\nname: codex-user\ndescription: Human-only in Codex.\n---\nbody");
+  write(join(root, "skills", "codex-user", "agents"), "openai.yaml",
+    "interface:\n  display_name: Codex User\npolicy:\n  allow_implicit_invocation: false\n");
+  write(join(root, "skills", "codex-model"), "SKILL.md",
+    "---\nname: codex-model\ndescription: Model-routable in Codex.\n---\nbody");
+  write(join(root, "skills", "codex-model", "agents"), "openai.yaml",
+    "policy:\n  allow_implicit_invocation: true\n");
   const idx = skills.discover(root);
   assert.equal(idx["user-skill"].invocation, "user");
   assert.equal(idx["model-skill"].invocation, "model");
   // tolerant boolean: "yes" counts as true
   assert.equal(idx["yes-skill"].invocation, "user");
+  assert.equal(idx["codex-user"].invocation, "user");
+  assert.equal(idx["codex-model"].invocation, "model");
+});
+
+test("an unknown human router keeps declared capabilities and binds its engine", () => {
+  const root = makeRoot();
+  write(join(root, "skills", "clarity-checkpoint"), "SKILL.md",
+    "---\nname: clarity-checkpoint\ndescription: Human-only decision checkpoint.\ndisable-model-invocation: true\ncapabilities: [\"plan interview\"]\n---\nRun `/clarity-engine`.");
+  write(join(root, "skills", "clarity-engine"), "SKILL.md",
+    "---\nname: clarity-engine\ndescription: Resolve planning decisions one at a time.\n---\nAsk one question.");
+
+  const discovered = skills.discover(root);
+  assert.deepEqual(discovered["clarity-checkpoint"].capabilities, ["plan interview"]);
+  const flow = buildFlow({
+    playbook: "improve-plan",
+    agents: [],
+    skill_flow: {
+      label: "decide",
+      steps: [{ stage: "decide", capability: "plan interview", reason: "Resolve decisions" }],
+    },
+  }, { task: "use clarity checkpoint before implementation" }, discovered);
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["clarity-checkpoint", "clarity-engine"]);
+  assert.deepEqual(flow.gaps, []);
 });
 
 test("discover indexes progressive-disclosure files and body size", () => {
@@ -178,6 +246,7 @@ test("lintSkillMetadata surfaces spec-level quality warnings, never false on cle
   assert.ok(skills.lintSkillMetadata({ name: "x", path: "/s/x", description: `d${"x".repeat(1025)}` }).some((w) => /spec cap 1024/.test(w)));
   assert.ok(skills.lintSkillMetadata({ name: "x", path: "/s/x", description: "d", body_lines: 501 }).some((w) => /keep under 500/.test(w)));
   assert.ok(skills.lintSkillMetadata({ name: "x", path: "/s/x", description: "d <xml>tag</xml>" }).some((w) => /XML tags/.test(w)));
+  assert.ok(skills.lintSkillMetadata({ name: "x", path: "/s/x", description: "d", readiness: "incomplete", missing_files: ["scripts/run.cjs"] }).some((w) => /missing required files: scripts\/run\.cjs/.test(w)));
 });
 
 test("tokenBudget reports metadata vs eager-load economics", () => {
@@ -212,4 +281,34 @@ test("discoverAgents indexes project agent files but never the kit's bundled age
   const bundledRoot = join(ROOT, "agents").replace(/\\/g, "/");
   const kitIdx = skills.discoverAgents();
   assert.equal(Object.values(kitIdx).some((a) => String(a.path).startsWith(bundledRoot + "/")), false);
+});
+
+test("a required_files declaration the parser cannot read is flagged, never silent", () => {
+  const root = makeRoot();
+  write(join(root, "skills", "block-yaml-skill"), "SKILL.md",
+    "---\nname: block-yaml-skill\ndescription: declares required files in block YAML\nmetadata:\n  required_files:\n    - scripts/missing.md\n---\nbody");
+  const idx = skills.discover(root);
+  const entry = idx["block-yaml-skill"];
+  assert.equal(entry.required_files_unreadable, true, "unreadable declaration must be flagged on the index entry");
+  assert.equal(entry.readiness, undefined, "an unreadable declaration must not manufacture a readiness verdict");
+  const warnings = skills.lintSkillMetadata(entry);
+  assert.ok(
+    warnings.some((warning) => /required_files is declared but cannot be read/.test(warning)),
+    `lint must surface the unreadable declaration, got: ${JSON.stringify(warnings)}`,
+  );
+});
+
+test("an in-folder symlinked required file resolves through containment", () => {
+  const root = makeRoot();
+  const folder = join(root, "skills", "linked-skill");
+  write(folder, "SKILL.md",
+    "---\nname: linked-skill\ndescription: uses a symlink\nmetadata: {\"required_files\": [\"link.md\"]}\n---\nbody");
+  write(folder, "real.md", "real bytes");
+  try {
+    symlinkSync(join(folder, "real.md"), join(folder, "link.md"), "file");
+  } catch {
+    return; // symlink privileges unavailable in this environment
+  }
+  const idx = skills.discover(root);
+  assert.equal(idx["linked-skill"].readiness, "ready", "an in-folder symlink must not be reported missing");
 });

@@ -1,7 +1,7 @@
 ---
 name: to-spec
 kind: skill
-description: "Synthesize approved conversation and repository context into a build-ready specification"
+description: "Write an implementation specification from approved decisions and repository facts"
 uses: []
 details: []
 inputs: ["approved decisions", "repository context"]
@@ -9,6 +9,7 @@ outputs: ["specification"]
 capabilities: ["specification synthesis"]
 ---
 
-# To spec
+# Write a specification
 
-Synthesize the agreed problem, solution, user stories, implementation decisions, testing seams, and exclusions. Do not reopen settled discovery.
+Describe the agreed problem, solution, user stories, implementation choices,
+tests, and exclusions. Preserve decisions that have already been accepted.
