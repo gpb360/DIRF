@@ -177,6 +177,237 @@ test("HTML comments cannot declare governing requirement identities", async t =>
   });
 });
 
+const visibleRequirementTable = "## Requirements\n| ID | Requirement |\n| --- | --- |\n| R1 | Visible requirement |\n";
+const hiddenRequirementTable = "## Requirements\n| ID | Requirement |\n| --- | --- |\n| HIDDEN | Literal HTML content |\n";
+
+function verifyHtmlRequirementBoundary(t, planText) {
+  const f = fixture(t, { planText });
+  f.progress(f.update());
+  const summary = attemptSummary(f.slug, f.attempt.id);
+  assert.deepEqual(summary.requirements.items.map(entry => entry.source.requirement_id), ["R1"]);
+  assert.equal(summary.requirements.items[0].verification, "verified");
+  assert.equal(summary.evidence_completeness, "verified");
+  const invalid = f.update(); invalid.requirements[0].requirement_id = "HIDDEN";
+  const before = snapshot(f);
+  assert.throws(() => f.progress(invalid), /must exist in the governing plan/);
+  assert.deepEqual(snapshot(f), before);
+}
+
+test("raw HTML blocks cannot declare governing requirement identities", async t => {
+  const cases = [
+    ...["pre", "script", "style", "textarea"].map(tag => [tag, `<${tag}>\n${hiddenRequirementTable}</${tag}>\n`]),
+    ["mixed case with attributes", `<sCrIpT type='text/plain'>\n${hiddenRequirementTable}</ScRiPt>\n`],
+    ["multiline literal opener", `<textarea\nclass='example'>\n${hiddenRequirementTable}</textarea>\n`],
+    ["blank lines in literal block", `<pre>\n\n${hiddenRequirementTable}\n</pre>\n`],
+    ["unmatched backtick cannot swallow literal block", `An unmatched \` marker.\n<script>\nLiteral \` marker\n${hiddenRequirementTable}</script>\n`],
+    ["ordinary block", `<div hidden>\n${hiddenRequirementTable}</div>\n`],
+    ["ordinary closed opener still needs blank boundary", `<div></div>\n${hiddenRequirementTable}`],
+    ["mixed case table block", `  <TaBlE>\n${hiddenRequirementTable}</TABLE>\n`],
+    ["closing block tag", `</section>\n${hiddenRequirementTable}`],
+    ["incomplete block opener", `<section\ndata-example=true>\n${hiddenRequirementTable}`],
+    ["complete custom tag", `<custom-element data-note='example'>\n${hiddenRequirementTable}</custom-element>\n`],
+    ["quoted attribute delimiter", `<span data-note='literal > delimiter'>\n${hiddenRequirementTable}</span>\n`],
+    ["complete generic closing tag", `</custom-element>\n${hiddenRequirementTable}`],
+    ["processing instruction", `<?example\n${hiddenRequirementTable}?>\n`],
+    ["declaration", `<!DOCTYPE\n${hiddenRequirementTable}>\n`],
+    ["CDATA", `<![CDATA[\n${hiddenRequirementTable}]]>\n`],
+  ];
+  for (const [name, block] of cases) await t.test(name, t => {
+    verifyHtmlRequirementBoundary(t, visibleRequirementTable + "\n" + block);
+  });
+});
+
+test("unclosed raw HTML blocks do not regain Markdown authority at EOF", async t => {
+  const cases = [
+    ...["pre", "script", "style", "textarea"].map(tag => [tag, `<${tag}>\n\n${hiddenRequirementTable}`]),
+    ["ordinary block", `<div>\n${hiddenRequirementTable}`],
+    ["generic block", `<custom-element>\n${hiddenRequirementTable}`],
+    ["processing instruction", `<?example\n\n${hiddenRequirementTable}`],
+    ["declaration", `<!DOCTYPE\n${hiddenRequirementTable}`],
+    ["CDATA", `<![CDATA[\n\n${hiddenRequirementTable}`],
+  ];
+  for (const [name, block] of cases) await t.test(name, t => {
+    verifyHtmlRequirementBoundary(t, visibleRequirementTable + "\n" + block);
+  });
+});
+
+test("visible requirements resume only after the raw HTML block boundary", async t => {
+  const cases = [
+    ...["pre", "script", "style", "textarea"].map(tag => [tag, `<${tag}>\n${hiddenRequirementTable}</${tag}>\n`]),
+    ["literal same-line close", "<pre>Example</PRE>\n"],
+    ["literal closing condition need not match opener", `<pre>\n${hiddenRequirementTable}</STYLE>\n`],
+    ["ordinary blank-line boundary", `<div>\n${hiddenRequirementTable}</div>\n\n`],
+    ["unclosed ordinary blank-line boundary", `<section>\n${hiddenRequirementTable}\n`],
+    ["nested literal opener does not change ordinary boundary", "<div>\n<pre>\n\n"],
+    ["generic blank-line boundary", `<custom-element>\n${hiddenRequirementTable}\n`],
+    ["processing instruction", `<?example\n${hiddenRequirementTable}?>\n`],
+    ["processing same-line close", "<?example?>\n"],
+    ["declaration", `<!DOCTYPE\n${hiddenRequirementTable}>\n`],
+    ["declaration same-line close", "<!DOCTYPE html>\n"],
+    ["CDATA", `<![CDATA[\n${hiddenRequirementTable}]]>\n`],
+    ["CDATA same-line close", "<![CDATA[example]]>\n"],
+  ];
+  for (const [name, prefix] of cases) await t.test(name, t => {
+    verifyHtmlRequirementBoundary(t, prefix + visibleRequirementTable);
+  });
+});
+
+test("escaped and inline-code tag literals cannot hide visible requirements", async t => {
+  const prefixes = [
+    "\\<pre>\n", "\\<div>\n", "`<pre>`\n", "``<script>``\n", "Use <pre> as an inline tag.\n",
+    "Wrapped paragraph\n<custom-element>\n", "Literal `<pre>\ncontinued` span.\n\n",
+    "Literal `example\ncontinued <pre>\ncontinued` span.\n\n", "<!-- <pre> -->\n",
+    "```html\n<pre>\n```\n", "    <pre>\n\n",
+  ];
+  for (const prefix of prefixes) await t.test(prefix, t => {
+    verifyHtmlRequirementBoundary(t, prefix + visibleRequirementTable);
+  });
+});
+
+test("nonparagraph Markdown boundaries cannot expose raw HTML requirement identities", async t => {
+  const boundaries = [
+    ["dash thematic break", "---"], ["asterisk thematic break", "***"], ["underscore thematic break", "___"],
+    ["spaced dash break", " - - -"], ["spaced asterisk break", "  * * *"], ["spaced underscore break", "   _ _ _"],
+    ["setext equals", "A heading\n==="], ["setext dashes", "A heading\n--"], ["short setext", "A heading\n="],
+    ["short dash setext", "A heading\n-"],
+    ["ATX heading", "## Narrative"], ["empty ATX heading", "#"], ["indented ATX heading", "   ## Narrative"],
+    ["link reference", "[docs]: https://example.invalid/source"],
+    ["angle destination and title", "  [with space]: <some path> 'Title'"],
+    ["balanced destination", "[nested]: /a(b(c)) (Title)"],
+    ["escaped destination", "[escaped]: /a\\(b\\)"],
+    ["literal trailing backslash destination", "[slash]: /path\\"],
+    ["empty blockquote", ">"], ["blockquote heading", "> # Narrative"], ["blockquote break", "> ---"],
+    ["empty list", "-"], ["nested empty list", "- -"], ["list heading", "- # Narrative"], ["empty ordered list", "1."],
+    ["ordered list heading", "1. ## Narrative"], ["indented code", "    Example"],
+    ["tab-indented code", " \tExample"], ["spaces and tab code", "  \tExample"],
+    ["fenced code", "```text\nExample\n```"],
+  ];
+  for (const [name, boundary] of boundaries) await t.test(name, t => {
+    verifyHtmlRequirementBoundary(t, visibleRequirementTable + "\n" + boundary
+      + "\n<custom-element>\n" + hiddenRequirementTable + "</custom-element>\n");
+  });
+});
+
+test("paragraph continuation before a generic HTML tag preserves visible requirement identities", async t => {
+  const paragraphs = [
+    "Wrapped prose\nMore prose", "-x -", "****text", "=", "--", "#not-a-heading", "####### Too many hashes",
+    "Wrapped prose\n    # Indented continuation", "Wrapped prose\n  \t# Indented continuation",
+    "Wrapped prose\n[docs]: https://example.invalid/source",
+    "[docs]: /url 'Title' trailing prose", "[docs]: /unbalanced(destination", "[]: /url",
+    "Wrapped prose\n*", "Wrapped prose\n1.",
+    "> Quoted paragraph", "- List paragraph", "2. List paragraph", "Wrapped prose\n2. ## Paragraph continuation",
+    "`---`", "---<!-- inline annotation -->",
+  ];
+  for (const paragraph of paragraphs) await t.test(paragraph, t => {
+    verifyHtmlRequirementBoundary(t, paragraph + "\n<custom-element>\n" + visibleRequirementTable);
+  });
+});
+
+test("root ATX requirement headings allow up to three spaces of indentation", async t => {
+  for (const indentation of [" ", "  ", "   "]) await t.test(`${indentation.length} spaces`, t => {
+    verifyHtmlRequirementBoundary(t, indentation + visibleRequirementTable);
+  });
+});
+
+test("multiline reference and container boundaries keep raw HTML requirements opaque", async t => {
+  const boundaries = [
+    ["next-line destination", "[docs]:\n /link"],
+    ["next-line title", "[docs]: /link\n \"Title\""],
+    ["next-line destination and title", "[docs]:\n /link\n 'Title'"],
+    ["multiline label", "[label\n continued]: /link"],
+    ["multiline same-line title", "[docs]: /link \"A\n multiline title\""],
+    ["multiline next-line title", "[docs]: /link\n (A\n multiline title)"],
+    ["next-line angle destination", "[docs]:\n <a path>\n \"Title\""],
+    ["Markdown-looking title content", "[docs]: /link \"Title\n" + hiddenRequirementTable + "end\""],
+    ["blockquote literal HTML leaf", "> <pre>"], ["list literal HTML leaf", "- <pre>"],
+    ["blockquote ordinary HTML leaf", "> <div>"], ["blockquote indented code leaf", ">     Example"],
+    ["list indented code leaf", "-     Example"], ["list tab-stop code leaf", "-   \tExample"],
+  ];
+  for (const [name, boundary] of boundaries) await t.test(name, t => {
+    verifyHtmlRequirementBoundary(t, visibleRequirementTable + "\n" + boundary
+      + "\n<custom-element>\n" + hiddenRequirementTable + "</custom-element>\n");
+  });
+});
+
+test("invalid multiline references and lazy paragraphs do not hide visible requirements", async t => {
+  const paragraphs = [
+    "[docs]:\n\n /link", "[docs]: /link\n \"Title\" trailing", "[docs]: /link\n \"Unclosed title",
+    "[docs]: /link \"Title\" trailing", "Wrapped prose\n[docs]:\n /link",
+    "> Quoted paragraph\n>     Continued paragraph", "- List paragraph\n  continued paragraph",
+  ];
+  for (const paragraph of paragraphs) await t.test(paragraph, t => {
+    verifyHtmlRequirementBoundary(t, paragraph + "\n<custom-element>\n" + visibleRequirementTable);
+  });
+});
+
+test("wrapped container references cannot expose raw HTML requirement identities", async t => {
+  const boundaries = [
+    ["blockquote destination", "> [docs]:\n> /link"],
+    ["blockquote title", "> [docs]: /link\n> \"Title\""],
+    ["blockquote multiline title", "> [docs]: /link\n> \"A\n> multiline title\""],
+    ["list destination", "- [docs]:\n  /link"],
+    ["list title", "- [docs]: /link\n  \"Title\""],
+    ["list multiline label", "- [label\n  continued]: /link"],
+    ["quote containing list", "> - [docs]:\n>   /link"],
+    ["list containing quote", "- > [docs]:\n  > /link"],
+    ["nested quote", ">> [docs]:\n>> /link"],
+    ["new quote interrupts outer prose", "Outer prose\n> [docs]:\n> /link"],
+  ];
+  for (const [name, boundary] of boundaries) await t.test(name, t => {
+    verifyHtmlRequirementBoundary(t, visibleRequirementTable + "\n" + boundary
+      + "\n<custom-element>\n" + hiddenRequirementTable + "</custom-element>\n");
+  });
+});
+
+test("malformed container references and lazy paragraph leaves preserve visible requirements", async t => {
+  const paragraphs = [
+    "> []:\n> /link", "> [broken:\n> /link", "> [docs]: /unbalanced(destination",
+    "> [docs]: /link \"Title\" trailing", "> [docs]: /link\n> \"Title\" trailing",
+    "- [docs]: /link\n  \"Unclosed title", "> Paragraph\n> [docs]:\n> /link",
+    "> Paragraph\nlazy continuation\n> [docs]: /link", "Wrapped prose\n2. [docs]:\n   /link",
+  ];
+  for (const paragraph of paragraphs) await t.test(paragraph, t => {
+    verifyHtmlRequirementBoundary(t, paragraph + "\n<custom-element>\n" + visibleRequirementTable);
+  });
+});
+
+test("GFM table leaves outside Requirements keep following raw HTML opaque", async t => {
+  const tables = [
+    ["ordinary table", "| A | B |\n| --- | --- |\n| x | y |"],
+    ["no outer pipes", "A | B\n--- | ---\nx | y"],
+    ["short aligned delimiters", "A | B\n:- | -:\nx | y"],
+    ["no body", "| A | B |\n| --- | --- |"],
+    ["body without pipes", "| A | B |\n| --- | --- |\nplain body row"],
+    ["unequal body columns", "| A | B |\n| --- | --- |\n| x |\n| x | y | z |"],
+    ["escaped header pipe", "| A\\|B | C |\n| --- | --- |\n| x | y |"],
+    ["single column", "| A |\n| --- |\nplain row"],
+    ["quote table", "> | A | B |\n> | --- | --- |\n> x | y"],
+    ["list table", "- | A | B |\n  | --- | --- |\n  x | y"],
+    ["mixed container table", "> - | A | B |\n>   | --- | --- |\n>   x | y"],
+    ["unmatched backtick cannot swallow table", "Unmatched ` marker\nA | B\n--- | ---\nx | `y"],
+  ];
+  for (const [name, table] of tables) await t.test(name, t => {
+    verifyHtmlRequirementBoundary(t, visibleRequirementTable + "\n## Other\n" + table
+      + "\n<custom-element>\n" + hiddenRequirementTable + "</custom-element>\n");
+  });
+});
+
+test("malformed table rows remain prose and do not hide visible requirements", async t => {
+  const prose = [
+    "| A | B |\n| x | y |", "| A | B |\n| --- |\nx | y", "| A | B |\n| --- | text |\nx | y",
+    "| A\\|B |\n| --- | --- |\nx | y", "| A | B |\n| - - - | --- |", "| A | B |\n| `---` | --- |",
+    "| A | B |\n| ---<!-- note --> | --- |",
+    "| A | B |\n| --- | --- |\nx | y\n\nA new paragraph",
+    "| A | B |\n| --- | --- |\nx | y\n> A quoted paragraph",
+  ];
+  for (const paragraph of prose) await t.test(paragraph, t => {
+    verifyHtmlRequirementBoundary(t, "## Other\n" + paragraph + "\n<custom-element>\n" + visibleRequirementTable);
+  });
+  await t.test("invalid Requirements delimiter cannot create an identity", t => {
+    verifyHtmlRequirementBoundary(t, visibleRequirementTable + "\n## Requirements\n| ID | Requirement |\n| --- |\n| HIDDEN | Ordinary prose |\n");
+  });
+});
+
 test("literal comment markers in code examples do not hide later requirement declarations", t => {
   const f = fixture(t, { planText: "# Plan\n\n```markdown\n<!--\n```\n\n    <!--\n\n## Requirements\n| ID | Requirement |\n| --- | --- |\n| R1 | Visible requirement |\n" });
   f.progress(f.update());

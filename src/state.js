@@ -457,7 +457,7 @@ export function acceptAttemptArtifact(slug, idOrName, artifactId, now = new Date
 
 // Requirement identities are explicit plan data, never inferred from progress
 // prose. A Markdown Requirements section uses an ID column in its table.
-function requirementTableCells(line) {
+function markdownTableCells(line) {
   const cells = [];
   let cell = "";
   let slashes = 0;
@@ -469,14 +469,166 @@ function requirementTableCells(line) {
   cells.push(cell);
   if (cells[0] === "") cells.shift();
   if (cells.at(-1) === "") cells.pop();
-  return cells.map(value => value.trim().replace(/^`|`$/g, ""));
+  return cells.map(value => value.trim());
+}
+
+function markdownTableStart(header, delimiter) {
+  if (typeof delimiter !== "string" || !header.trim() || /^(?: {4}| {0,3}\t)/.test(header)
+    || /^(?: {4}| {0,3}\t)/.test(delimiter) || !/(?:^|[^\\])(?:\\\\)*\|/.test(header + "\n" + delimiter)) return false;
+  const columns = markdownTableCells(header);
+  const separators = markdownTableCells(delimiter);
+  return columns.length === separators.length && separators.length > 0 && separators.every(cell => /^:?-+:?$/.test(cell));
+}
+
+// CommonMark HTML blocks are opaque to Markdown until their closing delimiter
+// (types 1–5) or a blank line (types 6–7). Generic tags cannot interrupt prose.
+function rawHtmlBlockEnd(line, inParagraph) {
+  if (/^ {0,3}<(?:pre|script|style|textarea)(?:[ \t>]|$)/i.test(line)) return /<\/(?:pre|script|style|textarea)>/i;
+  if (/^ {0,3}<!--/.test(line)) return /-->/;
+  if (/^ {0,3}<\?/.test(line)) return /\?>/;
+  if (/^ {0,3}<![A-Za-z]/.test(line)) return />/;
+  if (/^ {0,3}<!\[CDATA\[/.test(line)) return /\]\]>/;
+  if (/^ {0,3}<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \t>]|\/?>|$)/i.test(line)) return /^[ \t]*$/;
+  if (!inParagraph && /^ {0,3}(?:<(?!(?:pre|script|style|textarea)(?:[ \t/>]|$))[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^\s"'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t]*\/?>|<\/[A-Za-z][A-Za-z0-9-]*[ \t]*>)[ \t]*$/i.test(line)) return /^[ \t]*$/;
+  return null;
+}
+
+function linkReferenceTitleEnd(readLine, index, text) {
+  const opener = text[0];
+  if (!['"', "'", "("].includes(opener)) return -1;
+  const closer = opener === "(" ? ")" : opener;
+  let position = 1;
+  while (true) {
+    for (; position < text.length; position++) {
+      if (text[position] === "\\") { position++; continue; }
+      if (text[position] === closer) return /^[ \t]*$/.test(text.slice(position + 1)) ? index : -1;
+      if (opener === "(" && text[position] === "(") return -1;
+    }
+    text = readLine(++index);
+    if (text === null || !text.trim()) return -1;
+    position = 0;
+  }
+}
+
+function linkReferenceDefinitionEnd(readLine, start) {
+  let index = start;
+  let header = readLine(index);
+  if (header === null || !/^ {0,3}\[/.test(header)) return -1;
+  let label;
+  // Labels may wrap, but their source length is capped by Markdown's 999-character rule.
+  while (!(label = /^ {0,3}\[((?:\\[\s\S]|[^\[\]\\]){1,999})\]:[ \t]*/.exec(header))) {
+    const next = readLine(index + 1);
+    if (header.length > 1005 || next === null || !next.trim()) return -1;
+    header += "\n" + next;
+    index++;
+  }
+  if (!label[1].trim()) return -1;
+  let rest = header.slice(label[0].length);
+  if (!rest) {
+    const next = readLine(++index);
+    if (next === null || !next.trim()) return -1;
+    rest = next.trimStart();
+  }
+  const destination = /^(<(?:\\.|[^<>\r\n\\])*>|(?:\\[^\s]|[^\s<>\\]|\\(?=[ \t]|$))+)/.exec(rest)?.[0];
+  if (!destination) return -1;
+  let depth = 0;
+  for (let position = 0; !destination.startsWith("<") && position < destination.length; position++) {
+    const char = destination[position];
+    if (char === "\\") { position++; continue; }
+    if (char === "(") depth++;
+    if (char === ")" && --depth < 0) return -1;
+  }
+  if (depth) return -1;
+  const tail = rest.slice(destination.length);
+  if (tail && !/^[ \t]/.test(tail)) return -1;
+  if (tail.trim()) return linkReferenceTitleEnd(readLine, index, tail.trimStart());
+  const title = readLine(index + 1)?.trimStart() || "";
+  const titleEnd = linkReferenceTitleEnd(readLine, index + 1, title);
+  // A malformed next-line title is separate prose; a same-line title is mandatory.
+  return titleEnd >= 0 ? titleEnd : index;
+}
+
+function stripMarkdownQuote(line) {
+  const marker = /^ {0,3}>/.exec(line)?.[0];
+  if (!marker) return null;
+  const rest = line.slice(marker.length);
+  if (rest[0] === " ") return rest.slice(1);
+  if (rest[0] === "\t") return " ".repeat(3 - marker.length % 4) + rest.slice(1);
+  return rest;
+}
+
+function stripMarkdownColumns(line, width) {
+  let column = 0, position = 0;
+  while (position < line.length && column < width && /[ \t]/.test(line[position])) {
+    column += line[position++] === "\t" ? 4 - column % 4 : 1;
+  }
+  return column < width ? null : " ".repeat(column - width) + line.slice(position);
+}
+
+function stripMarkdownContainers(line, containers) {
+  if (line === null) return null;
+  for (const item of containers) {
+    line = item.kind === "quote" ? stripMarkdownQuote(line) : stripMarkdownColumns(line, item.width);
+    if (line === null) break;
+  }
+  return line;
+}
+
+function markdownContainerLine(line, inParagraph, paragraphQuotes) {
+  const containers = [];
+  let quotes = 0, newParagraph = false;
+  while (true) {
+    const quote = stripMarkdownQuote(line);
+    if (quote !== null) {
+      if (++quotes > paragraphQuotes) { inParagraph = false; newParagraph = true; }
+      containers.push({ kind: "quote" });
+      line = quote;
+      continue;
+    }
+    if (/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$/.test(line)) break;
+    const list = /^ {0,3}(?:([-+*])|([0-9]{1,9})[.)])(?:([ \t]+)(.*)|$)/.exec(line);
+    if (list && (!inParagraph || ((list[4] || "").trim() && (list[1] || list[2] === "1")))) {
+      const padding = list[3] || "";
+      const markerEnd = line.length - padding.length - (list[4] || "").length;
+      let column = markerEnd;
+      for (const char of padding) column += char === "\t" ? 4 - column % 4 : 1;
+      const width = column - markerEnd;
+      containers.push({ kind: "list", width: markerEnd + (width > 4 ? 1 : width || 1) });
+      line = (width > 4 ? " ".repeat(width - 1) : "") + (list[4] || "");
+      inParagraph = false;
+      newParagraph = true;
+      continue;
+    }
+    break;
+  }
+  return { line, containers, inParagraph, quotes, newParagraph };
+}
+
+// Only paragraph leaves can continue lazily across an omitted container marker.
+function continuesMarkdownParagraph(line, inParagraph) {
+  if (!line.trim() || /^ {0,3}#{1,6}(?:[ \t]|$)/.test(line)
+    || /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$/.test(line)
+    || /^ {0,3}(?:`{3,}|~{3,})/.test(line)
+    || (!inParagraph && /^(?: {4}| {0,3}\t)/.test(line))
+    || rawHtmlBlockEnd(line, inParagraph)
+    || (inParagraph && /^ {0,3}(?:=+|-+)[ \t]*$/.test(line))) return false;
+  return true;
 }
 
 function closingCodeSpan(text, start, ticks, lineEnd = null) {
   const rest = text.slice(start, lineEnd ?? text.length);
   // Inline spans may cross paragraph lines, but not a new Markdown block.
   const boundary = /\n(?:[ \t]*\n| {0,3}(?:#{1,6}(?:\s|$)|`{3,}|~{3,}|<!--|>|(?:[-+*]|1[.)])\s))/.exec(rest);
-  const content = boundary ? rest.slice(0, boundary.index) : rest;
+  let content = boundary ? rest.slice(0, boundary.index) : rest;
+  let offset = 0;
+  const lines = content.split("\n");
+  for (const [index, line] of lines.entries()) {
+    if (offset && (rawHtmlBlockEnd(line, true) || markdownTableStart(line, lines[index + 1]))) {
+      content = content.slice(0, offset - 1);
+      break;
+    }
+    offset += line.length + 1;
+  }
   for (const match of content.matchAll(/`+/g)) {
     if (match[0].length === ticks) return start + match.index + ticks;
   }
@@ -493,20 +645,61 @@ function planRequirementIds(attempt, plan) {
   let separator = false;
   let fence = null;
   let comment = false;
+  let htmlEnd = null;
+  let paragraph = false;
+  let paragraphQuotes = 0;
+  let table = null;
   let sourceOffset = 0;
   let codeEnd = -1;
-  for (const rawLine of lines) {
+  let referenceEnd = -1;
+  for (const [lineIndex, rawLine] of lines.entries()) {
     const sourceStart = sourceOffset;
     sourceOffset += rawLine.length + 1;
+    if (lineIndex <= referenceEnd) continue;
+    if (htmlEnd) {
+      if (htmlEnd.test(rawLine)) htmlEnd = null;
+      continue;
+    }
     const codePrefix = Math.max(0, Math.min(rawLine.length, codeEnd - sourceStart));
     const continuation = comment || codeEnd > sourceStart;
-    if (!codePrefix && !comment && /^(?: {4}|\t)/.test(rawLine)) { idColumn = -1; separator = false; continue; }
+    if (!codePrefix && !comment && /^(?: {4}| {0,3}\t)/.test(rawLine)) { idColumn = -1; separator = false; table = null; continue; }
     const marker = !codePrefix && /^ {0,3}(`{3,}|~{3,})/.exec(rawLine)?.[1];
     if (fence || (!comment && marker)) {
       if (!fence) fence = marker;
       else if (marker && marker[0] === fence[0] && marker.length >= fence.length && /^\s*(?:`+|~+)\s*$/.test(rawLine)) fence = null;
       idColumn = -1;
       separator = false;
+      paragraph = false;
+      table = null;
+      continue;
+    }
+    const html = !codePrefix && !comment ? rawHtmlBlockEnd(rawLine, paragraph) : null;
+    if (html) {
+      htmlEnd = html.test(rawLine) ? null : html;
+      idColumn = -1;
+      separator = false;
+      paragraph = false;
+      table = null;
+      continue;
+    }
+    const container = markdownContainerLine(rawLine, paragraph, paragraphQuotes);
+    const readContainerLine = index => index === lineIndex ? container.line
+      : stripMarkdownContainers(lines[index] ?? null, container.containers);
+    if (table && lineIndex !== table.delimiter) {
+      const candidate = stripMarkdownContainers(rawLine, table.containers);
+      if (candidate === null || !continuesMarkdownParagraph(candidate, false)
+        || markdownContainerLine(candidate, false, 0).containers.length) table = null;
+    }
+    if (!table && !codePrefix && !comment && markdownTableStart(container.line, readContainerLine(lineIndex + 1))) {
+      table = { containers: container.containers, delimiter: lineIndex + 1 };
+    }
+    const reference = !codePrefix && !comment && !container.inParagraph && !table
+      ? linkReferenceDefinitionEnd(readContainerLine, lineIndex) : -1;
+    if (reference >= lineIndex) {
+      referenceEnd = reference;
+      idColumn = -1;
+      separator = false;
+      paragraph = false;
       continue;
     }
     // Comments are not rendered declarations. Keep columns intact so removing
@@ -547,23 +740,26 @@ function planRequirementIds(attempt, plan) {
         position = tokens.lastIndex;
       }
     }
-    if (continuation || /^(?: {4}|\t)/.test(line)) { idColumn = -1; separator = false; continue; }
-    if (/^#{1,6}\s/.test(rawLine)) {
-      section = /^#{1,6}\s+Requirements\s*#*\s*$/i.test(line);
+    if (continuation || /^(?: {4}| {0,3}\t)/.test(line)) { idColumn = -1; separator = false; continue; }
+    const previousParagraph = paragraph;
+    paragraph = !table && continuesMarkdownParagraph(container.line, container.inParagraph);
+    paragraphQuotes = paragraph ? container.quotes || (previousParagraph && !container.newParagraph ? paragraphQuotes : 0) : 0;
+    if (/^ {0,3}#{1,6}(?:[ \t]|$)/.test(rawLine)) {
+      section = /^ {0,3}#{1,6}[ \t]+Requirements(?:[ \t]+#+)?[ \t]*$/i.test(line);
       idColumn = -1;
       separator = false;
+      paragraph = false;
       continue;
     }
     if (!section) continue;
     if (!rawLine.trim().startsWith("|") || !line.trim().startsWith("|")) { idColumn = -1; separator = false; continue; }
-    const cells = requirementTableCells(line);
+    const cells = markdownTableCells(line).map(value => value.replace(/^`|`$/g, ""));
     if (idColumn < 0) {
-      idColumn = cells.findIndex(cell => cell === "ID" || cell === "Requirement ID");
+      idColumn = markdownTableStart(rawLine, lines[lineIndex + 1]) ? cells.findIndex(cell => cell === "ID" || cell === "Requirement ID") : -1;
       separator = idColumn >= 0;
       continue;
     }
     if (separator) {
-      if (!cells.every(cell => /^:?-{3,}:?$/.test(cell))) throw new Error("Requirements table header requires a Markdown separator row");
       separator = false;
       continue;
     }

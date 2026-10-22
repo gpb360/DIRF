@@ -7,6 +7,22 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+### Added
+- **Reverse-engineering routing** — the registry now references
+  `reverse-engineer-anything` (REA), so jobs that depend on shipped binaries,
+  packages, firmware, network captures, or live runtime evidence route to it
+  when it is installed on the host, instead of falling through to ordinary
+  source-repository analysis.
+
+### Changed
+- Bundled `research`, `root-cause-debugging`, and `handoff` skills absorbed
+  REA's evidence disciplines: separate observations from inferences and
+  unknowns in an evidence ledger, diagnose a blocked action before changing
+  configuration (distinct blockers have distinct remedies, and an identical
+  failing action is never retried without changed input), and carry the
+  open-question ledger (answered / partially answered / unresolved) through
+  handoffs so successors never inherit unfinished work marked complete.
+
 ## [0.31.2] - 2026-10-06
 
 ### Fixed

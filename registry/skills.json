@@ -594,6 +594,21 @@
         "worktree hygiene",
         "governed maintenance"
       ]
+    },
+    {
+      "name": "reverse-engineer-anything",
+      "category": "research",
+      "applies_to": [
+        "research-analyst",
+        "security-auditor",
+        "backend-architect"
+      ],
+      "summary": "Evidence-led analysis of shipped binaries, packages, firmware, network captures, and live runtimes; explain features, compare versions, and decompile when source is not enough",
+      "capabilities": [
+        "binary analysis",
+        "evidence-led investigation",
+        "runtime observation"
+      ]
     }
   ]
 }
