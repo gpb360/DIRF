@@ -50,6 +50,16 @@ for (const boundary of ['before-journal', 'before-attempt', 'after-attempt', 'af
       const active = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', `
         const now = Date.now;
         Date.now = () => now() + 3600000;
+        // Recovery is explicit. Ordinary startup must not replay a checkpoint.
+        const { getAttempt, recordProgress } = await import(${JSON.stringify(moduleUrl)});
+        const recovered = getAttempt(${JSON.stringify(slug)}, ${JSON.stringify(attempt.id)});
+        if (${JSON.stringify(boundary)} === 'before-journal') {
+          if (recovered.current_phase !== 'build') throw new Error('A write without a journal changed lifecycle');
+          // No journal exists to replay. An ordinary checkpoint reclaims the dead lock.
+          const result = recordProgress(${JSON.stringify(slug)}, { attemptId: ${JSON.stringify(attempt.id)}, phase: 'build',
+            message: 'Reclaimed dead progress lock', next: 'Continue step two' });
+          if (!result.recorded) throw new Error('Recovery checkpoint was rejected');
+        }
         process.argv = [process.execPath, ${JSON.stringify(cli)}, 'state', 'active', '--path', ${JSON.stringify(root)}, '--json'];
         await import(${JSON.stringify(pathToFileURL(cli).href)});
       `], { cwd: root, encoding: 'utf8', env: { ...process.env }, timeout: 30000 }));

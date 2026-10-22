@@ -17,6 +17,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { resolveGoverningArtifact, validateArtifactGraph, validatePlanDelta } from "./artifacts.js";
 import { parseCurrentHandoff, updateProgressSection } from "./handoff-update.js";
+import { parseSummaryCursor, SUMMARY_PAGE_SIZE, validateRequirementMappingUpdate } from "./summary-validation.js";
 // The review-json built-in check enforces the real review artifact schema —
 // the one the pr-review playbook's declared validation (`dirf review ready
 // review.json`) already enforces through this module. Verdicts are derived
@@ -183,7 +184,7 @@ export function registerProject(targetPath) {
   return { slug, isNew };
 }
 
-export function resolveProject(targetPath, { touch = true } = {}) {
+export function resolveProject(targetPath, { touch = true, migrate = true } = {}) {
   const slug = deriveSlug(targetPath);
   const registry = readRegistry();
   const existing = registry.projects[slug];
@@ -211,7 +212,7 @@ export function resolveProject(targetPath, { touch = true } = {}) {
     return { slug };
   }
   // Not registered. If legacy per-target .dirf/ exists, migrate it.
-  if (hasLegacyState(targetPath)) {
+  if (migrate && hasLegacyState(targetPath)) {
     migrateProject(targetPath, slug);
     return { slug };
   }
@@ -302,6 +303,11 @@ export function createAttemptInStore(slug, name, now = new Date()) {
 
 export function listAttempts(slug) {
   recoverPendingProgress(slug);
+  return readAttempts(slug);
+}
+
+// Summary queries must not replay a pending write or change lifecycle on read.
+function readAttempts(slug) {
   const base = join(storeProjectDir(slug), "attempts");
   if (!existsSync(base)) return [];
   return readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name)).flatMap((entry) => {
@@ -447,6 +453,648 @@ function acceptAttemptArtifactLocked(slug, idOrName, artifactId, now = new Date(
 
 export function acceptAttemptArtifact(slug, idOrName, artifactId, now = new Date()) {
   return withProgressLock(slug, () => acceptAttemptArtifactLocked(slug, idOrName, artifactId, now));
+}
+
+// Requirement identities are explicit plan data, never inferred from progress
+// prose. A Markdown Requirements section uses an ID column in its table.
+function markdownTableCells(line) {
+  const cells = [];
+  let cell = "";
+  let slashes = 0;
+  for (const char of line.trim()) {
+    if (char === "|" && slashes % 2 === 0) { cells.push(cell); cell = ""; }
+    else cell += char;
+    slashes = char === "\\" ? slashes + 1 : 0;
+  }
+  cells.push(cell);
+  if (cells[0] === "") cells.shift();
+  if (cells.at(-1) === "") cells.pop();
+  return cells.map(value => value.trim());
+}
+
+function markdownTableStart(header, delimiter) {
+  if (typeof delimiter !== "string" || !header.trim() || /^(?: {4}| {0,3}\t)/.test(header)
+    || /^(?: {4}| {0,3}\t)/.test(delimiter) || !/(?:^|[^\\])(?:\\\\)*\|/.test(header + "\n" + delimiter)) return false;
+  const columns = markdownTableCells(header);
+  const separators = markdownTableCells(delimiter);
+  return columns.length === separators.length && separators.length > 0 && separators.every(cell => /^:?-+:?$/.test(cell));
+}
+
+// CommonMark HTML blocks are opaque to Markdown until their closing delimiter
+// (types 1–5) or a blank line (types 6–7). Generic tags cannot interrupt prose.
+function rawHtmlBlockEnd(line, inParagraph) {
+  if (/^ {0,3}<(?:pre|script|style|textarea)(?:[ \t>]|$)/i.test(line)) return /<\/(?:pre|script|style|textarea)>/i;
+  if (/^ {0,3}<!--/.test(line)) return /-->/;
+  if (/^ {0,3}<\?/.test(line)) return /\?>/;
+  if (/^ {0,3}<![A-Za-z]/.test(line)) return />/;
+  if (/^ {0,3}<!\[CDATA\[/.test(line)) return /\]\]>/;
+  if (/^ {0,3}<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \t>]|\/?>|$)/i.test(line)) return /^[ \t]*$/;
+  if (!inParagraph && /^ {0,3}(?:<(?!(?:pre|script|style|textarea)(?:[ \t/>]|$))[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^\s"'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t]*\/?>|<\/[A-Za-z][A-Za-z0-9-]*[ \t]*>)[ \t]*$/i.test(line)) return /^[ \t]*$/;
+  return null;
+}
+
+function linkReferenceTitleEnd(readLine, index, text) {
+  const opener = text[0];
+  if (!['"', "'", "("].includes(opener)) return -1;
+  const closer = opener === "(" ? ")" : opener;
+  let position = 1;
+  while (true) {
+    for (; position < text.length; position++) {
+      if (text[position] === "\\") { position++; continue; }
+      if (text[position] === closer) return /^[ \t]*$/.test(text.slice(position + 1)) ? index : -1;
+      if (opener === "(" && text[position] === "(") return -1;
+    }
+    text = readLine(++index);
+    if (text === null || !text.trim()) return -1;
+    position = 0;
+  }
+}
+
+function linkReferenceDefinitionEnd(readLine, start) {
+  let index = start;
+  let header = readLine(index);
+  if (header === null || !/^ {0,3}\[/.test(header)) return -1;
+  let label;
+  // Labels may wrap, but their source length is capped by Markdown's 999-character rule.
+  while (!(label = /^ {0,3}\[((?:\\[\s\S]|[^\[\]\\]){1,999})\]:[ \t]*/.exec(header))) {
+    const next = readLine(index + 1);
+    if (header.length > 1005 || next === null || !next.trim()) return -1;
+    header += "\n" + next;
+    index++;
+  }
+  if (!label[1].trim()) return -1;
+  let rest = header.slice(label[0].length);
+  if (!rest) {
+    const next = readLine(++index);
+    if (next === null || !next.trim()) return -1;
+    rest = next.trimStart();
+  }
+  const destination = /^(<(?:\\.|[^<>\r\n\\])*>|(?:\\[^\s]|[^\s<>\\]|\\(?=[ \t]|$))+)/.exec(rest)?.[0];
+  if (!destination) return -1;
+  let depth = 0;
+  for (let position = 0; !destination.startsWith("<") && position < destination.length; position++) {
+    const char = destination[position];
+    if (char === "\\") { position++; continue; }
+    if (char === "(") depth++;
+    if (char === ")" && --depth < 0) return -1;
+  }
+  if (depth) return -1;
+  const tail = rest.slice(destination.length);
+  if (tail && !/^[ \t]/.test(tail)) return -1;
+  if (tail.trim()) return linkReferenceTitleEnd(readLine, index, tail.trimStart());
+  const title = readLine(index + 1)?.trimStart() || "";
+  const titleEnd = linkReferenceTitleEnd(readLine, index + 1, title);
+  // A malformed next-line title is separate prose; a same-line title is mandatory.
+  return titleEnd >= 0 ? titleEnd : index;
+}
+
+function stripMarkdownQuote(line) {
+  const marker = /^ {0,3}>/.exec(line)?.[0];
+  if (!marker) return null;
+  const rest = line.slice(marker.length);
+  if (rest[0] === " ") return rest.slice(1);
+  if (rest[0] === "\t") return " ".repeat(3 - marker.length % 4) + rest.slice(1);
+  return rest;
+}
+
+function stripMarkdownColumns(line, width) {
+  let column = 0, position = 0;
+  while (position < line.length && column < width && /[ \t]/.test(line[position])) {
+    column += line[position++] === "\t" ? 4 - column % 4 : 1;
+  }
+  return column < width ? null : " ".repeat(column - width) + line.slice(position);
+}
+
+function stripMarkdownContainers(line, containers) {
+  if (line === null) return null;
+  for (const item of containers) {
+    line = item.kind === "quote" ? stripMarkdownQuote(line) : stripMarkdownColumns(line, item.width);
+    if (line === null) break;
+  }
+  return line;
+}
+
+function markdownContainerLine(line, inParagraph, paragraphQuotes) {
+  const containers = [];
+  let quotes = 0, newParagraph = false;
+  while (true) {
+    const quote = stripMarkdownQuote(line);
+    if (quote !== null) {
+      if (++quotes > paragraphQuotes) { inParagraph = false; newParagraph = true; }
+      containers.push({ kind: "quote" });
+      line = quote;
+      continue;
+    }
+    if (/^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$/.test(line)) break;
+    const list = /^ {0,3}(?:([-+*])|([0-9]{1,9})[.)])(?:([ \t]+)(.*)|$)/.exec(line);
+    if (list && (!inParagraph || ((list[4] || "").trim() && (list[1] || list[2] === "1")))) {
+      const padding = list[3] || "";
+      const markerEnd = line.length - padding.length - (list[4] || "").length;
+      let column = markerEnd;
+      for (const char of padding) column += char === "\t" ? 4 - column % 4 : 1;
+      const width = column - markerEnd;
+      containers.push({ kind: "list", width: markerEnd + (width > 4 ? 1 : width || 1) });
+      line = (width > 4 ? " ".repeat(width - 1) : "") + (list[4] || "");
+      inParagraph = false;
+      newParagraph = true;
+      continue;
+    }
+    break;
+  }
+  return { line, containers, inParagraph, quotes, newParagraph };
+}
+
+// Only paragraph leaves can continue lazily across an omitted container marker.
+function continuesMarkdownParagraph(line, inParagraph) {
+  if (!line.trim() || /^ {0,3}#{1,6}(?:[ \t]|$)/.test(line)
+    || /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?:-[ \t]*){3,})$/.test(line)
+    || /^ {0,3}(?:`{3,}|~{3,})/.test(line)
+    || (!inParagraph && /^(?: {4}| {0,3}\t)/.test(line))
+    || rawHtmlBlockEnd(line, inParagraph)
+    || (inParagraph && /^ {0,3}(?:=+|-+)[ \t]*$/.test(line))) return false;
+  return true;
+}
+
+function closingCodeSpan(text, start, ticks, lineEnd = null) {
+  const rest = text.slice(start, lineEnd ?? text.length);
+  // Inline spans may cross paragraph lines, but not a new Markdown block.
+  const boundary = /\n(?:[ \t]*\n| {0,3}(?:#{1,6}(?:\s|$)|`{3,}|~{3,}|<!--|>|(?:[-+*]|1[.)])\s))/.exec(rest);
+  let content = boundary ? rest.slice(0, boundary.index) : rest;
+  let offset = 0;
+  const lines = content.split("\n");
+  for (const [index, line] of lines.entries()) {
+    if (offset && (rawHtmlBlockEnd(line, true) || markdownTableStart(line, lines[index + 1]))) {
+      content = content.slice(0, offset - 1);
+      break;
+    }
+    offset += line.length + 1;
+  }
+  for (const match of content.matchAll(/`+/g)) {
+    if (match[0].length === ticks) return start + match.index + ticks;
+  }
+  return -1;
+}
+
+function planRequirementIds(attempt, plan) {
+  const text = readFileSync(artifactContentPath(attempt, plan), "utf8");
+  const lines = text.split(/\r?\n/);
+  const markdown = lines.join("\n");
+  const ids = [];
+  let section = false;
+  let idColumn = -1;
+  let separator = false;
+  let fence = null;
+  let comment = false;
+  let htmlEnd = null;
+  let paragraph = false;
+  let paragraphQuotes = 0;
+  let table = null;
+  let sourceOffset = 0;
+  let codeEnd = -1;
+  let referenceEnd = -1;
+  for (const [lineIndex, rawLine] of lines.entries()) {
+    const sourceStart = sourceOffset;
+    sourceOffset += rawLine.length + 1;
+    if (lineIndex <= referenceEnd) continue;
+    if (htmlEnd) {
+      if (htmlEnd.test(rawLine)) htmlEnd = null;
+      continue;
+    }
+    const codePrefix = Math.max(0, Math.min(rawLine.length, codeEnd - sourceStart));
+    const continuation = comment || codeEnd > sourceStart;
+    if (!codePrefix && !comment && /^(?: {4}| {0,3}\t)/.test(rawLine)) { idColumn = -1; separator = false; table = null; continue; }
+    const marker = !codePrefix && /^ {0,3}(`{3,}|~{3,})/.exec(rawLine)?.[1];
+    if (fence || (!comment && marker)) {
+      if (!fence) fence = marker;
+      else if (marker && marker[0] === fence[0] && marker.length >= fence.length && /^\s*(?:`+|~+)\s*$/.test(rawLine)) fence = null;
+      idColumn = -1;
+      separator = false;
+      paragraph = false;
+      table = null;
+      continue;
+    }
+    const html = !codePrefix && !comment ? rawHtmlBlockEnd(rawLine, paragraph) : null;
+    if (html) {
+      htmlEnd = html.test(rawLine) ? null : html;
+      idColumn = -1;
+      separator = false;
+      paragraph = false;
+      table = null;
+      continue;
+    }
+    const container = markdownContainerLine(rawLine, paragraph, paragraphQuotes);
+    const readContainerLine = index => index === lineIndex ? container.line
+      : stripMarkdownContainers(lines[index] ?? null, container.containers);
+    if (table && lineIndex !== table.delimiter) {
+      const candidate = stripMarkdownContainers(rawLine, table.containers);
+      if (candidate === null || !continuesMarkdownParagraph(candidate, false)
+        || markdownContainerLine(candidate, false, 0).containers.length) table = null;
+    }
+    if (!table && !codePrefix && !comment && markdownTableStart(container.line, readContainerLine(lineIndex + 1))) {
+      table = { containers: container.containers, delimiter: lineIndex + 1 };
+    }
+    const reference = !codePrefix && !comment && !container.inParagraph && !table
+      ? linkReferenceDefinitionEnd(readContainerLine, lineIndex) : -1;
+    if (reference >= lineIndex) {
+      referenceEnd = reference;
+      idColumn = -1;
+      separator = false;
+      paragraph = false;
+      continue;
+    }
+    // Comments are not rendered declarations. Keep columns intact so removing
+    // hidden text cannot create a new heading or table; code stays literal.
+    let line = " ".repeat(codePrefix);
+    let position = codePrefix;
+    const tokens = /\\[\\`<]|`+|<!--/g;
+    while (position < rawLine.length) {
+      if (comment) {
+        const end = rawLine.indexOf("-->", position);
+        const stop = end < 0 ? rawLine.length : end + 3;
+        line += " ".repeat(stop - position);
+        position = stop;
+        comment = end < 0;
+      } else {
+        tokens.lastIndex = position;
+        const token = tokens.exec(rawLine);
+        if (!token) { line += rawLine.slice(position); break; }
+        line += rawLine.slice(position, token.index);
+        if (token[0][0] === "`") {
+          const blockLine = /^ {0,3}(?:#{1,6}\s|\|)/.test(rawLine);
+          const end = closingCodeSpan(markdown, sourceStart + tokens.lastIndex, token[0].length,
+            blockLine ? sourceStart + rawLine.length : null);
+          if (end > sourceStart + rawLine.length) {
+            codeEnd = end;
+            line += " ".repeat(rawLine.length - token.index);
+            position = rawLine.length;
+            continue;
+          }
+          if (end >= 0) {
+            position = end - sourceStart;
+            line += rawLine.slice(token.index, position);
+            continue;
+          }
+        }
+        comment = token[0] === "<!--";
+        line += comment ? "    " : token[0];
+        position = tokens.lastIndex;
+      }
+    }
+    if (continuation || /^(?: {4}| {0,3}\t)/.test(line)) { idColumn = -1; separator = false; continue; }
+    const previousParagraph = paragraph;
+    paragraph = !table && continuesMarkdownParagraph(container.line, container.inParagraph);
+    paragraphQuotes = paragraph ? container.quotes || (previousParagraph && !container.newParagraph ? paragraphQuotes : 0) : 0;
+    if (/^ {0,3}#{1,6}(?:[ \t]|$)/.test(rawLine)) {
+      section = /^ {0,3}#{1,6}[ \t]+Requirements(?:[ \t]+#+)?[ \t]*$/i.test(line);
+      idColumn = -1;
+      separator = false;
+      paragraph = false;
+      continue;
+    }
+    if (!section) continue;
+    if (!rawLine.trim().startsWith("|") || !line.trim().startsWith("|")) { idColumn = -1; separator = false; continue; }
+    const cells = markdownTableCells(line).map(value => value.replace(/^`|`$/g, ""));
+    if (idColumn < 0) {
+      idColumn = markdownTableStart(rawLine, lines[lineIndex + 1]) ? cells.findIndex(cell => cell === "ID" || cell === "Requirement ID") : -1;
+      separator = idColumn >= 0;
+      continue;
+    }
+    if (separator) {
+      separator = false;
+      continue;
+    }
+    const id = cells[idColumn];
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id || "") || ids.includes(id)) {
+      throw new Error("Accepted plan Requirements table must contain unique stable requirement IDs");
+    }
+    ids.push(id);
+  }
+  if (!ids.length) throw new Error("Accepted plan must declare an explicit Requirements table with an ID column before mapping updates");
+  return ids;
+}
+
+function checkRequirementArtifact(attempt, ref, accepted) {
+  const artifact = (attempt.artifacts || []).find(item => item.id === ref.artifact_id);
+  if (!artifact) throw new Error(`Missing requirement artifact ${ref.artifact_id}`);
+  assertArtifactContent(attempt, artifact, attempt.artifacts || []);
+  const actual = artifactContentSha256(artifactContentPath(attempt, artifact));
+  if (actual !== ref.sha256) throw new Error(`Requirement artifact digest changed: ${ref.artifact_id}`);
+  if (accepted && (!artifact.accepted_at || artifact.accepted_sha256 !== actual)) {
+    throw new Error(`Requirement artifact requires SHA-bound acceptance: ${ref.artifact_id}`);
+  }
+  return artifact;
+}
+
+function mappingHistoryPath(attempt, revision) {
+  if (!Number.isSafeInteger(revision) || revision < 1) throw new Error("Invalid requirement mapping revision");
+  return join(attempt.folder, "requirement-history", `${revision}.json`);
+}
+
+function sameRecord(left, right) { return JSON.stringify(left) === JSON.stringify(right); }
+
+function sameArtifactReference(left, right) {
+  return left?.artifact_id === right?.artifact_id && left?.sha256 === right?.sha256;
+}
+
+function nextRequirementMapping(attempt, current, update, context) {
+  const entries = new Map();
+  if (current && (current.revision !== context.mapping_revision || current.attempt_id !== attempt.id)) {
+    throw new Error("Stored requirement mapping does not match its source revision");
+  }
+  if (current && sameArtifactReference(current.governing_plan, update.governing_plan)) {
+    const previous = validateRequirementMappingUpdate({ schema_version: current.schema_version, attempt_id: current.attempt_id,
+      governing_plan: current.governing_plan, expected_revision: context.mapping_revision, requirements: current.requirements }, context);
+    if (!previous.valid) throw new Error(`Invalid stored requirement mapping: ${previous.errors.join("; ")}`);
+    for (const entry of current.requirements) entries.set(entry.requirement_id, entry);
+  }
+  for (const entry of update.requirements) entries.set(entry.requirement_id, entry);
+  return { schema_version: 1, attempt_id: attempt.id, revision: context.mapping_revision + 1,
+    governing_plan: context.governing_plan, requirements: context.requirement_ids.filter(id => entries.has(id)).map(id => entries.get(id)) };
+}
+
+/** @param {import('./summary-contracts.js').RequirementMappingUpdate} update */
+function prepareRequirementTransaction(attempt, update, checkpoint, replay = null) {
+  if (!attempt) throw new Error("Requirement updates require an explicit attempt");
+  const plan = governingAttemptArtifact(attempt, "plan");
+  if (!plan?.accepted_sha256) throw new Error("Requirement updates require a SHA-bound governing accepted plan");
+  const current = attempt.requirement_mapping || null;
+  const currentRevision = current?.revision ?? 0;
+  const baseRevision = replay ? replay.previous_revision : currentRevision;
+  if (!Number.isSafeInteger(currentRevision) || currentRevision < 0 || !Number.isSafeInteger(baseRevision) || baseRevision < 0) {
+    throw new Error("Invalid stored requirement mapping revision");
+  }
+  const context = { attempt_id: attempt.id, governing_plan: { artifact_id: plan.id, sha256: plan.accepted_sha256 },
+    requirement_ids: planRequirementIds(attempt, plan), mapping_revision: baseRevision };
+  const checked = validateRequirementMappingUpdate(update, context);
+  if (!checked.valid) throw new Error(`Invalid requirement update: ${checked.errors.join("; ")}`);
+  if (!Number.isSafeInteger(baseRevision + 1)) throw new Error("Requirement mapping revision is too large");
+  let transaction;
+  if (replay) {
+    if (replay.schema_version !== 1 || replay.mapping?.revision !== baseRevision + 1
+      || !sameRecord(replay.update, update) || !sameRecord(replay.checkpoint, checkpoint)
+      || ![baseRevision, baseRevision + 1].includes(currentRevision)
+      || (currentRevision === baseRevision + 1 && !sameRecord(current, replay.mapping))) {
+      throw new Error("Pending requirement update does not match its mapping revision");
+    }
+    const snapshot = validateRequirementMappingUpdate({ schema_version: replay.mapping.schema_version, attempt_id: replay.mapping.attempt_id,
+      governing_plan: replay.mapping.governing_plan, expected_revision: baseRevision, requirements: replay.mapping.requirements }, context);
+    if (!snapshot.valid) throw new Error(`Invalid pending requirement mapping: ${snapshot.errors.join("; ")}`);
+    const previous = currentRevision === baseRevision ? current
+      : baseRevision === 0 ? null : JSON.parse(readFileSync(mappingHistoryPath(attempt, baseRevision), "utf8")).mapping;
+    if (!sameRecord(replay.mapping, nextRequirementMapping(attempt, previous, update, context))) {
+      throw new Error("Pending requirement mapping does not match its explicit update");
+    }
+    transaction = replay;
+  } else {
+    const mapping = nextRequirementMapping(attempt, current, update, context);
+    transaction = { schema_version: 1, previous_revision: baseRevision, update, checkpoint, mapping };
+  }
+  for (const entry of transaction.mapping.requirements) {
+    if (entry.decision_ref) checkRequirementArtifact(attempt, entry.decision_ref, true);
+    for (const proof of entry.proof_refs) {
+      if (checkRequirementArtifact(attempt, proof, false).type !== "implementation_evidence") {
+        throw new Error(`Requirement proof must reference implementation_evidence: ${proof.artifact_id}`);
+      }
+    }
+  }
+  // Detach caller-owned objects before persisting the exact recovery intent.
+  const detached = JSON.parse(JSON.stringify(transaction));
+  const historyPath = mappingHistoryPath(attempt, detached.mapping.revision);
+  if (existsSync(historyPath) && readFileSync(historyPath, "utf8") !== JSON.stringify(detached, null, 2) + "\n") {
+    throw new Error(`Requirement history revision already exists with different bytes: ${historyPath}`);
+  }
+  return detached;
+}
+
+function applyRequirementTransaction(slug, attemptId, transaction) {
+  const attempt = getAttempt(slug, attemptId);
+  const path = mappingHistoryPath(attempt, transaction.mapping.revision);
+  const bytes = JSON.stringify(transaction, null, 2) + "\n";
+  if (existsSync(path)) {
+    if (readFileSync(path, "utf8") !== bytes) throw new Error(`Requirement history revision already exists with different bytes: ${path}`);
+  } else {
+    mkdirSync(dirname(path), { recursive: true });
+    atomicWrite(path, bytes);
+  }
+  if (!sameRecord(attempt.requirement_mapping, transaction.mapping)) {
+    writeAttempt(slug, { ...attempt, requirement_mapping: transaction.mapping });
+  }
+}
+
+// Verification is derived on read. Stored progress and work_state cannot grant
+// acceptance, and changed/missing artifact bytes never retain a verified claim.
+export function readRequirementMapping(slug, idOrName) {
+  if (typeof idOrName !== "string" || !idOrName.trim()) throw new Error("A named attempt or exact attempt ID is required for a mapping read");
+  const attempt = progressAttempt(slug, idOrName);
+  return requirementMappingView(attempt);
+}
+
+function requirementMappingView(attempt) {
+  const mapping = attempt.requirement_mapping;
+  if (!mapping) return null;
+  const warnings = [];
+  let planValid = true;
+  try {
+    const plan = governingAttemptArtifact(attempt, "plan");
+    if (!plan || plan.id !== mapping.governing_plan.artifact_id || plan.accepted_sha256 !== mapping.governing_plan.sha256) {
+      throw new Error("Requirement mapping does not reference the current governing accepted plan");
+    }
+    if (!Number.isSafeInteger(mapping.revision) || mapping.revision < 1) throw new Error("Invalid stored requirement mapping revision");
+    const checked = validateRequirementMappingUpdate({ schema_version: mapping.schema_version, attempt_id: mapping.attempt_id,
+      governing_plan: mapping.governing_plan, expected_revision: mapping.revision, requirements: mapping.requirements },
+    { attempt_id: attempt.id, governing_plan: { artifact_id: plan.id, sha256: plan.accepted_sha256 },
+      requirement_ids: planRequirementIds(attempt, plan), mapping_revision: mapping.revision });
+    if (!checked.valid) throw new Error(`Invalid stored requirement mapping: ${checked.errors.join("; ")}`);
+  } catch (error) { planValid = false; warnings.push(error.message); }
+  return { ...structuredClone(mapping), requirements: mapping.requirements.map(entry => {
+    const evidenceWarnings = [];
+    let verified = planValid && Boolean(entry.decision_ref) && entry.proof_refs.length > 0;
+    if (entry.decision_ref) {
+      try { checkRequirementArtifact(attempt, entry.decision_ref, true); }
+      catch (error) { verified = false; evidenceWarnings.push(error.message); }
+    }
+    for (const ref of entry.proof_refs) {
+      try {
+        if (checkRequirementArtifact(attempt, ref, true).type !== "implementation_evidence") {
+          throw new Error(`Requirement proof must reference implementation_evidence: ${ref.artifact_id}`);
+        }
+      } catch (error) { verified = false; evidenceWarnings.push(error.message); }
+    }
+    return { ...structuredClone(entry), verification: verified ? "verified" : "unverified", evidence_warnings: evidenceWarnings };
+  }), warnings, history_ref: { attempt_id: attempt.id, path: "requirement-history/" } };
+}
+
+function summaryPage(items, cursor, attemptId, revision, collection, planRef) {
+  const source = createHash("sha256").update(JSON.stringify({ plan: planRef, items })).digest("hex");
+  const context = { attempt_id: attemptId, mapping_revision: revision, collection, source_sha256: source };
+  let offset = 0;
+  if (cursor !== undefined) {
+    const result = parseSummaryCursor(cursor, context);
+    if (!result.valid) throw new Error(`Invalid summary cursor: ${result.errors.join("; ")}`);
+    offset = result.value.offset;
+    if (offset % SUMMARY_PAGE_SIZE !== 0 || (offset > 0 && offset >= items.length)) {
+      throw new Error("Invalid summary cursor: offset is outside the current page boundaries");
+    }
+  }
+  const page = items.slice(offset, offset + SUMMARY_PAGE_SIZE);
+  const nextOffset = offset + page.length;
+  return { items: page, offset, limit: SUMMARY_PAGE_SIZE, total: items.length, omitted: items.length - page.length,
+    next_cursor: nextOffset < items.length ? Buffer.from(JSON.stringify({ schema_version: 1, ...context,
+      offset: nextOffset, limit: SUMMARY_PAGE_SIZE })).toString("base64url") : null };
+}
+
+function assertSummaryReadable(slug) {
+  if (existsSync(pendingProgressPath(slug)) || existsSync(join(storeProjectDir(slug), ".record-progress.lock"))) {
+    throw new Error("Summary unavailable while a progress write is pending or running. Recover that write through the existing progress operation, then retry.");
+  }
+}
+
+function unacceptedPlanCandidates(attempt) {
+  const artifacts = attempt.artifacts || [];
+  const byId = new Map(artifacts.map(artifact => [artifact.id, artifact]));
+  const superseded = new Set();
+  const pending = artifacts.filter(artifact => artifact.type === "plan" && artifact.accepted_at)
+    .flatMap(artifact => artifact.supersedes || []);
+  while (pending.length) {
+    const id = pending.pop();
+    if (superseded.has(id)) continue;
+    superseded.add(id);
+    pending.push(...(byId.get(id)?.supersedes || []));
+  }
+  return artifacts.filter(artifact => artifact.type === "plan" && !artifact.accepted_at && !superseded.has(artifact.id));
+}
+
+function blockedWorkReferences(slug, attempts) {
+  return attempts.filter(attempt => attempt.status === "blocked").map(attempt => {
+    const reason = String(attempt.blocker || "Attempt is blocked. Read its details.");
+    return { kind: "blocker", attempt_id: attempt.id,
+      phase: attemptWorkflow(slug, attempt).phases.includes(attempt.current_phase) ? attempt.current_phase : null,
+      requirement_id: null, summary: reason.length > 240 ? `${reason.slice(0, 220)}… Read details.` : reason,
+      detail_ref: { attempt_id: attempt.id, path: "attempt.json" } };
+  });
+}
+
+/**
+ * Read current meaning only. No claim, progress recovery, or lifecycle mutation.
+ * @param {string} slug @param {string} idOrName
+ * @param {import('./summary-contracts.js').SummaryQueryOptions} options
+ * @returns {import('./summary-contracts.js').AttemptSummary}
+ */
+export function attemptSummary(slug, idOrName, options = {}) {
+  if (typeof idOrName !== "string" || !idOrName.trim()) throw new Error("An explicit attempt identity is required for a summary");
+  assertSummaryReadable(slug);
+  const attempts = readAttempts(slug);
+  const attempt = resolveProgressAttempt(slug, idOrName, attempts);
+  if (!["planned", "in_progress", "blocked", "abandoned", "done", "historical"].includes(attempt.status)) {
+    throw new Error("Invalid stored attempt lifecycle state");
+  }
+  const detail = (path, id = attempt.id) => ({ attempt_id: id, path });
+  const warnings = [];
+  const warn = (code, message, requirementId = null, ref = detail("attempt.json")) => {
+    warnings.push({ code, message, requirement_id: requirementId, detail_ref: ref });
+  };
+  const workflow = attemptWorkflow(slug, attempt);
+  const phase = workflow.phases.includes(attempt.current_phase) ? attempt.current_phase : null;
+  const handoff = readAttemptHandoffFile(slug, attempt.id) || "";
+  const markdownPhase = parseCurrentHandoff(handoff).currentPhase;
+  if ((attempt.current_phase && !phase) || (markdownPhase && markdownPhase !== phase)) {
+    warn("phase_mismatch", "The lifecycle phase and legacy handoff or workflow disagree. The summary uses only a validated lifecycle phase.", null, detail("HANDOFF.md"));
+  }
+  const context = attemptContextState(slug, attempt.id, { attempts, attempt, bounded: true, readOnly: true });
+  if (context.needs_refresh) {
+    warn("related_checkpoint", context.attention, null, detail("HANDOFF.md", context.related_attempt_id));
+  }
+  let plan = null;
+  try {
+    plan = governingAttemptArtifact(attempt, "plan");
+    if (plan && !plan.accepted_sha256) throw new Error("Governing plan has no SHA-bound acceptance");
+  } catch (error) {
+    plan = null;
+    warn(/changed after acceptance/.test(error.message) ? "artifact_changed" : "evidence_unavailable", error.message);
+  }
+  const planRef = plan ? { artifact_id: plan.id, sha256: plan.accepted_sha256 } : null;
+  const mapping = requirementMappingView(attempt);
+  let requirements = [];
+  if (!mapping) {
+    warn("mapping_missing", "No explicit requirement mapping exists. Read the attempt detail without inferring acceptance from its prose.", null, detail("HANDOFF.md"));
+  } else {
+    for (const message of mapping.warnings) {
+      warn(/changed after acceptance/.test(message) ? "artifact_changed" : "evidence_unavailable", message);
+    }
+    let ids = plan ? [] : mapping.requirements.map(entry => entry.requirement_id);
+    if (plan) {
+      try { ids = planRequirementIds(attempt, plan); }
+      catch (error) { warn("evidence_unavailable", error.message); }
+    }
+    const currentSource = !plan || sameArtifactReference(planRef, mapping.governing_plan);
+    const entries = new Map((currentSource ? mapping.requirements : []).map(entry => [entry.requirement_id, entry]));
+    requirements = ids.map(id => {
+      const entry = entries.get(id);
+      let decisionValid = false;
+      if (entry?.decision_ref) {
+        try { checkRequirementArtifact(attempt, entry.decision_ref, true); decisionValid = true; }
+        catch { /* The mapping view retains the precise evidence warning. */ }
+      }
+      return { source: { plan: planRef || mapping.governing_plan, requirement_id: id }, decision_ref: entry?.decision_ref || null,
+        work_state: entry?.work_state || "planned", verification: entry?.verification || "unverified", proof_refs: entry?.proof_refs || [],
+        detail_ref: detail(plan?.path || "attempt.json"), evidence_warnings: entry?.evidence_warnings || [], decision_valid: decisionValid };
+    });
+  }
+  const unresolved = [];
+  for (const candidate of unacceptedPlanCandidates(attempt)) {
+    unresolved.push({ kind: "decision", attempt_id: attempt.id, phase, requirement_id: null,
+      summary: `Plan ${candidate.id} is recorded but unaccepted.`, detail_ref: detail(candidate.path) });
+  }
+  for (const entry of requirements) {
+    const base = { attempt_id: attempt.id, phase, requirement_id: entry.source.requirement_id, detail_ref: detail("attempt.json") };
+    if (!entry.decision_valid) unresolved.push({ ...base, kind: "decision", summary: "Requirement decision has no valid accepted reference." });
+    if (entry.work_state === "blocked") unresolved.push({ ...base, kind: "blocker", summary: "Requirement work is blocked. Read its current mapping." });
+  }
+  if (!["done", "abandoned", "historical"].includes(attempt.status)) {
+    let gates;
+    try { gates = attemptGateState(slug, attempt).gates; }
+    catch (error) {
+      warn("evidence_unavailable", error.message);
+      gates = workflow.phases.filter(p => workflow.gates[p]?.kind === "decision").map(p => ({ phase: p, kind: "decision", status: "pending" }));
+    }
+    for (const gate of gates.filter(g => g.kind === "decision" && gateIsPending(g))) {
+      unresolved.push({ kind: "decision", attempt_id: attempt.id, phase: gate.phase, requirement_id: null,
+        summary: `Decision required for phase: ${gate.phase}`, detail_ref: detail("attempt.json") });
+    }
+  }
+  unresolved.push(...blockedWorkReferences(slug, attempts));
+  const revision = mapping?.revision || 0;
+  const requirementPage = summaryPage(requirements, options.requirementsCursor, attempt.id, revision, "requirements", planRef);
+  const unresolvedPage = summaryPage(unresolved, options.unresolvedWorkCursor, attempt.id, revision, "unresolved_work", planRef);
+  for (const entry of requirementPage.items) {
+    for (const message of entry.evidence_warnings) {
+      warn(/changed after acceptance/.test(message) ? "artifact_changed" : "evidence_unavailable", message, entry.source.requirement_id, detail("attempt.json"));
+    }
+  }
+  const complete = Boolean(mapping && plan && requirements.length && requirements.every(entry => entry.verification === "verified"));
+  if (mapping && !complete) warn("evidence_unavailable", "Some requirements have unverified evidence. Inspect their requirement pages.");
+  // Metadata changes invalidate the whole read rather than combining revisions.
+  assertSummaryReadable(slug);
+  if (!sameRecord(attempts, readAttempts(slug))) throw new Error("Summary source changed during the query. Retry from the first page.");
+  return { schema_version: 1, attempt: { id: attempt.id, lifecycle_state: attempt.status, current_phase: phase }, governing_plan: planRef,
+    mapping: { status: mapping ? "present" : "mapping_missing", revision: mapping ? revision : null, detail_ref: detail("attempt.json") },
+    requirements: { ...requirementPage, items: requirementPage.items.map(({ evidence_warnings, decision_valid, ...entry }) => entry) },
+    unresolved_work: unresolvedPage, evidence_completeness: complete ? "verified" : "unverified", warnings,
+    next_action: context.next_action, history_ref: detail("HANDOFF.md") };
+}
+
+// Ownership and unresolved work are separate views. Idle/conflicting checkouts
+// page project blockers without selecting an attempt as their summary source.
+export function checkoutSummary(slug, checkout, options = {}) {
+  assertSummaryReadable(slug);
+  const attempts = readAttempts(slug);
+  const responsibility = attemptResponsibility(slug, checkout, { attempts });
+  const summary = responsibility.attempt ? attemptSummary(slug, responsibility.attempt.id, options) : null;
+  const unresolvedWork = summary?.unresolved_work || summaryPage(blockedWorkReferences(slug, attempts),
+    options.unresolvedWorkCursor, slug, 0, "unresolved_work", null);
+  assertSummaryReadable(slug);
+  if (!sameRecord(attempts, readAttempts(slug))) throw new Error("Startup source changed during the query. Retry from the first page.");
+  return { attempts, responsibility, summary, unresolved_work: unresolvedWork };
 }
 
 // Single workflow.json read for an already-loaded attempt. Projections pass
@@ -908,7 +1556,7 @@ export function attemptContextState(slug, idOrName, options = {}) {
     const repositoryPath = repositoryPathForAttempts(slug, attempts);
     const entries = [entry];
     const canonicalPath = join(storeProjectDir(slug), "HANDOFF.md");
-    const canonical = readHandoff(slug) || "";
+    const canonical = (options.readOnly ? readProjectHandoffFile(slug) : readHandoff(slug)) || "";
     const canonicalParsed = parseCurrentHandoff(canonical);
     if (canonicalParsed.attemptId) {
       entries.push({
@@ -1809,6 +2457,10 @@ export function removeArchivedWorktree(slug, worktreePath, { approved = false } 
 
 export function readHandoff(slug) {
   recoverPendingProgress(slug);
+  return readProjectHandoffFile(slug);
+}
+
+function readProjectHandoffFile(slug) {
   const path = join(storeProjectDir(slug), "HANDOFF.md");
   if (!existsSync(path)) return null;
   return readFileSync(path, "utf8");
@@ -1820,7 +2472,10 @@ export function writeHandoff(slug, markdown) {
 }
 
 function progressAttempt(slug, idOrName) {
-  const attempts = listAttempts(slug);
+  return resolveProgressAttempt(slug, idOrName, listAttempts(slug));
+}
+
+function resolveProgressAttempt(slug, idOrName, attempts) {
   if (idOrName) {
     const exact = attempts.find((attempt) => attempt.id === idOrName);
     if (exact) return exact;
@@ -1942,10 +2597,13 @@ function replayPendingProgressLocked(slug) {
   // succeeds, so without the path every operation for the project fails with
   // no indication of where the blocking artifact lives or how to clear it.
   const escapeHatch = `Inspect or remove ${path} to clear this error.`;
-  if (pending.schema_version !== 1 || !pending.update || typeof pending.update.message !== "string") {
+  if (pending.schema_version !== 1 || !pending.update || typeof pending.update.message !== "string"
+    || Boolean(pending.requirement_transaction) !== (pending.update.requirementUpdate !== undefined)) {
     throw new Error(`Invalid pending progress checkpoint in ${path}; preserve it for recovery. ${escapeHatch}`);
   }
-  const result = recordProgressLocked(slug, pending.update);
+  let result;
+  try { result = recordProgressLocked(slug, pending.update, pending.requirement_transaction || null); }
+  catch (error) { throw new Error(`Pending progress could not be recovered: ${error.message}; journal: ${path}. ${escapeHatch}`); }
   if (!result.recorded) {
     throw new Error(`Pending progress could not be recovered (${result.reason}); journal: ${path}. ${escapeHatch}`);
   }
@@ -2081,12 +2739,12 @@ function attemptProgressAcceptance(slug, handoffBase, update, establishedWorkIte
 // older than their current work, while an explicit attempt rejection vetoes
 // the whole checkpoint. Accepted scoped history is written before the
 // canonical handoff so the canonical view never claims an unrecorded attempt.
-export function recordProgress(slug, { message, timestamp, phase, next, files, attemptId, workItem, reviewRevision }) {
+export function recordProgress(slug, { message, timestamp, phase, next, files, attemptId, workItem, reviewRevision, requirementUpdate }) {
   if (!getProject(slug)) throw new Error(`Unknown DIRF project ${slug}`);
-  return withProgressLock(slug, () => recordProgressLocked(slug, { message, timestamp, phase, next, files, attemptId, workItem, reviewRevision }));
+  return withProgressLock(slug, () => recordProgressLocked(slug, { message, timestamp, phase, next, files, attemptId, workItem, reviewRevision, requirementUpdate }));
 }
 
-function recordProgressLocked(slug, { message, timestamp, phase, next, files, attemptId, workItem, reviewRevision }) {
+function recordProgressLocked(slug, { message, timestamp, phase, next, files, attemptId, workItem, reviewRevision, requirementUpdate }, replayTransaction = null) {
     const attempt = progressAttempt(slug, attemptId);
     const attemptHandoff = attempt ? readAttemptHandoffFile(slug, attempt.id) : null;
     const fallback = "# DIRF Handoff\n\n## Objective\n\n(Work in progress)\n";
@@ -2101,6 +2759,7 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
       workItem: workItem ?? recordedAttemptContext.workItem ?? null,
       reviewRevision: reviewRevision || recordedAttemptContext.reviewRevision || null,
       attemptId: attempt?.id || null,
+      ...(requirementUpdate !== undefined ? { requirementUpdate } : {}),
     };
     const attemptBase = attempt ? attemptHandoff || canonicalBase : null;
     const canonicalDecision = progressAcceptance(slug, canonicalBase, draftUpdate);
@@ -2145,10 +2804,15 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
     // intent so invalid input cannot become a permanently failing recovery.
     if (canonicalAccepted) updateProgressSection(canonicalBase, draftUpdate);
     if (attemptDecision?.accepted) updateProgressSection(attemptBase, draftUpdate);
+    if (requirementUpdate !== undefined && (!attemptId || !attemptDecision?.accepted)) throw new Error("Requirement updates require an explicitly selected, accepted attempt checkpoint");
+    const requirementTransaction = requirementUpdate !== undefined
+      ? prepareRequirementTransaction(attempt, requirementUpdate, { message: draftUpdate.message, timestamp: draftUpdate.timestamp }, replayTransaction)
+      : null;
     // Persist the validated intent before changing its multiple projections.
     // Recovery reuses this operation; repeated history entries are deduplicated.
     if (attemptDecision?.accepted) {
-      atomicWrite(pendingProgressPath(slug), JSON.stringify({ schema_version: 1, update: draftUpdate }) + "\n");
+      atomicWrite(pendingProgressPath(slug), JSON.stringify({ schema_version: 1, update: draftUpdate,
+        ...(requirementTransaction ? { requirement_transaction: requirementTransaction } : {}) }) + "\n");
     }
     const update = { ...draftUpdate, updateNumber: nextProgressUpdateNumber(slug) };
     // A process can exit after saving the attempt but before projecting it to
@@ -2172,6 +2836,7 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
       ? updateProgressSection(attemptBase, update)
       : attemptHandoff;
 
+    if (requirementTransaction) applyRequirementTransaction(slug, attempt.id, requirementTransaction);
     if (attemptDecision?.accepted) {
       atomicWrite(join(storeAttemptDir(slug, attempt.id), "HANDOFF.md"), updatedAttemptHandoff);
     }
@@ -2181,7 +2846,7 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
     return {
       handoff: updatedHandoff,
       attempt_handoff: updatedAttemptHandoff,
-      attempt,
+      attempt: requirementTransaction ? getAttempt(slug, attempt.id) : attempt,
       lifecycle,
       recorded: true,
       accepted: canonicalAccepted,

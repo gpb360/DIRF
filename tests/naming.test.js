@@ -14,7 +14,7 @@ function names(directory, type) {
 }
 
 test("repository names follow the documented conventions", () => {
-  for (const file of names("src", "file")) assert.match(file, /^[a-z][a-z0-9-]*\.js$/);
+  for (const file of names("src", "file")) assert.match(file, /^[a-z][a-z0-9-]*(?:\.js|\.d\.ts)$/);
   for (const file of names("tests", "file")) assert.match(file, /^[a-z][a-z0-9-]*\.test\.js$/);
   for (const file of names("scripts", "file")) assert.match(file, /^[a-z][a-z0-9-]*\.js$/);
   for (const file of names("agents", "file")) assert.match(file, /^[a-z][a-z0-9-]*\.md$/);

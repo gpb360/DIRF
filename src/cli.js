@@ -11,7 +11,7 @@
 //   dirf status [--path DIR] [--json]                    show project and repository state
 //   dirf resume <name-or-id> [--path DIR] [--json|--full] claim task and show its next action
 //   dirf host setup [--settings FILE] [--skill-dir DIR]  one-time host bootstrap: SessionStart hook + global dirf skill
-//   dirf state active [--path DIR] [--json|--hook]       report checkout-scoped responsibility
+//   dirf state active [--path DIR] [--json|--hook] [--unresolved-work-cursor TOKEN]
 //   dirf validate                                        validate registries + workflows
 //   dirf skills scan [--path DIR]                        scan host, print installed skills + resolved refs
 //   dirf review trigger|verify-update ...                 hand off findings to a same-PR fixer
@@ -33,7 +33,7 @@ import { installationDiagnostics } from "./doctor.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, projectHandoffContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, attemptNextAction, projectWorkSnapshot, observeAttempt, bindExecutionAuthority, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings, workflowGates, attemptAudit, runBuiltinCheck } from "./state.js";
+import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, projectHandoffContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, attemptNextAction, projectWorkSnapshot, observeAttempt, bindExecutionAuthority, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings, workflowGates, attemptAudit, runBuiltinCheck, attemptSummary, deriveSlug, checkoutSummary } from "./state.js";
 import { ARTIFACT_TYPES, explainGoverningArtifact } from "./artifacts.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 import {
@@ -693,10 +693,30 @@ function cmdStatus(args) {
 
 function cmdResume(args) {
   const target = projectRoot(args.path);
-  const attempt = findAttempt(target, args.name);
-  const project = resolveProject(target);
+  const options = summaryOptions(args);
+  if (!args.summary && (args.requirementsCursor !== undefined || args.unresolvedWorkCursor !== undefined)) {
+    throw new Error("Resume cursors require --summary");
+  }
+  let attempt, project;
+  if (args.summary) {
+    if (args.full) throw new Error("Choose --summary or --full");
+    if (args.slug) throw new Error("Use --path to select the checkout for resume --summary");
+    if (args._.length !== 1) throw new Error("resume --summary requires one explicit attempt ID or unique name");
+    project = { slug: resolveSummarySlug(args) };
+    // Validate identity and cursors before the existing resume claim can write.
+    const selected = attemptSummary(project.slug, args.name, options);
+    if (selected.attempt.lifecycle_state === "planned" && (options.requirementsCursor !== undefined || options.unresolvedWorkCursor !== undefined)) {
+      throw new Error("Use state summary to page a planned attempt, or resume it before requesting continuation pages");
+    }
+    // Resume writes ownership. Retain the existing local-handoff conflict guard.
+    project = resolveProject(target, { touch: false });
+    attempt = getAttemptState(project.slug, selected.attempt.id);
+  } else {
+    attempt = findAttempt(target, args.name);
+    project = resolveProject(target);
+  }
   const context = attemptContextState(project.slug, attempt.id, {
-    bounded: !args.json && !args.full,
+    bounded: args.summary || (!args.json && !args.full),
   });
   if (context.needs_refresh) {
     if (context.related_task_requires_reconciliation) {
@@ -733,12 +753,17 @@ function cmdResume(args) {
   const workflow = existsSync(readme) ? readme : join(attempt.folder, "workflow.json");
   const handoff = join(attempt.folder, "HANDOFF.md");
   if (!existsSync(handoff)) throw new Error(`Attempt ${attempt.id} has no HANDOFF.md; rebuild it before resuming.`);
+  if (args.summary) {
+    printAttemptSummary(attemptSummary(project.slug, attempt.id, options), args.json);
+    return;
+  }
   if (!args.json && !args.full) {
     const current = getAttemptState(project.slug, attempt.id);
     const gates = pendingGates(project.slug, attempt.id);
     console.log(`Resume attempt: ${attempt.id}`);
     console.log(`Stage: ${current.current_phase || "not started"}`);
     if (autoStarted) console.log("Lifecycle: started");
+    console.log("Use --summary --json for current evidence; --full for project history.");
     console.log(`Load workflow: ${workflow}`);
     console.log(`Load attempt handoff: ${handoff}`);
     if (gates.length) {
@@ -747,7 +772,6 @@ function cmdResume(args) {
       if (gate) console.log(`Current check: ${gate.phase} (${gate.kind}${gate.status === "denied" ? ", denied" : ""})${gate.comment ? ` — ${gate.comment}` : ""}`);
     }
     console.log(`Next: ${context.next_action || "Read the workflow and task handoff for the next action."}`);
-    console.log("Use --full for project context and recorded evidence.");
     return;
   }
   let config = null;
@@ -1088,9 +1112,41 @@ function cmdExportPlaybooks() {
   console.log(`Compatibility playbook JSON exported: ${PLAYBOOKS}`);
 }
 
-function resolveStateSlug(args) {
+function resolveStateSlug(args, { touch = true } = {}) {
   const reference = args.slug || projectRoot(args.path || ".");
-  return resolveProjectReference(reference, { explicitSlug: Boolean(args.slug) });
+  return resolveProjectReference(reference, { explicitSlug: Boolean(args.slug), touch });
+}
+
+function resolveSummarySlug(args) {
+  // Resolve an already registered identity. Path resolution with touch:false
+  // can still migrate legacy state, which a read-only summary must not do.
+  return resolveProjectReference(args.slug || deriveSlug(projectRoot(args.path)), { explicitSlug: true, touch: false });
+}
+
+function summaryOptions(args) {
+  return { requirementsCursor: args.requirementsCursor, unresolvedWorkCursor: args.unresolvedWorkCursor };
+}
+
+function printAttemptSummary(summary, json) {
+  if (json) { console.log(JSON.stringify(summary, null, 2)); return; }
+  console.log(`DIRF task: ${summary.attempt.id}`);
+  console.log(`Stage: ${summary.attempt.current_phase || "not started"} (${summary.attempt.lifecycle_state})`);
+  console.log(`Mapping: ${summary.mapping.status}; evidence: ${summary.evidence_completeness}`);
+  for (const [label, page, option] of [["Requirements", summary.requirements, "--requirements-cursor"], ["Unresolved work", summary.unresolved_work, "--unresolved-work-cursor"]]) {
+    console.log(`${label}: ${page.items.length} shown, ${page.total} total, ${page.omitted} omitted`);
+    for (const item of page.items) console.log(item.source
+      ? `  ${item.source.requirement_id}: ${item.work_state}, ${item.verification}`
+      : `  ${item.attempt_id}: ${item.summary}`);
+    if (page.next_cursor) console.log(`Continue ${label.toLowerCase()} with ${option} ${page.next_cursor}`);
+  }
+  if (summary.warnings.length) console.log(`Warnings: ${[...new Set(summary.warnings.map(warning => warning.code))].join(", ")} (see JSON or attempt details)`);
+  console.log(`Next: ${summary.next_action || "Read the referenced attempt details."}`);
+}
+
+function cmdStateSummary(args) {
+  if (!args.attempt || args._.length) throw new Error("state summary requires --attempt <ID|UNIQUE_NAME>");
+  if (args.full) throw new Error("state summary excludes full history; use state read-handoff for that detail");
+  printAttemptSummary(attemptSummary(resolveSummarySlug(args), args.attempt, summaryOptions(args)), args.json);
 }
 
 function cmdStateWhich(args) {
@@ -1184,11 +1240,31 @@ function currentExecutionFromEnv(env) {
   };
 }
 
+function shellLiteral(value) {
+  return process.platform === "win32"
+    ? `'${value.replaceAll("'", "''")}'`
+    : `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function startupDetailLines(result) {
+  const page = result.unresolved_work;
+  const lines = [];
+  if (page.total) {
+    lines.push(`Unresolved work: ${page.items.length} of ${page.total} shown, ${page.omitted} omitted.`);
+    lines.push(...page.items.map(row => `  ${row.kind}: ${row.attempt_id}${row.requirement_id ? ` ${row.requirement_id}` : ""} (see ${row.detail_ref.path})`));
+    if (page.next_cursor) lines.push(`More: dirf state active --path ${shellLiteral(result.checkout)} --unresolved-work-cursor ${page.next_cursor} --json`);
+  }
+  if (result.warnings.length) lines.push(`Warnings: ${[...new Set(result.warnings.map(warning => warning.code))].join(", ")} (see current summary).`);
+  if (result.state === "active") lines.push(`Evidence: ${result.evidence_completeness}; related-checkpoint flags do not establish evidence completeness.`);
+  return lines;
+}
+
 function cmdStateActive(args) {
   const target = projectRoot(args.path || ".");
-  const project = resolveProject(target);
+  const project = resolveProject(target, { touch: false, migrate: false });
   const checkout = checkoutRoot(target);
   if (!project) {
+    if (args.unresolvedWorkCursor !== undefined) throw new Error("Cannot page unresolved work for an unconfigured checkout");
     const result = { schema_version: 1, state: "idle", configured: false, project: null, checkout };
     if (args.hook) {
       console.log(JSON.stringify({ hookSpecificOutput: {
@@ -1199,8 +1275,9 @@ function cmdStateActive(args) {
     else console.log("DIRF idle: this checkout is not configured. Run dirf setup before routing new work.");
     return;
   }
-  const projectAttempts = listAttemptsState(project.slug);
-  const responsibility = attemptResponsibility(project.slug, checkout, { attempts: projectAttempts });
+  const current = checkoutSummary(project.slug, checkout, { unresolvedWorkCursor: args.unresolvedWorkCursor });
+  const projectAttempts = current.attempts;
+  const responsibility = current.responsibility;
   const execution = responsibility.attempt ? currentExecutionFromEnv(process.env) : null;
   if (execution?.authorityToken) observeAttempt(project.slug, responsibility.attempt.id, { ...execution, worktreePath: checkout });
   const attempts = responsibility.attempts.map((attempt) => ({
@@ -1214,10 +1291,12 @@ function cmdStateActive(args) {
       bounded: true,
       attempts: projectAttempts,
       attempt: responsibility.attempt,
+      readOnly: true,
     })
     : null;
   const active = responsibility.attempt ? {
     ...attempts[0],
+    current_phase: current.summary.attempt.current_phase,
     ...activeContext,
     workflow_path: existsSync(join(responsibility.attempt.folder, "README.md"))
       ? join(responsibility.attempt.folder, "README.md")
@@ -1232,6 +1311,11 @@ function cmdStateActive(args) {
     checkout,
     ...(active ? { attempt: active } : {}),
     ...(responsibility.state === "conflict" ? { attempts } : {}),
+    unresolved_work: current.unresolved_work,
+    warnings: (current.summary?.warnings || []).slice(0, 5),
+    warnings_total: current.summary?.warnings.length || 0,
+    warnings_omitted: Math.max(0, (current.summary?.warnings.length || 0) - 5),
+    evidence_completeness: current.summary?.evidence_completeness || "unverified",
   };
 
   if (args.hook) {
@@ -1249,6 +1333,9 @@ function cmdStateActive(args) {
     } else {
       additionalContext = "DIRF is available in this checkout, but no in-progress attempt is bound here. Route genuinely new work through DIRF; do not resume or duplicate unrelated planned, blocked, or other-checkout attempts.";
     }
+    const details = startupDetailLines(result);
+    if (active?.needs_refresh) additionalContext = `Related-checkpoint warning. ${additionalContext}`;
+    if (details.length) additionalContext += `\n${details.join("\n")}`;
     console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext } }));
     return;
   }
@@ -1256,8 +1343,9 @@ function cmdStateActive(args) {
   if (result.state === "active") {
     console.log(`DIRF task: ${active.id} (${active.name})`);
     console.log(`Stage: ${active.current_phase || "not recorded"}`);
+    for (const line of startupDetailLines(result)) console.log(line);
     if (active.needs_refresh) {
-      console.log(`Attention: ${active.attention}`);
+      console.log(`Related-checkpoint warning: ${active.attention}`);
       if (active.related_task_requires_reconciliation) {
         console.log(`Next: Check the current PR commit, update the task that matches it, and stop or update task ${active.related_attempt_id}. Other handoff: ${active.related_handoff_path}`);
       } else {
@@ -1268,8 +1356,10 @@ function cmdStateActive(args) {
     }
   } else if (result.state === "conflict") {
     console.log(`DIRF conflict: ${attempts.map(({ id }) => id).join(", ")}`);
+    for (const line of startupDetailLines(result)) console.log(line);
   } else {
     console.log("DIRF idle: available for new work; no in-progress attempt is bound to this checkout.");
+    for (const line of startupDetailLines(result)) console.log(line);
   }
 }
 
@@ -1397,7 +1487,9 @@ function recorderIdentityFromEnv(env, detected = { project: [], global: [] }) {
 }
 
 function cmdAttempt(args) {
-  const slug = resolveStateSlug(args);
+  // Attempt mutations serialize in the project lock. Avoid racing on the
+  // shared registry's last_seen before those operations acquire their lock.
+  const slug = resolveStateSlug(args, { touch: false });
   const action = args._[0];
   const id = args._[1];
   if (!action) throw new Error("usage: dirf attempt <start-tracking|start|assign|advance|block|abandon|reopen|complete|link|observe|gate|sync-from-handoff> <id> [options]");
@@ -1709,8 +1801,15 @@ function cmdRecordProgress(args) {
   const target = projectRoot(args.path);
 
   try {
+    let requirementUpdate;
+    if (args.requirementUpdateFile !== undefined) {
+      try { requirementUpdate = JSON.parse(readFileSync(resolve(args.requirementUpdateFile), "utf8")); }
+      catch (error) { throw new Error(`Requirement update file must be readable JSON: ${error.message}`); }
+      if (!args.attempt) throw new Error("--requirement-update-file requires --attempt <ID|UNIQUE_NAME>");
+    }
     // Progress owns its own project lock. Avoid the normal last_seen registry
     // write here so concurrent checkpoints cannot race before serialization.
+    if (args.requirementUpdateFile !== undefined) resolveSummarySlug({ path: args.path });
     const project = resolveProject(target, { touch: false });
     if (!project) {
       throw new Error(`DIRF is not configured for ${target}. Run: dirf setup "${target}"`);
@@ -1726,6 +1825,7 @@ function cmdRecordProgress(args) {
       attemptId: args.attempt || null,
       workItem: args.workItem ?? null,
       reviewRevision: args.reviewRevision || null,
+      ...(args.requirementUpdateFile !== undefined ? { requirementUpdate } : {}),
     };
 
     const outcome = recordProgress(project.slug, updateData);
@@ -1804,6 +1904,15 @@ function parse(argv) {
     if (a === "--approved") { out.approved = true; continue; }
     if (a === "--json") { out.json = true; continue; }
     if (a === "--full") { out.full = true; continue; }
+    if (a === "--summary") { out.summary = true; continue; }
+    if (["--requirements-cursor", "--unresolved-work-cursor", "--requirement-update-file"].includes(a)) {
+      const value = rest[++i];
+      if (!value || value.startsWith("--")) throw new Error(`${a} requires a value`);
+      if (a === "--requirements-cursor") out.requirementsCursor = value;
+      else if (a === "--unresolved-work-cursor") out.unresolvedWorkCursor = value;
+      else out.requirementUpdateFile = value;
+      continue;
+    }
     if (a === "--hook") { out.hook = true; continue; }
     if (a === "--research") { out.research = true; continue; }
     if (a === "--no-focused-output") { out.focusedOutput = false; continue; }
@@ -1829,6 +1938,16 @@ function parse(argv) {
   return { cmd, args: out };
 }
 
+function validateCompactOptions(cmd, args) {
+  if (args.summary && cmd !== "resume") throw new Error("--summary is available with resume; use state summary for a read-only query");
+  if (args.requirementUpdateFile !== undefined && cmd !== "record-progress") throw new Error("--requirement-update-file is available only with record-progress");
+  if ((args.requirementsCursor !== undefined || args.unresolvedWorkCursor !== undefined)
+    && !(cmd === "resume" && args.summary) && !(cmd === "state" && args._[0] === "summary")
+    && !(cmd === "state" && args._[0] === "active" && args.requirementsCursor === undefined)) {
+    throw new Error("Continuation cursors require state summary, resume --summary, or state active --unresolved-work-cursor");
+  }
+}
+
 const HELP = `DIRF — Do It Right First
 
 Usage:
@@ -1844,8 +1963,9 @@ Usage:
   dirf run <folder> [--no-focused-output]             print deterministic execution handoff
   dirf list [--path DIR]                               list saved attempts
   dirf status [--path DIR] [--json]                    show project and repository state (machine-readable)
-  dirf resume <name-or-id> [--path DIR] [--json|--full] show task and next action; --json returns state, --full includes history
-  dirf record-progress "<message>" [--path DIR] [--attempt ID|UNIQUE_NAME] [--phase PHASE] [--next ACTION] [--files FILES] [--work-item ITEM] [--review-revision SHA]
+  dirf resume <name-or-id> [--path DIR] [--full|--summary] [--json]  claim task; --summary uses compact current state; legacy --json keeps full fields
+  dirf record-progress "<message>" [--path DIR] [--attempt ID|UNIQUE_NAME] [--phase PHASE] [--next ACTION] [--files FILES] [--work-item ITEM] [--review-revision SHA] [--requirement-update-file FILE]
+    --requirement-update-file passes an explicit RequirementMappingUpdate JSON file to the core; requires --attempt; prose never grants acceptance
                                                       record progress, update HANDOFF.md and sync the attempt lifecycle
   dirf attempt <action> <id> [--path DIR]              update lifecycle or execution ownership
                                                       (advance: [--run "CMD" | --evidence "TEXT"] [--strict] [--auto] — gated attempts complete only with captured --run/built-in evidence and a synced handoff)
@@ -1881,7 +2001,11 @@ Usage:
   dirf state write-handoff --file FILE|- [...]        write the canonical handoff
   dirf state list-attempts [--path DIR|--slug S]      list attempts for a project
   dirf state get-attempt <id> [...]                   show one attempt
-  dirf state active [--path DIR] [--json|--hook]      report idle, active, or conflicting checkout responsibility
+  dirf state active [--path DIR] [--json|--hook] [--unresolved-work-cursor TOKEN]  report ownership and bounded unresolved work without claiming it
+  dirf state summary --attempt ID|UNIQUE_NAME [--path DIR|--slug SLUG] [--json]  read compact current state without claiming or changing files
+    summary pages use --requirements-cursor TOKEN and --unresolved-work-cursor TOKEN (also available with resume --summary)
+    page planned attempts with state summary; start them before using resume --summary continuation cursors
+    compact JSON excludes history; resume --json retains project_handoff, attempt_handoff, and project_brain; resume --full shows text details
   dirf state import-handoff [--path DIR] [--force]    promote a local HANDOFF.md into the store
   dirf state migrate-cleanup [--path DIR]            remove migration backup(s) after confirming the store works
   dirf host setup [--settings FILE] [--skill-dir DIR] [--skip-hook] [--skip-skill] [--force]
@@ -2101,6 +2225,7 @@ async function main() {
   if (!argv.length || argv[0] === "--help" || argv[0] === "-h") { console.log(HELP); return; }
   const { cmd, args } = parse(argv);
   if (args.help) { console.log(HELP); return; }
+  validateCompactOptions(cmd, args);
 
   if (cmd === "setup") cmdSetup(args);
   else if (cmd === "host") cmdHost(args);
@@ -2149,6 +2274,7 @@ async function main() {
     else if (sub === "list-attempts") cmdStateListAttempts(subArgs);
     else if (sub === "get-attempt") cmdStateGetAttempt(subArgs);
     else if (sub === "active") cmdStateActive(subArgs);
+    else if (sub === "summary") cmdStateSummary(subArgs);
     else if (sub === "import-handoff") cmdStateImportHandoff(subArgs);
     else if (sub === "migrate-cleanup") cmdStateMigrateCleanup(subArgs);
     else { console.error(`unknown state subcommand: ${sub}\n\n${HELP}`); process.exit(2); }
