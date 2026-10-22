@@ -589,7 +589,7 @@ test("concurrent worktree claims serialize and exactly one owner wins", async ()
     }),
   ]);
 
-  assert.equal(results.filter(({ code }) => code === 0).length, 1);
+  assert.equal(results.filter(({ code }) => code === 0).length, 1, JSON.stringify(results));
   assert.equal(results.filter(({ code }) => code !== 0).length, 1);
   assert.match(results.find(({ code }) => code !== 0).stderr, /worktree or branch is owned by/);
   const snapshot = projectWorkSnapshot(slug, new Date());

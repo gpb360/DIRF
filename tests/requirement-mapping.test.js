@@ -7,7 +7,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   registerProject, createAttemptInStore, recordAttemptArtifact, acceptAttemptArtifact,
-  recordProgress, readRequirementMapping, getAttempt, storeProjectDir,
+  recordProgress, readRequirementMapping, getAttempt, storeProjectDir, attemptSummary,
 } from "../src/state.js";
 import { parseCurrentHandoff } from "../src/handoff-update.js";
 
@@ -151,6 +151,78 @@ test("unaccepted plans and prose-only requirement mentions cannot establish sour
   const beforeProse = snapshot(f);
   assert.throws(() => f.progress(next), /explicit Requirements table/);
   assert.deepEqual(snapshot(f), beforeProse);
+});
+
+test("HTML comments cannot declare governing requirement identities", async t => {
+  const visible = "## Requirements\n| ID | Requirement |\n| --- | --- |\n| R1 | Visible requirement |\n";
+  const hidden = "## Requirements\n| ID | Requirement |\n| --- | --- |\n| HIDDEN | Commented example |\n";
+  const cases = [
+    ["commented section", visible + "\n<!--\n" + hidden + "-->\n"],
+    ["comment before visible section", "<!--\n" + hidden + "-->\n\n" + visible],
+    ["commented row", visible + "<!-- | HIDDEN | Commented row | -->\n"],
+    ["unterminated comment", visible + "\n<!--\n" + hidden],
+    ["unmatched literal delimiter", "An unmatched ` marker.\n\n" + visible + "\n<!--\n" + hidden + "-->\n"],
+    ["literal delimiter inside comment", "<!-- An unmatched ` marker. -->\n\n" + visible],
+  ];
+  for (const [name, planText] of cases) await t.test(name, t => {
+    const f = fixture(t, { planText });
+    f.progress(f.update());
+    const summary = attemptSummary(f.slug, f.attempt.id);
+    assert.deepEqual(summary.requirements.items.map(entry => entry.source.requirement_id), ["R1"]);
+    assert.equal(summary.requirements.items[0].verification, "verified");
+    const invalid = f.update(); invalid.requirements[0].requirement_id = "HIDDEN";
+    const before = snapshot(f);
+    assert.throws(() => f.progress(invalid), /must exist in the governing plan/);
+    assert.deepEqual(snapshot(f), before);
+  });
+});
+
+test("literal comment markers in code examples do not hide later requirement declarations", t => {
+  const f = fixture(t, { planText: "# Plan\n\n```markdown\n<!--\n```\n\n    <!--\n\n## Requirements\n| ID | Requirement |\n| --- | --- |\n| R1 | Visible requirement |\n" });
+  f.progress(f.update());
+  assert.equal(readRequirementMapping(f.slug, f.attempt.id).requirements[0].verification, "verified");
+});
+
+test("inline code and escaped comment markers preserve every visible requirement", async t => {
+  const rows = [
+    ["one backtick", "Document the `<!--` opener."],
+    ["matching delimiter runs", "Document ``the `<!--` marker``."],
+    ["escaped opener", "Document the \\<!-- literal opener."],
+  ];
+  for (const [name, description] of rows) await t.test(name, t => {
+    const f = fixture(t, { planText: "## Requirements\n| ID | Requirement |\n| --- | --- |\n| R1 | " + description + " |\n| R2 | Remain visible |\n" });
+    f.progress(f.update());
+    const incomplete = attemptSummary(f.slug, f.attempt.id);
+    assert.deepEqual(incomplete.requirements.items.map(entry => entry.source.requirement_id), ["R1", "R2"]);
+    assert.equal(incomplete.evidence_completeness, "unverified");
+    const update = f.update(); update.requirements[0].requirement_id = "R2";
+    f.progress(update);
+    assert.equal(attemptSummary(f.slug, f.attempt.id).evidence_completeness, "verified");
+  });
+  for (const prose of ["Use `<!--` as the comment opener.", "Use `<!--\ncontinued` as a literal opener.", "Use ``a `<!--`\ncontinued`` literal opener.", "Use `<!--\n2. continued` as a literal opener."]) await t.test(prose, t => {
+    const f = fixture(t, { planText: prose + "\n\n## Requirements\n| ID | Requirement |\n| --- | --- |\n| R1 | Visible declaration |\n" });
+    f.progress(f.update());
+    assert.equal(attemptSummary(f.slug, f.attempt.id).evidence_completeness, "verified");
+  });
+});
+
+test("masking cannot manufacture a governing heading or table prefix", async t => {
+  const visible = "## Requirements\n| ID | Requirement |\n| --- | --- |\n| R1 | Visible requirement |\n";
+  const hiddenRows = "| --- | --- |\n| HIDDEN | Not a source declaration |\n";
+  const cases = [
+    ["heading separator", "##<!-- note --> Requirements\n| ID | Requirement |\n" + hiddenRows],
+    ["comment continuation", "## Requirements\n\n<!-- hidden\n-->| ID | Requirement |\n" + hiddenRows],
+    ["code continuation", "## Requirements\n\nProse `literal\n`| ID | Requirement |\n" + hiddenRows],
+  ];
+  for (const [name, prefix] of cases) await t.test(name, t => {
+    const f = fixture(t, { planText: prefix + "\n" + visible });
+    f.progress(f.update());
+    assert.deepEqual(attemptSummary(f.slug, f.attempt.id).requirements.items.map(entry => entry.source.requirement_id), ["R1"]);
+    const invalid = f.update(); invalid.requirements[0].requirement_id = "HIDDEN";
+    const before = snapshot(f);
+    assert.throws(() => f.progress(invalid), /must exist in the governing plan/);
+    assert.deepEqual(snapshot(f), before);
+  });
 });
 
 test("changed accepted bytes invalidate reads and writes until explicitly replaced", t => {

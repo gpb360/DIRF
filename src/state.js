@@ -472,32 +472,90 @@ function requirementTableCells(line) {
   return cells.map(value => value.trim().replace(/^`|`$/g, ""));
 }
 
+function closingCodeSpan(text, start, ticks, lineEnd = null) {
+  const rest = text.slice(start, lineEnd ?? text.length);
+  // Inline spans may cross paragraph lines, but not a new Markdown block.
+  const boundary = /\n(?:[ \t]*\n| {0,3}(?:#{1,6}(?:\s|$)|`{3,}|~{3,}|<!--|>|(?:[-+*]|1[.)])\s))/.exec(rest);
+  const content = boundary ? rest.slice(0, boundary.index) : rest;
+  for (const match of content.matchAll(/`+/g)) {
+    if (match[0].length === ticks) return start + match.index + ticks;
+  }
+  return -1;
+}
+
 function planRequirementIds(attempt, plan) {
   const text = readFileSync(artifactContentPath(attempt, plan), "utf8");
+  const lines = text.split(/\r?\n/);
+  const markdown = lines.join("\n");
   const ids = [];
   let section = false;
   let idColumn = -1;
   let separator = false;
   let fence = null;
-  for (const line of text.split(/\r?\n/)) {
-    if (/^(?: {4}|\t)/.test(line)) { idColumn = -1; separator = false; continue; }
-    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
-    if (marker) {
+  let comment = false;
+  let sourceOffset = 0;
+  let codeEnd = -1;
+  for (const rawLine of lines) {
+    const sourceStart = sourceOffset;
+    sourceOffset += rawLine.length + 1;
+    const codePrefix = Math.max(0, Math.min(rawLine.length, codeEnd - sourceStart));
+    const continuation = comment || codeEnd > sourceStart;
+    if (!codePrefix && !comment && /^(?: {4}|\t)/.test(rawLine)) { idColumn = -1; separator = false; continue; }
+    const marker = !codePrefix && /^ {0,3}(`{3,}|~{3,})/.exec(rawLine)?.[1];
+    if (fence || (!comment && marker)) {
       if (!fence) fence = marker;
-      else if (marker[0] === fence[0] && marker.length >= fence.length && /^\s*(?:`+|~+)\s*$/.test(line)) fence = null;
+      else if (marker && marker[0] === fence[0] && marker.length >= fence.length && /^\s*(?:`+|~+)\s*$/.test(rawLine)) fence = null;
       idColumn = -1;
       separator = false;
       continue;
     }
-    if (fence) continue;
-    if (/^#{1,6}\s/.test(line)) {
+    // Comments are not rendered declarations. Keep columns intact so removing
+    // hidden text cannot create a new heading or table; code stays literal.
+    let line = " ".repeat(codePrefix);
+    let position = codePrefix;
+    const tokens = /\\[\\`<]|`+|<!--/g;
+    while (position < rawLine.length) {
+      if (comment) {
+        const end = rawLine.indexOf("-->", position);
+        const stop = end < 0 ? rawLine.length : end + 3;
+        line += " ".repeat(stop - position);
+        position = stop;
+        comment = end < 0;
+      } else {
+        tokens.lastIndex = position;
+        const token = tokens.exec(rawLine);
+        if (!token) { line += rawLine.slice(position); break; }
+        line += rawLine.slice(position, token.index);
+        if (token[0][0] === "`") {
+          const blockLine = /^ {0,3}(?:#{1,6}\s|\|)/.test(rawLine);
+          const end = closingCodeSpan(markdown, sourceStart + tokens.lastIndex, token[0].length,
+            blockLine ? sourceStart + rawLine.length : null);
+          if (end > sourceStart + rawLine.length) {
+            codeEnd = end;
+            line += " ".repeat(rawLine.length - token.index);
+            position = rawLine.length;
+            continue;
+          }
+          if (end >= 0) {
+            position = end - sourceStart;
+            line += rawLine.slice(token.index, position);
+            continue;
+          }
+        }
+        comment = token[0] === "<!--";
+        line += comment ? "    " : token[0];
+        position = tokens.lastIndex;
+      }
+    }
+    if (continuation || /^(?: {4}|\t)/.test(line)) { idColumn = -1; separator = false; continue; }
+    if (/^#{1,6}\s/.test(rawLine)) {
       section = /^#{1,6}\s+Requirements\s*#*\s*$/i.test(line);
       idColumn = -1;
       separator = false;
       continue;
     }
     if (!section) continue;
-    if (!line.trim().startsWith("|")) { idColumn = -1; separator = false; continue; }
+    if (!rawLine.trim().startsWith("|") || !line.trim().startsWith("|")) { idColumn = -1; separator = false; continue; }
     const cells = requirementTableCells(line);
     if (idColumn < 0) {
       idColumn = cells.findIndex(cell => cell === "ID" || cell === "Requirement ID");
