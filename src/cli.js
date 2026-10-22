@@ -8,8 +8,8 @@
 //   dirf learn [URL|FILE|TEXT] [--path DIR] [--profile FILE] [--file FILE] create a read-only learning review
 //   dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
 //   dirf list [--path DIR]                               list saved attempts
-//   dirf status [--path DIR]                             show project and repository state
-//   dirf resume <name-or-id> [--path DIR] [--full]       claim task and show its next action
+//   dirf status [--path DIR] [--json]                    show project and repository state
+//   dirf resume <name-or-id> [--path DIR] [--json|--full] claim task and show its next action
 //   dirf host setup [--settings FILE] [--skill-dir DIR]  one-time host bootstrap: SessionStart hook + global dirf skill
 //   dirf state active [--path DIR] [--json|--hook]       report checkout-scoped responsibility
 //   dirf validate                                        validate registries + workflows
@@ -622,10 +622,11 @@ function cmdList(args) {
   for (const attempt of attempts) console.log(`  - ${attempt.id}  ${attempt.name}`);
 }
 
-function gitOutput(target, args) {
+function gitOutput(target, args, { throwOnError = false } = {}) {
   try {
     return execFileSync("git", ["-C", target, ...args], { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).trim();
-  } catch {
+  } catch (error) {
+    if (throwOnError) throw error;
     return "";
   }
 }
@@ -641,21 +642,51 @@ function cmdStatus(args) {
   try { loadProjectConfig(target); attempts = listAttempts(target); }
   catch { configured = false; }
 
-  const branch = gitOutput(target, ["branch", "--show-current"]);
-  const changes = gitOutput(target, ["status", "--porcelain"]).split(/\r?\n/).filter(Boolean);
+  const isGit = gitOutput(target, ["rev-parse", "--is-inside-work-tree"]).trim() === "true";
+  const branch = isGit ? gitOutput(target, ["branch", "--show-current"]) : "";
+  let changes = null;
+  if (isGit) {
+    try {
+      changes = gitOutput(target, ["status", "--porcelain"], { throwOnError: true }).split(/\r?\n/).filter(Boolean);
+    } catch { /* Keep an unavailable working tree inspection distinct from a clean checkout. */ }
+  }
   const aheadBehind = gitOutput(target, ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"]).split(/\s+/).map(Number);
+  const hasUpstream = aheadBehind.length === 2 && aheadBehind.every(Number.isFinite);
+  const mostRecentlyUpdated = attempts.length
+    ? attempts.reduce((latest, attempt) => (String(attempt.updated_at ?? attempt.created_at ?? "") > String(latest.updated_at ?? latest.created_at ?? "") ? attempt : latest), attempts[0]).id
+    : null;
+
+  if (args.json) {
+    const status = {
+      target,
+      configured,
+      attempts: attempts.length,
+      latest_attempt: attempts.length ? attempts.at(-1).id : null,
+      most_recently_updated_attempt: mostRecentlyUpdated,
+      repository: {
+        is_git: isGit,
+        branch: branch || null,
+        changed_paths: changes?.length ?? null,
+        ahead: hasUpstream ? aheadBehind[0] : null,
+        behind: hasUpstream ? aheadBehind[1] : null,
+      },
+    };
+    console.log(JSON.stringify(status, null, 2));
+    return;
+  }
 
   console.log("DIRF status");
   console.log(`Target: ${target}`);
   console.log(`Configured: ${configured ? "yes" : "no"}`);
   console.log(`Attempts: ${attempts.length}`);
   if (attempts.length) console.log(`Latest: ${attempts.at(-1).id}`);
-  if (!branch) {
+  if (!isGit) {
     console.log("Repository: not a Git repository");
     return;
   }
-  console.log(`Repository: ${branch} (${changes.length ? `${changes.length} changed path(s)` : "clean"})`);
-  if (aheadBehind.length === 2 && aheadBehind.every(Number.isFinite)) {
+  const workingTree = changes === null ? "working tree status unavailable" : changes.length ? `${changes.length} changed path(s)` : "clean";
+  console.log(`Repository: ${branch || "detached HEAD"} (${workingTree})`);
+  if (hasUpstream) {
     console.log(`Upstream: ${aheadBehind[0]} ahead, ${aheadBehind[1]} behind`);
   }
 }
@@ -1812,8 +1843,8 @@ Usage:
   dirf graph <folder>                                 print ordered folder DAG
   dirf run <folder> [--no-focused-output]             print deterministic execution handoff
   dirf list [--path DIR]                               list saved attempts
-  dirf status [--path DIR]                             show project and repository state
-  dirf resume <name-or-id> [--path DIR] [--full]       show task, stage and next action; --full includes project history
+  dirf status [--path DIR] [--json]                    show project and repository state (machine-readable)
+  dirf resume <name-or-id> [--path DIR] [--json|--full] show task and next action; --json returns state, --full includes history
   dirf record-progress "<message>" [--path DIR] [--attempt ID|UNIQUE_NAME] [--phase PHASE] [--next ACTION] [--files FILES] [--work-item ITEM] [--review-revision SHA]
                                                       record progress, update HANDOFF.md and sync the attempt lifecycle
   dirf attempt <action> <id> [--path DIR]              update lifecycle or execution ownership

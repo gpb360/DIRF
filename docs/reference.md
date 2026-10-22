@@ -193,7 +193,8 @@ dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--res
 dirf create <name> "<task>" [--path DIR] [--profile FILE] [--models FILE]             route -> workflow JSON only
 dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
 dirf list [--path DIR]                               list a project's attempts
-dirf resume <name-or-id> [--path DIR]                load one attempt's workflow + HANDOFF.md
+dirf status [--path DIR] [--json]                    show project and repository state (--json is machine-readable)
+dirf resume <name-or-id> [--path DIR] [--json|--full] claim task and show its next action (--json returns structured state)
 dirf migrate [<name-or-id>]                          refresh legacy schema 2–5 attempt snapshots
                                                       (not the same as `state migrate-cleanup`)
 
