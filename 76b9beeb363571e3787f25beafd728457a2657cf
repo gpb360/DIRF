@@ -1,0 +1,13 @@
+score: 9/10
+
+Reviewed incoming main commit 76b9beeb363571e3787f25beafd728457a2657cf relative to a7695efc6bc43901d1e0d280343c78038e0f8fee.
+
+Scope: src/cli.js, docs/reference.md, tests/cli-status-json.test.js. These are the complete incoming changes.
+
+Independent Standards and Spec reviews found no actionable issue. The status JSON implementation, Git helper, documentation and tests were compared against both merge parents. Configured, unconfigured, detached-HEAD and update-recency behavior remain covered. The navigation conflict resolution is reviewed separately.
+
+Verification: the complete combined-source npm run check:release passed on Node22.20.0/Windows: 933 tests, 931 passed, zero failed, two optional integration skips. Validation, syntax, no-emit typecheck, smoke, publication and package checks passed. The incoming command implementation and tests match main. The merged candidate preserves compact resume, legacy JSON and explicit requirement-update options. Source hashes and primary checkout preservation were checked.
+
+Manual quality assessment: correctness/contracts 3/3, regression evidence 3/3, security/data scope 2/2, maintainability/operational coverage 1/2. The score is a local assessment supported by the reviews and executed checks. Optional integration controls remain unconfigured, and global installation/publication were not performed. There is no unresolved incoming-source finding.
+
+This note certifies the incoming head only. It does not authorize merging PR #80 into main.
