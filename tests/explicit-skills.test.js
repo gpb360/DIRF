@@ -103,7 +103,7 @@ test("a profile cannot silently drop an explicitly requested model skill", () =>
   const flow = buildFlow(selection, { task: "Use clear-updates", allowedSkills: [], bundledIndex: {} }, index);
   assert.deepEqual(flow.steps, []);
   assert.equal(flow.gaps[0].blocking, true);
-  assert.match(flow.gaps[0].question, /clear-updates.*excluded/);
+  assert.match(flow.gaps[0].question, /capability profile excludes/);
 });
 
 test("an incomplete requested skill blocks even without a matching playbook capability", () => {
@@ -129,4 +129,40 @@ test("an explicitly named skill already selected by capability is not duplicated
   });
   assert.deepEqual(flow.steps.map(({ skill }) => skill), ["clear-updates"]);
   assert.equal(flow.steps[0].stage, "report");
+});
+
+test("expanded negation forms do not invoke a named skill", () => {
+  for (const task of [
+    "dont use clear-updates, just fix the bug",
+    "I cannot use clear-updates this time",
+    "I won't use clear-updates today",
+    "We will not use clear-updates",
+    "instead of using clear-updates, use plain fixes",
+    "rather than clear-updates, fix it directly",
+  ]) {
+    assert.deepEqual(buildFlow(selection, { task, bundledIndex: {} }, index).steps, [], task);
+  }
+});
+
+test("a negated clause does not swallow a following affirmative skill command", () => {
+  const flow = buildFlow(selection, { task: "skip reviewing and use clear-updates", bundledIndex: {} }, index);
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["clear-updates"]);
+});
+
+test("a chained skill list tolerates the trailing word skill", () => {
+  const skills = { ...index, "brief-results": { ...index["clear-updates"], name: "brief-results" } };
+  const flow = buildFlow(selection, { task: "apply the clear-updates skill and then brief-results", bundledIndex: {} }, skills);
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["clear-updates", "brief-results"]);
+});
+
+test("a profile-excluded requested skill names the profile, and an incomplete one names its files", () => {
+  const excluded = buildFlow(selection, { task: "Use clear-updates", allowedSkills: [], bundledIndex: {} }, index);
+  assert.match(excluded.gaps[0].question, /capability profile excludes it/);
+  assert.doesNotMatch(excluded.gaps[0].question, /missing required files/);
+
+  const excludedIncomplete = buildFlow(selection, { task: "Use clear-updates", allowedSkills: [], bundledIndex: {} }, {
+    "clear-updates": { ...index["clear-updates"], readiness: "incomplete", missing_files: ["rules.md"] },
+  });
+  assert.match(excludedIncomplete.gaps[0].question, /capability profile excludes it/);
+  assert.match(excludedIncomplete.gaps[0].question, /rules\.md/);
 });

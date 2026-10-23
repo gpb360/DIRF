@@ -2,7 +2,7 @@
 // Selection happens in router.js; this module never classifies a task.
 import { bundledSkills, missingSkillFiles, skillIsIncomplete } from "./skills.js";
 import { ARTIFACT_TYPES } from "./artifacts.js";
-import { affirmativeRoutingText, negatesInterviewCapability } from "./router.js";
+import { affirmativeRoutingText, negatesInterviewCapability, NEGATED_ROUTING_PREFIX } from "./router.js";
 
 export const KNOWN_BRANCHES = new Set(["ui", "react", "security", "multi-session", "research"]);
 
@@ -257,13 +257,40 @@ function words(value) {
   return new Set(String(value || "").toLowerCase().replaceAll("-", " ").match(/[a-z0-9]{3,}/g)?.filter((word) => !STOP_WORDS.has(word)).map(stem) || []);
 }
 
+// The strip vocabulary is router.js NEGATED_ROUTING_PREFIX (authored to match
+// both raw and normalized-cue text) extended with substitution phrasing that
+// rejects one skill while asking for another. Regexes are cached per
+// alternatives string because findCapabilityGaps rebuilds a flow per playbook.
+const alternationCache = new Map();
+function skillAlternation(alternatives) {
+  let regex = alternationCache.get(alternatives);
+  if (!regex) {
+    regex = new RegExp(`\\b(?:${alternatives})\\b`, "g");
+    if (alternationCache.size >= 64) alternationCache.clear();
+    alternationCache.set(alternatives, regex);
+  }
+  return regex;
+}
+
+const negatedSkillListCache = new Map();
+function negatedSkillList(alternatives) {
+  let regex = negatedSkillListCache.get(alternatives);
+  if (!regex) {
+    regex = new RegExp(
+      `\\b(?:${NEGATED_ROUTING_PREFIX}|neither\\s+|instead\\s+of\\s+(?:using\\s+)?|rather\\s+than(?:\\s+using)?\\s+)` +
+      `(?:(?:use|using|run|invoke|apply)\\s+)?(?:${alternatives})\\b(?:\\s+(?:(?:and|or|nor)\\s+)?(?:${alternatives})\\b)*`, "g");
+    if (negatedSkillListCache.size >= 64) negatedSkillListCache.clear();
+    negatedSkillListCache.set(alternatives, regex);
+  }
+  return regex;
+}
+
 function affirmativeSkillRequests(task, names) {
   task = String(task || "").replace(/(^|\s)[/$]([a-z0-9][a-z0-9:-]*)/gi, "$1use $2");
   const alternatives = names.map((name) => normalizedCue(name).replaceAll(" ", "\\s+"))
     .filter(Boolean).sort((a, b) => b.length - a.length).join("|");
   if (!alternatives) return normalizedCue(task);
-  return normalizedCue(task).replace(new RegExp(
-    `\\b(?:without|skip|avoid|no|not|never|don t|do not|neither)\\s+(?:(?:use|using|run|invoke|apply)\\s+)?(?:${alternatives})\\b(?:\\s+(?:(?:and|or|nor)\\s+)?(?:${alternatives})\\b)*`, "g"), " ");
+  return normalizedCue(task).replace(negatedSkillList(alternatives), " ");
 }
 
 function namedSkillRequests(task, names) {
@@ -276,10 +303,11 @@ function namedSkillRequests(task, names) {
   const text = normalizedCue(task);
   let previousEnd;
   if (alternatives) {
-    for (const match of text.matchAll(new RegExp(`\\b(?:${alternatives})\\b`, "g"))) {
+    for (const match of text.matchAll(skillAlternation(alternatives))) {
       const prefix = text.slice(0, match.index);
       const invoked = /\b(?:use|using|with|apply|run|invoke|follow)(?:\s+(?:the|skill))*\s+$/.test(prefix);
-      const continued = previousEnd !== undefined && /^\s+(?:(?:and|then|also|or|plus)\s+)*$/.test(text.slice(previousEnd, match.index));
+      const continued = previousEnd !== undefined &&
+        /^\s+(?:(?:the\s+)?skill\s+)*(?:(?:and|then|also|or|plus)\s+(?:(?:the\s+)?skill\s+)*)*$/.test(text.slice(previousEnd, match.index));
       if (!invoked && !continued) continue;
       const name = byCue.get(normalizedCue(match[0]));
       if (!requests.has(name)) requests.set(name, match.index);
@@ -593,9 +621,14 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
     if (steps.some((step) => step.skill === name) ||
         declaredCapabilities(item).some((capability) => proseCapabilities.has(capability))) continue;
     const capability = declaredCapabilities(item)[0] || "explicit skill";
-    if (!installed[name] || skillIsIncomplete(item)) {
+    if (!installed[name]) {
+      // Exclusion is the only way here: an incomplete requested skill already
+      // returned earlier with the precise incomplete_skill gap.
+      const alsoIncomplete = skillIsIncomplete(item)
+        ? ` It is also incomplete (missing required files: ${missingSkillFiles(item).join(", ") || "undeclared required resources"}).`
+        : "";
       gaps.push({ stage: "requested", capability, code: "unavailable_requested_skill", blocking: true,
-        question: `${name} was requested but is excluded by the capability profile or has missing required files. Resolve that conflict before continuing.`,
+        question: `${name} was requested but the capability profile excludes it.${alsoIncomplete} Enable the skill in the profile before continuing.`,
         reason: "Preserve explicitly requested skill work.", requires_approval: false, trusted_candidates: [] });
       continue;
     }
@@ -628,8 +661,12 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
     }
     const capability = declaredCapabilities(item).find((value) => proseCapabilities.has(value));
     if ((Array.isArray(context.allowedSkills) && !context.allowedSkills.includes(name)) || skillIsIncomplete(item)) {
+      const excluded = Array.isArray(context.allowedSkills) && !context.allowedSkills.includes(name);
+      const detail = excluded
+        ? `${name} was requested but the capability profile excludes it${skillIsIncomplete(item) ? ` and it is incomplete (missing required files: ${missingSkillFiles(item).join(", ") || "undeclared required resources"})` : ""}. Enable the skill in the profile before continuing.`
+        : `${name} was requested but is incomplete (missing required files: ${missingSkillFiles(item).join(", ") || "undeclared required resources"}). Repair or reinstall the skill before continuing.`;
       gaps.push({ stage: "prose", capability, code: "unavailable_requested_skill", blocking: true,
-        question: `${name} was requested but is excluded by the capability profile or has missing required files. Resolve that conflict before continuing.`,
+        question: detail,
         reason: "Preserve explicitly requested prose work.", requires_approval: false, trusted_candidates: [] });
       continue;
     }
