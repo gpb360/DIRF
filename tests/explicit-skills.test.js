@@ -222,3 +222,15 @@ test("playbook description prose cannot fabricate requested-skill gaps", () => {
     index, { allowedSkills: [] });
   assert.deepEqual(gaps, []);
 });
+
+test("comma-separated explicit requests and negated lists hold", () => {
+  const skills = { ...index, "brief-results": { ...index["clear-updates"], name: "brief-results" } };
+  const flow = buildFlow(selection, { task: "use clear-updates, then brief-results", bundledIndex: {} }, skills);
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["clear-updates", "brief-results"]);
+
+  const excluded = buildFlow(selection, { task: "skip clear-updates, brief-results, then use brief-results", bundledIndex: {} }, skills);
+  assert.deepEqual(excluded.steps.map(({ skill }) => skill), ["brief-results"]);
+
+  const unrelated = buildFlow(selection, { task: "use clear-updates for the fix", bundledIndex: {} }, skills);
+  assert.deepEqual(unrelated.steps.map(({ skill }) => skill), ["clear-updates"]);
+});

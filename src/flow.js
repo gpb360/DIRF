@@ -304,7 +304,7 @@ function negatedSkillList(alternatives) {
   if (!regex) {
     regex = new RegExp(
       `\\b(?:${NEGATED_ROUTING_PREFIX}|${NEGATED_SKILL_REQUEST_PREFIX})` +
-      `(?:(?:use|using|run|invoke|apply|start)\\s+)?(?:${alternatives})\\b(?:\\s+(?:(?:and|or|nor)\\s+)?(?:${alternatives})\\b)*`, "g");
+      `(?:(?:use|using|run|invoke|apply|start)\\s+)?(?:${alternatives})\\b(?:(?:\\s+(?:(?:and|or|nor)\\s+)?|\\s*,\\s*(?:(?:and|or|nor)\\s+)?)(?:${alternatives})\\b)*`, "g");
     if (negatedSkillListCache.size >= 64) negatedSkillListCache.clear();
     negatedSkillListCache.set(alternatives, regex);
   }
@@ -361,8 +361,10 @@ function namedSkillRequests(task, names) {
     for (const match of text.matchAll(skillAlternation(alternatives))) {
       const prefix = text.slice(0, match.index);
       const invoked = INVOKED_SKILL_PREFIX.test(prefix);
+      // A comma between mentions keeps the list ("use clarity-checkpoint,
+      // then unslop"); only connectors and the optional "the skill" may appear.
       const continued = previousEnd !== undefined &&
-        /^\s+(?:(?:the\s+)?skill\s+)*(?:(?:and|then|also|or|plus)\s+(?:(?:the\s+)?skill\s+)*)*$/.test(text.slice(previousEnd, match.index));
+        /^\s*,?\s*(?:(?:the\s+)?skill\s+)*(?:(?:and|then|also|or|plus)\s*,?\s*(?:(?:the\s+)?skill\s+)*)*$/.test(text.slice(previousEnd, match.index));
       if (!invoked && !continued) continue;
       const name = byCue.get(normalizedCue(match[0]));
       if (!requests.has(name)) requests.set(name, match.index);
