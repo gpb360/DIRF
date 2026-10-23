@@ -346,9 +346,10 @@ function assembleTaskRouting(task, path, options = {}) {
     missing: capabilityProfile.skills.filter((name) => !allDiscovered[name] && !bundledIndex[name]),
   } : null;
   if (options.planningOnly) {
-    // "requested" stays: dropping it would silently discard explicit skill
-    // requests and their blocking unavailable_requested_skill gaps.
-    const planningStages = new Set(["discover", "model", "research", "specify", "slice", "handoff", "requested"]);
+    // "requested" and "prose" stay: dropping them would silently discard
+    // explicit skill requests and their blocking unavailable_requested_skill
+    // gaps.
+    const planningStages = new Set(["discover", "model", "research", "specify", "slice", "handoff", "requested", "prose"]);
     skillFlow.steps = skillFlow.steps.filter((step) => planningStages.has(step.stage));
     skillFlow.gaps = skillFlow.gaps.filter((gap) => planningStages.has(gap.stage));
   }

@@ -166,3 +166,30 @@ test("a profile-excluded requested skill names the profile, and an incomplete on
   assert.match(excludedIncomplete.gaps[0].question, /capability profile excludes it/);
   assert.match(excludedIncomplete.gaps[0].question, /rules\.md/);
 });
+
+test("cannot and won't phrasing does not erase affirmative routing text", async () => {
+  const { affirmativeRoutingText } = await import("../src/router.js");
+  assert.match(affirmativeRoutingText("I cannot fix the login page, please help"), /fix the login page/);
+  assert.match(affirmativeRoutingText("We can't update the docs today, sorry"), /update the docs/);
+});
+
+test("a negated common-word mention in prose does not block capability routing", () => {
+  const selected = { ...selection, skill_flow: { label: "demo", steps: [{ stage: "verify", capability: "testing", reason: "Verify" }] } };
+  const skills = { test: { name: "test", description: "Run tests", invocation: "model", capabilities: ["testing"] } };
+  const prose = buildFlow(selected, { task: "avoid test flakiness when adding tests", bundledIndex: {} }, skills);
+  assert.deepEqual(prose.steps.map(({ skill }) => skill), ["test"]);
+  const blocked = buildFlow(selected, { task: "avoid using test in this task", bundledIndex: {} }, skills);
+  assert.deepEqual(blocked.steps, []);
+  const bare = buildFlow(selected, { task: "avoid test, use static checks instead", bundledIndex: {} }, skills);
+  assert.deepEqual(bare.steps.map(({ skill }) => skill), ["test"]);
+});
+
+test("a bare preposition does not count as a skill invocation", () => {
+  const flow = buildFlow(selection, { task: "I disagree with clear-updates", bundledIndex: {} }, index);
+  assert.deepEqual(flow.steps, []);
+});
+
+test("a profile-excluded requested skill requires approval to skip", () => {
+  const flow = buildFlow(selection, { task: "Use clear-updates", allowedSkills: [], bundledIndex: {} }, index);
+  assert.equal(flow.gaps[0].requires_approval, true);
+});

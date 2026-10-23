@@ -56,12 +56,13 @@ const INTERVIEW_ROUTING_TARGETS = `grill(?:[- ]with[- ]docs|(?:\\s+me)?)|${GENER
 const POSITIVE_INTERVIEW_COMPLEMENT =
   "\\s+(?:(?:(?:to|should|must)\\s+)?(?:be|go|remain)\\s+)?" +
   "(?:(?:left\\s+)?unanswered|skipped|ignored|cut\\s+short)\\b";
-// The apostrophe-optional verb forms (don[' ]?t, won[' ]?t, can[' ]?t) also
-// match normalized-cue text, where an apostrophe becomes a space; flow.js
-// reuses this vocabulary so negation stays one list, not divergent copies.
+// Narrow by design: this prefix also feeds NEGATED_ROUTING_CLAUSE, which
+// strips negated *action* clauses from routing text, so broad verb forms
+// (cannot, won't, …) would erase affirmative task content ("I cannot fix the
+// login page"). flow.js composes this with its own broader forms, which are
+// safe there because a skill strip only ever matches before a skill name.
 export const NEGATED_ROUTING_PREFIX =
-  `(?:(?:(?:i\\s+)?(?:do\\s+not|don[' ]?t|cannot|can\\s+not|can[' ]?t|won[' ]?t|will\\s+not)\\s+` +
-  `(?:want\\s+(?:(?:you\\s+)?to\\s+)?)?|never\\s+|not\\s+)` +
+  `(?:(?:(?:i\\s+)?(?:do\\s+not|don't|dont)\\s+(?:want\\s+(?:(?:you\\s+)?to\\s+)?)?|never\\s+|not\\s+)` +
   `(?:you\\s+)?(?:use\\s+|run\\s+|invoke\\s+|start\\s+)?(?:(?:an?|the)\\s+)?|` +
   `without\\s+(?:(?:an?|the)\\s+)?|(?:skip|avoid)\\s+(?:(?:an?|the)\\s+)?|no\\s+)`;
 const NEGATED_ROUTING_CLAUSE = new RegExp(
