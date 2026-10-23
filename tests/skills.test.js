@@ -29,6 +29,32 @@ test("discover finds local SKILL.md skills", () => {
   assert.equal(idx["demo-skill"].description, "a demo");
 });
 
+test("discover retains multiline descriptions and the following invocation policy", () => {
+  const root = makeRoot();
+  const markers = [">", ">-", ">+", "|", "|-", "|+"];
+  for (const [i, marker] of markers.entries()) {
+    write(join(root, "skills", `multiline-${i}`), i % 2 ? "README.md" : "SKILL.md",
+      ["---", `name: multiline-${i}`, `description: ${marker}`,
+        "  Use when the user wants a small change", "  or asks for clear updates. Note: preserve meaning.",
+        "disable-model-invocation: true", "---", "These instructions are not metadata."].join("\r\n"));
+  }
+  const idx = skills.discover(root);
+  for (const i of markers.keys()) {
+    assert.equal(idx[`multiline-${i}`].description,
+      "Use when the user wants a small change or asks for clear updates. Note: preserve meaning.");
+    assert.equal(idx[`multiline-${i}`].invocation, "user");
+    assert.equal(idx[`multiline-${i}`].body_chars, "These instructions are not metadata.".length);
+  }
+});
+
+test("discover folds list-shaped block scalars without empty entries", () => {
+  const root = makeRoot();
+  write(join(root, "skills", "block-list"), "SKILL.md",
+    ["---", "name: block-list", "description: d", "capabilities: |", "  reporting", "", "  testing", "---", "body"].join("\n"));
+  const idx = skills.discover(root);
+  assert.deepEqual(idx["block-list"].capabilities, ["reporting", "testing"]);
+});
+
 test("discover distinguishes runnable skills from incomplete packages", () => {
   const root = makeRoot();
   const ready = join(root, "skills", "ready-skill");
