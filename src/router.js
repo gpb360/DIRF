@@ -62,7 +62,7 @@ const POSITIVE_INTERVIEW_COMPLEMENT =
 // login page"). flow.js composes this with its own broader forms, which are
 // safe there because a skill strip only ever matches before a skill name.
 export const NEGATED_ROUTING_PREFIX =
-  `(?:(?:(?:i\\s+)?(?:do\\s+not|don't|dont)\\s+(?:want\\s+(?:(?:you\\s+)?to\\s+)?)?|never\\s+|not\\s+)` +
+  `(?:(?:(?:i\\s+)?(?:do\\s+not|don[' ]?t)\\s+(?:want\\s+(?:(?:you\\s+)?to\\s+)?)?|never\\s+|not\\s+)` +
   `(?:you\\s+)?(?:use\\s+|run\\s+|invoke\\s+|start\\s+)?(?:(?:an?|the)\\s+)?|` +
   `without\\s+(?:(?:an?|the)\\s+)?|(?:skip|avoid)\\s+(?:(?:an?|the)\\s+)?|no\\s+)`;
 const NEGATED_ROUTING_CLAUSE = new RegExp(

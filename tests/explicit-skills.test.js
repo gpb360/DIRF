@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildFlow } from "../src/flow.js";
+import { buildFlow, findCapabilityGaps } from "../src/flow.js";
 import { bindingsFromPlan } from "../src/skill-bindings.js";
 import { buildInstructions } from "../src/renderer.js";
 
@@ -180,8 +180,10 @@ test("a negated common-word mention in prose does not block capability routing",
   assert.deepEqual(prose.steps.map(({ skill }) => skill), ["test"]);
   const blocked = buildFlow(selected, { task: "avoid using test in this task", bundledIndex: {} }, skills);
   assert.deepEqual(blocked.steps, []);
+  // A clause-terminated mention ("avoid test, …") is a reference; only prose
+  // that runs on after the name stays exempt.
   const bare = buildFlow(selected, { task: "avoid test, use static checks instead", bundledIndex: {} }, skills);
-  assert.deepEqual(bare.steps.map(({ skill }) => skill), ["test"]);
+  assert.deepEqual(bare.steps, []);
 });
 
 test("a bare preposition does not count as a skill invocation", () => {
@@ -192,4 +194,31 @@ test("a bare preposition does not count as a skill invocation", () => {
 test("a profile-excluded requested skill requires approval to skip", () => {
   const flow = buildFlow(selection, { task: "Use clear-updates", allowedSkills: [], bundledIndex: {} }, index);
   assert.equal(flow.gaps[0].requires_approval, true);
+});
+
+test("contraction negation survives cue normalization", () => {
+  for (const task of [
+    "Don't use clear-updates, just fix the bug",
+    "I won't be using clear-updates today",
+    "cannot start clear-updates now",
+  ]) {
+    assert.deepEqual(buildFlow(selection, { task, bundledIndex: {} }, index).steps, [], task);
+  }
+});
+
+test("a comma ends a negated list for capability blocking", () => {
+  const selected = { ...selection, skill_flow: { label: "demo", steps: [{ stage: "report", capability: "reporting", reason: "Report" }] } };
+  const skills = {
+    "clear-updates": { ...index["clear-updates"], capabilities: ["reporting"] },
+    "brief-results": { ...index["clear-updates"], name: "brief-results", capabilities: ["reporting"] },
+  };
+  const flow = buildFlow(selected, { task: "skip clear-updates and brief-results, fix the bug", bundledIndex: {} }, skills);
+  assert.deepEqual(flow.steps, []);
+});
+
+test("playbook description prose cannot fabricate requested-skill gaps", () => {
+  const gaps = findCapabilityGaps(
+    { demo: { agents: [], description: "Fix bugs; use clear-updates for updates", skill_flow: { label: "demo", steps: [] } } },
+    index, { allowedSkills: [] });
+  assert.deepEqual(gaps, []);
 });

@@ -116,13 +116,17 @@ function parseFrontmatter(text) {
     if (!m) continue;
     const value = m[2].trim().replace(/^(["'])(.*)\1$/, "$2");
     if (/^[|>][+-]?$/.test(value)) {
-      // Descriptions are routing text: normalize folded/literal blocks without
-      // treating indented prose (including colons) as more metadata fields.
+      // Normalize folded/literal blocks without treating indented prose
+      // (including colons) as more metadata fields. Dropping non-description
+      // blocks would silently empty routing vocabulary such as a multi-line
+      // summary; list-shaped fields keep one comma-separated entry per line.
       const parts = [];
       while (i + 1 < lines.length && (!lines[i + 1].trim() || /^\s/.test(lines[i + 1]))) {
         parts.push(lines[++i].trim());
       }
-      fields[m[1]] = m[1] === "description" ? parts.join(" ").replace(/\s+/g, " ").trim() : "";
+      fields[m[1]] = m[1] === "description"
+        ? parts.join(" ").replace(/\s+/g, " ").trim()
+        : parts.join(", ").replace(/\s+/g, " ").trim();
     } else {
       fields[m[1]] = value;
     }

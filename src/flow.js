@@ -264,8 +264,11 @@ function skillNameAlternatives(names) {
   const key = names.join("\n");
   let alternatives = alternativesCache.get(key);
   if (alternatives === undefined) {
-    alternatives = names.map((name) => normalizedCue(name).replaceAll(" ", "\\s+"))
-      .filter(Boolean).sort((a, b) => b.length - a.length).join("|");
+    // Longest cue first so "clarity checkpoint" is consumed before a
+    // shorter "checkpoint" cue can match inside it.
+    alternatives = [...new Set(names.map((name) => normalizedCue(name)).filter(Boolean))]
+      .sort((a, b) => b.length - a.length)
+      .map((cue) => cue.replaceAll(" ", "\\s+")).join("|");
     if (alternativesCache.size >= 64) alternativesCache.clear();
     alternativesCache.set(key, alternatives);
   }
@@ -291,9 +294,9 @@ const INVOKED_SKILL_PREFIX = /\b(?:use|using|apply|run|invoke|follow)(?:\s+(?:th
 // Safe here: a skill strip only ever matches directly before a skill name.
 const NEGATED_SKILL_REQUEST_PREFIX =
   `(?:(?:(?:i\\s+)?(?:cannot|can\\s+not|can[' ]?t|won[' ]?t|wont|will\\s+not|neither)\\s+` +
-  `(?:want\\s+(?:(?:you\\s+)?to\\s+)?)?|` +
+  `(?:want\\s+(?:(?:you\\s+)?to\\s+)?)?(?:be\\s+)?|` +
   `instead\\s+of|rather\\s+than|in\\s+place\\s+of)(?:\\s+using\\s+|\\s+)?` +
-  `(?:you\\s+)?(?:(?:use|using|run|invoke|apply)\\s+)?(?:(?:an?|the)\\s+)?)`;
+  `(?:you\\s+)?(?:(?:use|using|run|invoke|apply|start)\\s+)?(?:(?:an?|the)\\s+)?)`;
 
 const negatedSkillListCache = new Map();
 function negatedSkillList(alternatives) {
@@ -301,7 +304,7 @@ function negatedSkillList(alternatives) {
   if (!regex) {
     regex = new RegExp(
       `\\b(?:${NEGATED_ROUTING_PREFIX}|${NEGATED_SKILL_REQUEST_PREFIX})` +
-      `(?:(?:use|using|run|invoke|apply)\\s+)?(?:${alternatives})\\b(?:\\s+(?:(?:and|or|nor)\\s+)?(?:${alternatives})\\b)*`, "g");
+      `(?:(?:use|using|run|invoke|apply|start)\\s+)?(?:${alternatives})\\b(?:\\s+(?:(?:and|or|nor)\\s+)?(?:${alternatives})\\b)*`, "g");
     if (negatedSkillListCache.size >= 64) negatedSkillListCache.clear();
     negatedSkillListCache.set(alternatives, regex);
   }
@@ -316,13 +319,15 @@ function affirmativeSkillRequests(task, names) {
 }
 
 // Mentions that a negation removed yet still clearly referenced the skill:
-// the strip span must end at a hard boundary (end of task or a connector), so
-// prose that merely continues after the name ("avoid test flakiness") keeps
-// the skill available for capability routing.
+// the strip span must end at a hard boundary (end of task, punctuation, or a
+// connector), so prose that merely continues after the name ("avoid test
+// flakiness") keeps the skill available for capability routing. Unlike
+// normalizedCue, this text keeps punctuation so boundaries stay visible.
 function negatedSkillReferences(task, names) {
   const alternatives = skillNameAlternatives(names);
   if (!alternatives) return new Set();
-  const text = normalizedCue(task);
+  const text = String(task || "").toLowerCase()
+    .replace(/[^a-z0-9,.;!?—–\s]+/g, " ").replace(/\s+/g, " ").trim();
   const spans = [...text.matchAll(negatedSkillList(alternatives))]
     .map((match) => [match.index, match.index + match[0].length]);
   if (!spans.length) return new Set();
@@ -337,7 +342,7 @@ function negatedSkillReferences(task, names) {
     // must run into a hard boundary to count ("avoid test flakiness" does not).
     if (!INVOKED_SKILL_PREFIX.test(text.slice(0, match.index))) {
       const after = text.slice(end);
-      if (after && !/^\s*(?:$|and\b|or\b|nor\b|but\b|then\b|instead\b|just\b)/.test(after)) continue;
+      if (after && !/^(?:\s*[,.;!?—–]|\s*(?:and|or|nor|but|then|instead|just)\b)/.test(after)) continue;
     }
     references.add(name);
   }
@@ -348,8 +353,7 @@ function namedSkillRequests(task, names) {
   // Consume the longest name first so "clarity-checkpoint" does not also
   // request an unrelated installed skill named "checkpoint".
   const byCue = new Map(names.map((name) => [normalizedCue(name), name]));
-  const alternatives = [...byCue.keys()].filter(Boolean).sort((a, b) => b.length - a.length)
-    .map((cue) => cue.replaceAll(" ", "\\s+")).join("|");
+  const alternatives = skillNameAlternatives(names);
   const requests = new Map();
   const text = normalizedCue(task);
   let previousEnd;
@@ -378,10 +382,13 @@ function normalizedCue(value) {
   return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-function explicitlyRequests(task, skillName) {
-  const taskCue = normalizedCue(task);
+function cueRequests(taskCue, skillName) {
   const skillCue = normalizedCue(skillName);
   return !!skillCue && (` ${taskCue} `).includes(` ${skillCue} `);
+}
+
+function explicitlyRequests(task, skillName) {
+  return cueRequests(normalizedCue(task), skillName);
 }
 
 // One message for both requested-skill paths (model steps and prose passes):
@@ -479,17 +486,21 @@ function scopedSkillIndex(index, allowedSkills) {
   return Object.fromEntries(Object.entries(index || {}).filter(([name]) => allowed.has(name)));
 }
 
-function withoutNegatedSkills(task, skillIndex) {
+// `precomputed` lets buildFlow share its normalized task text and router
+// routing text across the scoped and bundled calls instead of re-deriving them.
+function withoutNegatedSkills(task, skillIndex, precomputed = {}) {
   const entries = Object.entries(skillIndex || {});
-  const affirmativeTask = affirmativeSkillRequests(affirmativeRoutingText(task), entries.map(([name]) => name));
+  const taskCue = precomputed.taskCue ?? normalizedCue(task);
+  const affirmativeTask = precomputed.affirmativeRouting ?? affirmativeRoutingText(task);
+  const affirmativeRequests = affirmativeSkillRequests(affirmativeTask, entries.map(([name]) => name));
   const humanRouters = entries.filter(([, item]) => item.invocation === "user");
   const affirmedRouters = new Set(humanRouters
-    .filter(([name]) => explicitlyRequests(affirmativeTask, name))
+    .filter(([name]) => cueRequests(affirmativeRequests, name))
     .map(([name]) => name));
   const broadInterviewNegation = negatesInterviewCapability(task);
   const blockedRouters = new Set(humanRouters
     .filter(([name, item]) =>
-      (explicitlyRequests(task, name) && !affirmedRouters.has(name)) ||
+      (cueRequests(taskCue, name) && !affirmedRouters.has(name)) ||
       (broadInterviewNegation && declaredCapabilities(item).includes("plan interview")))
     .map(([name]) => name));
   const preservedReferences = new Set(humanRouters
@@ -497,7 +508,7 @@ function withoutNegatedSkills(task, skillIndex) {
     .flatMap(([, item]) => item.references || []));
   const negatedReferences = negatedSkillReferences(task, entries.map(([name]) => name));
   const blocked = new Set([...blockedRouters, ...entries
-    .filter(([name]) => negatedReferences.has(name) && !explicitlyRequests(affirmativeTask, name))
+    .filter(([name]) => negatedReferences.has(name) && !cueRequests(affirmativeRequests, name))
     .map(([name]) => name)]);
   if (blockedRouters.size) {
     for (const [name] of humanRouters) {
@@ -522,9 +533,13 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
   const flow = selection?.skill_flow;
   if (!flow?.steps) throw new Error(`playbook ${selection?.playbook || "?"}: missing skill_flow`);
 
+  // suppressExplicitRequests: registry scans feed playbook *descriptions* in
+  // as the task; description prose like "use X" is not a user request.
+  const explicitRequests = context.suppressExplicitRequests !== true;
+  const taskCue = normalizedCue(context.task);
   const affirmativeTask = affirmativeRoutingText(context.task);
-  const requestedTask = affirmativeSkillRequests(affirmativeTask, Object.keys(skillIndex));
-  const namedRequests = namedSkillRequests(requestedTask, Object.keys(skillIndex));
+  const requestedTask = explicitRequests ? affirmativeSkillRequests(affirmativeTask, Object.keys(skillIndex)) : "";
+  const namedRequests = explicitRequests ? namedSkillRequests(requestedTask, Object.keys(skillIndex)) : new Map();
   const branches = branchesFor(affirmativeTask, selection.agents, context.branches);
   const requirements = flow.steps
     .filter((step) => !step.branch || branches.has(step.branch))
@@ -532,7 +547,8 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
   const steps = [];
   const gaps = [];
   const scoped = scopedSkillIndex(skillIndex, context.allowedSkills);
-  const installed = withRouterCapabilities(withoutNegatedSkills(context.task, scoped));
+  const installed = withRouterCapabilities(
+    withoutNegatedSkills(context.task, scoped, { taskCue, affirmativeRouting: affirmativeTask }));
   const explicitlyIncomplete = Object.entries(installed)
     .filter(([name, item]) => skillIsIncomplete(item) && namedRequests.has(name))
     .sort(([a], [b]) => a.localeCompare(b));
@@ -656,7 +672,8 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
     }
     const selected = selectCapability(requirement, selection, context, installed);
     const fallback = selected ? null : selectCapability(
-      requirement, selection, context, (bundled ??= withoutNegatedSkills(context.task, scopedSkillIndex(getBundled(), context.allowedSkills))));
+      requirement, selection, context, (bundled ??= withoutNegatedSkills(context.task,
+        scopedSkillIndex(getBundled(), context.allowedSkills), { taskCue, affirmativeRouting: affirmativeTask })));
     if (selected) steps.push(selected);
     else if (fallback) steps.push({
       ...fallback,
@@ -711,10 +728,12 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
     declaredCapabilities(item).some((capability) => proseCapabilities.has(capability)));
   // Remove the whole excluded skill list, while retaining a later affirmative
   // request such as "skip wait-what and unslop, then use unslop".
-  const proseTask = affirmativeSkillRequests(affirmativeTask, [...Object.keys(skillIndex), ...proseEntries.map(([name]) => name)]);
-  const requestedProse = proseEntries
+  const proseTask = explicitRequests
+    ? affirmativeSkillRequests(affirmativeTask, [...Object.keys(skillIndex), ...proseEntries.map(([name]) => name)])
+    : "";
+  const requestedProse = explicitRequests ? proseEntries
     .filter(([name]) => explicitlyRequests(proseTask, name))
-    .sort(([a], [b]) => proseTask.indexOf(normalizedCue(a)) - proseTask.indexOf(normalizedCue(b)));
+    .sort(([a], [b]) => proseTask.indexOf(normalizedCue(a)) - proseTask.indexOf(normalizedCue(b))) : [];
   for (const [name, item] of requestedProse) {
     if (steps.some((step) => step.skill === name) && item.references?.length) continue;
     for (let i = steps.length - 1; i >= 0; i--) {
@@ -756,7 +775,11 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
 export function findCapabilityGaps(playbooks, skillIndex, context = {}) {
   const gaps = new Map();
   for (const [name, playbook] of Object.entries(playbooks || {})) {
-    const flow = buildFlow({ playbook: name, agents: playbook.agents, skill_flow: playbook.skill_flow }, { ...context, task: playbook.description }, skillIndex);
+    // A playbook description is static prose, not a user request: suppress
+    // explicit-request plumbing so "use X" in a description cannot fabricate
+    // blocking requested-skill gaps.
+    const flow = buildFlow({ playbook: name, agents: playbook.agents, skill_flow: playbook.skill_flow },
+      { ...context, task: playbook.description, suppressExplicitRequests: true }, skillIndex);
     for (const gap of flow.gaps) gaps.set(gap.capability, gap);
   }
   return [...gaps.values()].sort((a, b) => a.capability.localeCompare(b.capability));
