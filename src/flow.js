@@ -257,6 +257,38 @@ function words(value) {
   return new Set(String(value || "").toLowerCase().replaceAll("-", " ").match(/[a-z0-9]{3,}/g)?.filter((word) => !STOP_WORDS.has(word)).map(stem) || []);
 }
 
+function affirmativeSkillRequests(task, names) {
+  task = String(task || "").replace(/(^|\s)[/$]([a-z0-9][a-z0-9:-]*)/gi, "$1use $2");
+  const alternatives = names.map((name) => normalizedCue(name).replaceAll(" ", "\\s+"))
+    .filter(Boolean).sort((a, b) => b.length - a.length).join("|");
+  if (!alternatives) return normalizedCue(task);
+  return normalizedCue(task).replace(new RegExp(
+    `\\b(?:without|skip|avoid|no|not|never|don t|do not|neither)\\s+(?:(?:use|using|run|invoke|apply)\\s+)?(?:${alternatives})\\b(?:\\s+(?:(?:and|or|nor)\\s+)?(?:${alternatives})\\b)*`, "g"), " ");
+}
+
+function namedSkillRequests(task, names) {
+  // Consume the longest name first so "clarity-checkpoint" does not also
+  // request an unrelated installed skill named "checkpoint".
+  const byCue = new Map(names.map((name) => [normalizedCue(name), name]));
+  const alternatives = [...byCue.keys()].filter(Boolean).sort((a, b) => b.length - a.length)
+    .map((cue) => cue.replaceAll(" ", "\\s+")).join("|");
+  const requests = new Map();
+  const text = normalizedCue(task);
+  let previousEnd;
+  if (alternatives) {
+    for (const match of text.matchAll(new RegExp(`\\b(?:${alternatives})\\b`, "g"))) {
+      const prefix = text.slice(0, match.index);
+      const invoked = /\b(?:use|using|with|apply|run|invoke|follow)(?:\s+(?:the|skill))*\s+$/.test(prefix);
+      const continued = previousEnd !== undefined && /^\s+(?:(?:and|then|also|or|plus)\s+)*$/.test(text.slice(previousEnd, match.index));
+      if (!invoked && !continued) continue;
+      const name = byCue.get(normalizedCue(match[0]));
+      if (!requests.has(name)) requests.set(name, match.index);
+      previousEnd = match.index + match[0].length;
+    }
+  }
+  return requests;
+}
+
 function declaredCapabilities(item) {
   return Array.isArray(item?.capabilities)
     ? item.capabilities
@@ -356,9 +388,9 @@ function scopedSkillIndex(index, allowedSkills) {
   return Object.fromEntries(Object.entries(index || {}).filter(([name]) => allowed.has(name)));
 }
 
-function withoutNegatedHumanRouters(task, skillIndex) {
-  const affirmativeTask = affirmativeRoutingText(task);
+function withoutNegatedSkills(task, skillIndex) {
   const entries = Object.entries(skillIndex || {});
+  const affirmativeTask = affirmativeSkillRequests(affirmativeRoutingText(task), entries.map(([name]) => name));
   const humanRouters = entries.filter(([, item]) => item.invocation === "user");
   const affirmedRouters = new Set(humanRouters
     .filter(([name]) => explicitlyRequests(affirmativeTask, name))
@@ -372,7 +404,9 @@ function withoutNegatedHumanRouters(task, skillIndex) {
   const preservedReferences = new Set(humanRouters
     .filter(([name]) => affirmedRouters.has(name))
     .flatMap(([, item]) => item.references || []));
-  const blocked = new Set(blockedRouters);
+  const blocked = new Set([...blockedRouters, ...entries
+    .filter(([name]) => explicitlyRequests(task, name) && !explicitlyRequests(affirmativeTask, name))
+    .map(([name]) => name)]);
   if (blockedRouters.size) {
     for (const [name] of humanRouters) {
       if (!affirmedRouters.has(name)) blocked.add(name);
@@ -397,6 +431,8 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
   if (!flow?.steps) throw new Error(`playbook ${selection?.playbook || "?"}: missing skill_flow`);
 
   const affirmativeTask = affirmativeRoutingText(context.task);
+  const requestedTask = affirmativeSkillRequests(affirmativeTask, Object.keys(skillIndex));
+  const namedRequests = namedSkillRequests(requestedTask, Object.keys(skillIndex));
   const branches = branchesFor(affirmativeTask, selection.agents, context.branches);
   const requirements = flow.steps
     .filter((step) => !step.branch || branches.has(step.branch))
@@ -404,9 +440,9 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
   const steps = [];
   const gaps = [];
   const scoped = scopedSkillIndex(skillIndex, context.allowedSkills);
-  const installed = withRouterCapabilities(withoutNegatedHumanRouters(context.task, scoped));
+  const installed = withRouterCapabilities(withoutNegatedSkills(context.task, scoped));
   const explicitlyIncomplete = Object.entries(installed)
-    .filter(([name, item]) => skillIsIncomplete(item) && explicitlyRequests(affirmativeTask, name))
+    .filter(([name, item]) => skillIsIncomplete(item) && namedRequests.has(name))
     .sort(([a], [b]) => a.localeCompare(b));
   if (explicitlyIncomplete.length) {
     const firstRequirement = requirements[0] || { stage: "route", capability: "skill readiness", reason: "Use the explicitly requested skill." };
@@ -528,7 +564,7 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
     }
     const selected = selectCapability(requirement, selection, context, installed);
     const fallback = selected ? null : selectCapability(
-      requirement, selection, context, (bundled ??= scopedSkillIndex(getBundled(), context.allowedSkills)));
+      requirement, selection, context, (bundled ??= withoutNegatedSkills(context.task, scopedSkillIndex(getBundled(), context.allowedSkills))));
     if (selected) steps.push(selected);
     else if (fallback) steps.push({
       ...fallback,
@@ -549,6 +585,27 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
   // Explicit final prose work may not be part of the selected playbook.
   // Resolve by declared capability, keeping installed definitions authoritative.
   const proseCapabilities = new Set(["prose editing", "plain-language repair"]);
+  const requestedSteps = [];
+  const requestedSkills = Object.entries(skillIndex)
+    .filter(([name, item]) => item.invocation !== "user" && namedRequests.has(name))
+    .sort(([a], [b]) => namedRequests.get(a) - namedRequests.get(b) || a.localeCompare(b));
+  for (const [name, item] of requestedSkills) {
+    if (steps.some((step) => step.skill === name) ||
+        declaredCapabilities(item).some((capability) => proseCapabilities.has(capability))) continue;
+    const capability = declaredCapabilities(item)[0] || "explicit skill";
+    if (!installed[name] || skillIsIncomplete(item)) {
+      gaps.push({ stage: "requested", capability, code: "unavailable_requested_skill", blocking: true,
+        question: `${name} was requested but is excluded by the capability profile or has missing required files. Resolve that conflict before continuing.`,
+        reason: "Preserve explicitly requested skill work.", requires_approval: false, trusted_candidates: [] });
+      continue;
+    }
+    requestedSteps.push({ stage: "requested", capability, skill: name, type: item.type || "skill",
+      reason: "Apply the explicitly requested skill as part of this task.",
+      status: "installed", provider: item.provider || "project", path: item.path,
+      ...(item.disclosures?.length ? { disclosures: item.disclosures } : {}),
+      selection_reason: "explicitly requested installed model skill", rejected_candidates: [] });
+  }
+  steps.unshift(...requestedSteps);
   const proseIndex = Object.fromEntries(Object.entries({ ...getBundled(), ...skillIndex })
     .map(([name, item]) => [name, {
       ...item,
@@ -558,13 +615,9 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
     }]));
   const proseEntries = Object.entries(proseIndex).filter(([, item]) =>
     declaredCapabilities(item).some((capability) => proseCapabilities.has(capability)));
-  const proseNames = proseEntries.map(([name]) => normalizedCue(name).replaceAll(" ", "\\s+"))
-    .filter(Boolean).sort((a, b) => b.length - a.length).join("|");
   // Remove the whole excluded skill list, while retaining a later affirmative
   // request such as "skip wait-what and unslop, then use unslop".
-  const proseTask = proseNames ? normalizedCue(affirmativeTask).replace(new RegExp(
-    `\\b(?:without|skip|avoid|no|not|don t|do not|neither)\\s+(?:(?:use|run|invoke|apply)\\s+)?(?:${proseNames})\\b(?:\\s+(?:(?:and|or|nor)\\s+)?(?:${proseNames})\\b)*`, "g"), " ")
-    : normalizedCue(affirmativeTask);
+  const proseTask = affirmativeSkillRequests(affirmativeTask, [...Object.keys(skillIndex), ...proseEntries.map(([name]) => name)]);
   const requestedProse = proseEntries
     .filter(([name]) => explicitlyRequests(proseTask, name))
     .sort(([a], [b]) => proseTask.indexOf(normalizedCue(a)) - proseTask.indexOf(normalizedCue(b)));

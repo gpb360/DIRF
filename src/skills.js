@@ -109,14 +109,23 @@ function parseFrontmatter(text) {
   if (!text.startsWith("---")) return fields;
   const end = text.indexOf("\n---", 4);
   if (end === -1) return fields;
-  for (const line of text.slice(4, end).split(/\r?\n/)) {
+  const lines = text.slice(4, end).split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trimEnd();
     const m = FM_RE.exec(line);
     if (!m) continue;
     const value = m[2].trim().replace(/^(["'])(.*)\1$/, "$2");
-    // A bare YAML block-scalar marker ("|", ">-", ...) carries no text on this
-    // line and its indented continuation lines are dropped by this parser —
-    // treat as empty rather than storing the literal marker.
-    fields[m[1]] = /^[|>][+-]?$/.test(value) ? "" : value;
+    if (/^[|>][+-]?$/.test(value)) {
+      // Descriptions are routing text: normalize folded/literal blocks without
+      // treating indented prose (including colons) as more metadata fields.
+      const parts = [];
+      while (i + 1 < lines.length && (!lines[i + 1].trim() || /^\s/.test(lines[i + 1]))) {
+        parts.push(lines[++i].trim());
+      }
+      fields[m[1]] = m[1] === "description" ? parts.join(" ").replace(/\s+/g, " ").trim() : "";
+    } else {
+      fields[m[1]] = value;
+    }
   }
   return fields;
 }

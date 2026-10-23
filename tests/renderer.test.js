@@ -404,7 +404,7 @@ test("Markdown and HTML preserve verify-gate semantics", () => {
   assert.match(html, /dirf govern evaluate action\.json/);
   assert.match(markdown, /decision phase, a recorded accept \(user-owned\) plus any declared verification evidence/);
   assert.match(markdown, /Gate rules: advancing past a verify phase requires recorded evidence/);
-  assert.ok(html.includes("Each step points to the installed skill"));
+  assert.ok(html.includes("Load and apply the selected skills in this order"));
   assert.ok(!/codex|claude/i.test(html));
   assert.ok(html.includes("Definition of Done"));
   assert.ok(!html.includes("src=") && !html.includes('href="')); // no external assets
