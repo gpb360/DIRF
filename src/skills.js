@@ -126,7 +126,7 @@ function parseFrontmatter(text) {
       }
       fields[m[1]] = m[1] === "description"
         ? parts.join(" ").replace(/\s+/g, " ").trim()
-        : parts.join(", ").replace(/\s+/g, " ").trim();
+        : parts.filter(Boolean).join(", ").replace(/\s+/g, " ").trim();
     } else {
       fields[m[1]] = value;
     }
