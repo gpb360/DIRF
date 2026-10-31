@@ -1587,7 +1587,32 @@ function checkpointIsNewer(current, candidate) {
   return candidate.updatedAt > current.updatedAt;
 }
 
-function contextForAttempt(entry, entries, repositoryPath, relationFor = revisionRelation) {
+// A reviewed commit that already reached the remote default branch makes a
+// pre-merge next step ("decide whether to merge") obsolete. Read local refs
+// only: no fetch, and no guessed branch when origin/HEAD is not recorded.
+function integratedReview(repositoryPath, revision) {
+  if (!repositoryPath || !/^[0-9a-f]{40}$/i.test(revision || "")) return null;
+  const ref = git(repositoryPath, ["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], { allowFailure: true });
+  if (!ref) return null;
+  const sha = revision.toLowerCase();
+  if (git(repositoryPath, ["merge-base", sha, ref], { allowFailure: true }).toLowerCase() !== sha) return null;
+  // It landed at the oldest first-parent commit that descends from it. The
+  // descendant set uses the full graph: a PR branch that merged main after
+  // review reaches the main line through a second parent. A revision that is
+  // itself on the main line (fast-forward, or the tip) landed when committed.
+  const descendants = new Set(git(repositoryPath, ["rev-list", "--ancestry-path", `${sha}..${ref}`], { allowFailure: true })
+    .split(/\r?\n/).filter(Boolean));
+  const mainLine = git(repositoryPath, ["log", "--first-parent", "--format=%H %P %ct", `${sha}..${ref}`], { allowFailure: true })
+    .split(/\r?\n/).map((line) => line.trim().split(/\s+/)).filter(([commit]) => descendants.has(commit));
+  const oldest = mainLine.at(-1);
+  const landed = !oldest || oldest[1] === sha
+    ? git(repositoryPath, ["log", "-1", "--format=%ct", sha], { allowFailure: true })
+    : oldest.at(-1);
+  const landedAt = Number(landed) * 1000;
+  return landedAt > 0 ? { ref, revision: sha, landedAt } : null;
+}
+
+function contextForAttempt(entry, entries, repositoryPath, relationFor = revisionRelation, integrationFor = integratedReview) {
   const relations = new Map();
   const newerRelated = entries
     .filter((candidate) => candidate !== entry
@@ -1623,9 +1648,19 @@ function contextForAttempt(entry, entries, repositoryPath, relationFor = revisio
     && newerRelated.reviewRevision
     && entry.reviewRevision !== newerRelated.reviewRevision;
   const requiresReconciliation = Boolean(conflict || unverifiedRevisions);
+  // Related-task warnings take priority. Otherwise a checkpoint written before
+  // its reviewed commit landed is guidance about a merge that already happened;
+  // any later checkpoint is the owner's current word and is shown as recorded.
+  const integrated = !needsRefresh && entry.reviewRevision
+    ? integrationFor(repositoryPath, entry.reviewRevision)
+    : null;
+  const mergedSince = integrated && entry.updatedAt < integrated.landedAt ? integrated : null;
   return {
     needs_refresh: needsRefresh,
-    next_action: needsRefresh ? null : entry.nextAction,
+    next_action: needsRefresh || mergedSince ? null : entry.nextAction,
+    review_integrated: mergedSince
+      ? { ref: mergedSince.ref, revision: mergedSince.revision, landed_at: new Date(mergedSince.landedAt).toISOString() }
+      : null,
     related_task_relation: newerRelated?.relation || null,
     related_task_requires_reconciliation: requiresReconciliation,
     related_attempt_id: newerRelated?.id || null,
@@ -1638,7 +1673,9 @@ function contextForAttempt(entry, entries, repositoryPath, relationFor = revisio
         : unverifiedRevisions
           ? "DIRF cannot tell which task matches the current PR version. Check or fetch the current PR commit, update the matching task, and stop or update the other task before continuing."
         : "Newer project work may have changed this task. Check the other review before continuing."
-      : null,
+      : mergedSince
+        ? `Reviewed commit ${mergedSince.revision.slice(0, 7)} is already in ${mergedSince.ref}. This task's next step was recorded before it landed.`
+        : null,
   };
 }
 
@@ -1661,7 +1698,9 @@ function attemptContextEntry(slug, attempt) {
 
 function repositoryPathForAttempts(slug, attempts) {
   const project = getProject(slug);
-  return attempts.find((attempt) => attempt.responsibility_path)?.responsibility_path
+  // Skip removed worktrees: Git commands there fail, which would turn every
+  // revision comparison into "unknown".
+  return attempts.find((attempt) => attempt.responsibility_path && existsSync(attempt.responsibility_path))?.responsibility_path
     || project?.main_path
     || process.cwd();
 }
@@ -1701,7 +1740,13 @@ export function attemptContextStates(slug) {
     }
     return relations.get(key);
   };
-  return new Map(entries.map((entry) => [entry.id, contextForAttempt(entry, entries, repositoryPath, relationFor)]));
+  const integrations = new Map();
+  const integrationFor = (target, revision) => {
+    const key = revision.toLowerCase();
+    if (!integrations.has(key)) integrations.set(key, integratedReview(target, revision));
+    return integrations.get(key);
+  };
+  return new Map(entries.map((entry) => [entry.id, contextForAttempt(entry, entries, repositoryPath, relationFor, integrationFor)]));
 }
 
 // Canonical project guidance is a fallback. If an attempt contains newer or

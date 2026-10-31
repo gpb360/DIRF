@@ -50,6 +50,8 @@ import { run as runReviewReport } from "../skills/code-review/scripts/review-rep
 import { run as runReviewLedger } from "../skills/code-review/scripts/review-ledger.mjs";
 import { bindingsFromPlan, refreshSkillBindings } from "./skill-bindings.js";
 
+const MERGED_REVIEW_NEXT = "Confirm the merged work is complete, then record completion or a new next step.";
+
 const LIFECYCLE = {
   clarify: "Use the best installed interview capability before implementation.",
   prototype: "Prototype only when a question needs a runnable answer.",
@@ -774,7 +776,12 @@ function cmdResume(args) {
       const gate = gates.find((item) => item.phase === current.current_phase);
       if (gate) console.log(`Current check: ${gate.phase} (${gate.kind}${gate.status === "denied" ? ", denied" : ""})${gate.comment ? ` — ${gate.comment}` : ""}`);
     }
-    console.log(`Next: ${context.next_action || "Read the workflow and task handoff for the next action."}`);
+    if (context.review_integrated) {
+      console.log(`Attention: ${context.attention}`);
+      console.log(`Next: ${MERGED_REVIEW_NEXT}`);
+    } else {
+      console.log(`Next: ${context.next_action || "Read the workflow and task handoff for the next action."}`);
+    }
     return;
   }
   let config = null;
@@ -1330,7 +1337,7 @@ function cmdStateActive(args) {
             ? `Two tasks point to different PR commits. Check the current PR commit, update the task that matches it, and stop or update task ${active.related_attempt_id}. Other handoff: ${active.related_handoff_path}`
             : `DIRF cannot tell which task matches the current PR version. Check or fetch the current PR commit, update the matching task, and stop or update task ${active.related_attempt_id}. Other handoff: ${active.related_handoff_path}`
           : `DIRF found newer work for the same pull request. Do not follow this task's old next step. Read task ${active.newer_attempt_id} at ${active.newer_handoff_path}, update this task, and continue only from the corrected next step.`
-        : `DIRF already has work in this checkout. Continue task ${active.id} (${active.name}). Current stage: ${active.current_phase || "not recorded"}. Next: ${active.next_action || "continue the current stage"}. Load ${active.workflow_path} and ${active.handoff_path} only if needed.`;
+        : `DIRF already has work in this checkout. Continue task ${active.id} (${active.name}). Current stage: ${active.current_phase || "not recorded"}. ${active.review_integrated ? `${active.attention} Next: ${MERGED_REVIEW_NEXT}` : `Next: ${active.next_action || "continue the current stage"}.`} Load ${active.workflow_path} and ${active.handoff_path} only if needed.`;
     } else if (result.state === "conflict") {
       additionalContext = `DIRF responsibility conflict in this checkout: ${attempts.map(({ id }) => id).join(", ")}. Stop and select the intended attempt explicitly; do not choose the latest.`;
     } else {
@@ -1354,6 +1361,9 @@ function cmdStateActive(args) {
       } else {
         console.log(`Next: Read task ${active.newer_attempt_id} at ${active.newer_handoff_path} and replace this task's old next step before continuing.`);
       }
+    } else if (active.review_integrated) {
+      console.log(`Attention: ${active.attention}`);
+      console.log(`Next: ${MERGED_REVIEW_NEXT}`);
     } else {
       console.log(`Next: ${active.next_action || "continue the current stage"}`);
     }
