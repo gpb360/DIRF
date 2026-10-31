@@ -1,4 +1,4 @@
-# Sub-task claims: what DIRF's ownership contract would need for shared slugs
+# Sub-task claims: what DIRF's ownership contract would need inside one checkout
 
 Task: 20261026T192859992Z-learn-source (source: microsoft/Agensh README).
 Status: draft design note; no code changes; decision gate accepted 2026-10-26.
@@ -10,8 +10,10 @@ claiming*: agents discover unclaimed sub-tasks, claim them, verify each other's
 results, and merge progress asynchronously, with no central orchestrator. DIRF
 coordinates agents the opposite way: one owner per checkout, a canonical
 handoff, and deterministic evidence gates. Both solve "who is doing what, and
-how do we trust the result". This note records what DIRF's contract would need
-if two agents ever legitimately share one project slug — not a plan to adopt
+how do we trust the result". DIRF already runs attempts in parallel on one
+project slug, one checkout and branch each. This note records what its contract
+would need if two agents ever legitimately work in the same checkout or branch,
+splitting one attempt's scope — not a plan to adopt
 Agensh's infrastructure (Gitea/Mattermost/DeLM would violate the zero-runtime
 dependency and lean-output principles).
 
@@ -28,8 +30,9 @@ dependency and lean-output principles).
   accepted content hashes); the `govern` ledger is hash-linked.
 
 The unit of exclusivity is the **checkout**, and the trust anchor is
-**captured evidence**. Claims as DIRF has them are all-or-nothing: one attempt
-owns the whole slug.
+**captured evidence**. Attempts on the same slug already run in parallel when
+each holds its own worktree and branch; claims are all-or-nothing only within a
+checkout: one attempt owns the whole checkout and branch.
 
 ## What Agensh does differently (source claims, unverified)
 
@@ -41,8 +44,8 @@ owns the whole slug.
 
 ## Minimum viable claim record (proposal)
 
-If DIRF ever allows N attempts to share a slug, the smallest addition that
-preserves gate integrity is a claim record on the attempt:
+If DIRF ever allows N attempts to share one checkout or branch, the smallest
+addition that preserves gate integrity is a claim record on the attempt:
 
 ```json
 {
@@ -64,12 +67,15 @@ Store-level rule changes implied by this schema:
    `withProgressLock` provides that if the check and write stay in one locked
    section (they do today for responsibility claims).
 3. Lease expiry turns a crashed claimer's scope back to discoverable, without
-   any live-process assumption (matches the "blocked work stays visible" rule
-   in `docs/design/owner-recovery-draft.md`).
+   any live-process assumption: a missing live process does not mean the work
+   is finished, so expired scope stays visible as unfinished work.
 4. Gate evidence provenance must name the claiming attempt: a `--run` digest
    captured by attempt A cannot silently satisfy a gate inside B's scope.
-   This is the one place naive parallelism would weaken today's guarantees,
-   so it is a hard requirement, not an option.
+   Evidence is already recorded per attempt (`recordedEvidence` reads the
+   attempt record), so the requirement is to keep it there and bind each
+   gate to the claim's scope, not to add a new store. This is the one place
+   naive parallelism would weaken today's guarantees, so it is a hard
+   requirement, not an option.
 
 ## Open questions (deliberately unresolved)
 
@@ -78,9 +84,10 @@ Store-level rule changes implied by this schema:
 - Merge verification: DIRF gates are deterministic; Agensh's are peer-based.
   Whether peer review records can be typed artifacts (and thus gate inputs)
   without dragging in a messaging substrate.
-- Whether shared-slug parallelism is ever wanted, or whether the
-  worktree-per-attempt model plus `state active` conflict reporting is already
-  the right answer at DIRF's actual scale. Deferring is defensible.
+- Whether same-checkout parallelism is ever wanted, or whether the
+  worktree-per-attempt model — already DIRF's slug-level parallelism — plus
+  `state active` conflict reporting is the right answer at DIRF's actual
+  scale. Deferring is defensible.
 
 ## Disposition of material Agensh ideas
 
@@ -93,6 +100,7 @@ Store-level rule changes implied by this schema:
 
 ## Verification check for this note
 
-`node src/cli.js validate && node --test` must pass unchanged: this note adds
-no code, so the suite passing confirms the contract it describes is still the
-contract in force.
+The "Current contract" section was checked by hand against `src/state.js` at
+`29fea1e`. Nothing tests this note, so re-check it against the code before
+relying on it. `node src/cli.js validate && node --test` passing only shows the
+note broke nothing.
