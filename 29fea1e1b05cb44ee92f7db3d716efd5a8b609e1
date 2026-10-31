@@ -1,0 +1,8 @@
+score: 9
+
+Reviewer: Claude Opus 5.5 (session review before merging main into PR #80), 2026-10-31.
+Scope: 29fea1e = merge of PR #81 (1dcf9b9..91ea074), src diff + tests.
+Verified: npm run check:release on 29fea1e — 658 tests, 656 pass, 0 fail, 2 skipped.
+Findings (non-blocking):
+- router.js NEGATED_ROUTING_CLAUSE now ends at a bare 'and', so 'skip the interview and planning' leaves 'and planning' in affirmative routing text. Intentional per comment; probed playbook selection is unchanged.
+- Verb-invoked mentions ('using react') count as explicit requests and can raise a blocking unavailable_requested_skill gap when the profile excludes that skill. Matches design intent; worth noting for generic skill names.
