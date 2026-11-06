@@ -29,6 +29,8 @@ test("passive voice is flagged, adjectives that end in ed are not", () => {
   assert.deepEqual(rules("The change is not fully tested."), ["passive-voice"]);
   assert.deepEqual(rules("The tool writes the file."), []);
   assert.deepEqual(rules("The speed is need based."), []);
+  assert.deepEqual(rules("A dirty worktree is never recommended for removal."), ["passive-voice"]);
+  assert.deepEqual(rules("The inventory script is read-only."), [], "a hyphenated adjective is not a participle");
 });
 
 test("a step with more than one instruction is flagged", () => {

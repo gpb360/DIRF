@@ -31,7 +31,7 @@ const IRREGULAR_PARTICIPLES = [
 // Words that end in "ed" but are not past participles.
 const NOT_PARTICIPLES = new Set(["bed", "embed", "feed", "hundred", "indeed", "need", "red", "seed", "shed", "sled", "speed", "wed"]);
 const PASSIVE = new RegExp(
-  `\\b(?:am|is|are|was|were|be|been|being)\\s+(?:not\\s+)?(?:[a-z]+ly\\s+)?([a-z]+ed|${IRREGULAR_PARTICIPLES.join("|")})\\b`, "gi");
+  `\\b(?:am|is|are|was|were|be|been|being)\\s+(?:(?:not|never)\\s+)?(?:[a-z]+ly\\s+)?([a-z]+ed|${IRREGULAR_PARTICIPLES.join("|")})\\b(?!-)`, "gi");
 const SEQUENCE = /(?:\band then\b|,\s*then\b|;\s*then\b|;)/i;
 const ABBREVIATIONS = /\b(e\.g|i\.e|etc|vs|approx|fig|cf)\./gi;
 const CODE_TOKEN = "CODE";
