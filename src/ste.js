@@ -52,8 +52,10 @@ const LINE_MARKS = /\u0001/g;
  */
 const marksOf = (text) => (text.match(LINE_MARKS) || []).join("");
 
-// A link destination: no spaces except a line wrap, then an optional title.
-const LINK_DESTINATION = String.raw`\((?:[^()\s]|\s+\u0001)*(?:\s+(?:"[^"]*"|'[^']*'))?\)`;
+// A link destination, as CommonMark defines it: "<...>" or a run with no
+// spaces (one level of parentheses allowed), then an optional title. A line
+// wrap (spaces and a line mark) can stand anywhere spaces can.
+const LINK_DESTINATION = String.raw`\([\s\u0001]*(?:<[^<>]*>|(?:[^()\s\u0001]|\([^()\s]*\)|\s*\u0001)*)(?:[\s\u0001]+(?:"[^"]*"|'[^']*'|\([^()]*\)))?[\s\u0001]*\)`;
 
 /**
  * Replace inline Markdown with the words a reader sees. Code and URLs count as one word.

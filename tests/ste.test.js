@@ -120,6 +120,16 @@ test("long link destinations and labels are still links", () => {
   assert.deepEqual(sentences(`See [the guide](https://example.com/${"a".repeat(3000)} "Guide title") now.`), ["See the guide now."]);
 });
 
+test("CommonMark link destination forms are links", () => {
+  for (const target of ["(<docs/setup guide.md>)", "( docs/guide.md )", '(docs/guide.md "Title" )',
+    "(https://en.wikipedia.org/wiki/Foo_(bar))", "(docs/guide.md (Title))"]) {
+    assert.deepEqual(sentences(`Open [the guide]${target} now.`), ["Open the guide now."], target);
+  }
+  const wrappedTitle = ["1. Open [the setup guide](docs/setup.md", '"Setup") and read the first section before you install it.'].join("\n");
+  assert.deepEqual(rules(wrappedTitle), []);
+  assert.deepEqual(rules("1. Open [the setup guide](<docs/setup guide.md>) and read the first section before you install the tool on your computer."), []);
+});
+
 test("unclosed brackets in a long paragraph stay fast", () => {
   const started = Date.now();
   checkSte(`${"[a ![b [^c ".repeat(20000)}end.`);
