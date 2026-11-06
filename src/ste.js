@@ -54,8 +54,12 @@ const marksOf = (text) => (text.match(LINE_MARKS) || []).join("");
 
 // A link destination, as CommonMark defines it: "<...>" or a run with no
 // spaces (one level of parentheses allowed), then an optional title. A line
-// wrap (spaces and a line mark) can stand anywhere spaces can.
-const LINK_DESTINATION = String.raw`\([\s\u0001]*(?:<[^<>]*>|(?:[^()\s\u0001]|\([^()\s]*\)|\s*\u0001)*)(?:[\s\u0001]+(?:"[^"]*"|'[^']*'|\([^()]*\)))?[\s\u0001]*\)`;
+// wrap (spaces and a line mark) can stand where spaces can.
+// Only one part of the pattern can match a given run of spaces and line
+// marks. Overlapping repeats here made the match time grow with the cube of
+// the line count.
+const LINK_PART = String.raw`(?:[^()\s\u0001]|\([^()\s\u0001]*\))+`;
+const LINK_DESTINATION = String.raw`\([\s\u0001]*(?:(?:<[^<>]*>|${LINK_PART}(?:\s*\u0001${LINK_PART})*)[\s\u0001]*)?(?:(?:"[^"]*"|'[^']*'|\([^()]*\))[\s\u0001]*)?\)`;
 
 /**
  * Replace inline Markdown with the words a reader sees. Code and URLs count as one word.

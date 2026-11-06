@@ -131,9 +131,18 @@ test("CommonMark link destination forms are links", () => {
 });
 
 test("unclosed brackets in a long paragraph stay fast", () => {
-  const started = Date.now();
-  checkSte(`${"[a ![b [^c ".repeat(20000)}end.`);
-  assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
+  const inputs = {
+    brackets: `${"[a ![b [^c ".repeat(20000)}end.`,
+    "unclosed link before image lines": `See [the release notes](\n${"![shot](shot.png)\n".repeat(4000)}end.`,
+    "unclosed link before footnote lines": `See [the release notes](\n${"[^1]\n".repeat(4000)}end.`,
+    "spaces after an unclosed link": `See [the notes](${" ".repeat(20000)}end.`,
+    "unclosed links with titles": `${'[a](b "c '.repeat(20000)}end.`,
+  };
+  for (const [name, input] of Object.entries(inputs)) {
+    const started = Date.now();
+    checkSte(input);
+    assert.ok(Date.now() - started < 2000, `${name} took ${Date.now() - started} ms`);
+  }
 });
 
 test("a URL does not take the period that ends its sentence", () => {
