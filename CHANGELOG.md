@@ -7,7 +7,26 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+## [0.32.0] - 2026-11-06
+
 ### Added
+- **Weight- and provider-aware model assignment** — `skill_flow` steps accept
+  an `effort` weight (`light`, `standard`, `heavy`; default `standard`), and
+  host model-catalog entries accept an optional `provider` (`anthropic`,
+  `openai`, `z.ai`, …). `heavy` steps match the strongest declared cost tier
+  first, falling back down the tiers when uncovered; every other effort keeps
+  the lowest sufficient tier. Advice stays advisory-only: DIRF never
+  discovers providers, invokes a model, or queries pricing.
+- `--providers LIST` on `build`, `plan`, `create`, and `flow` restricts the
+  advisory picks to the declared provider set (requires `--models FILE`).
+  Capabilities the set cannot cover fall back outside it, and the advice
+  rationale says so. Re-running with a different catalog file or provider
+  list regenerates the assignment for the same workflow — the setup is data,
+  not code.
+- `scripts/bootstrap-laptop.js`, a zero-dependency script that points a
+  laptop's `DIRF_HOME` at a shared network store, registers the DIRF MCP
+  server in Claude Code, and records the fleet orchestrator token.
+  `docs/integration.md` documents the shared-store-across-laptops contract.
 - **Reverse-engineering routing** — the registry now references
   `reverse-engineer-anything` (REA), so jobs that depend on shipped binaries,
   packages, firmware, network captures, or live runtime evidence route to it
@@ -15,6 +34,10 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   source-repository analysis.
 
 ### Changed
+- Model-advice recommendation labels show the provider when the catalog
+  declares one, and a model serving both heavy and standard steps labels each
+  in its rationale. `validate.js` checks `effort` and `provider` fields and
+  accepts the same normalized forms the advice engine honors.
 - Bundled `research`, `root-cause-debugging`, and `handoff` skills absorbed
   REA's evidence disciplines: separate observations from inferences and
   unknowns in an evidence ledger, diagnose a blocked action before changing
