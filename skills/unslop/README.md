@@ -22,6 +22,6 @@ Use this as an optional final pass on human-facing prose.
 6. Self-audit once. Run `dirf ste check` on the changed prose files. Keep a
    stylistic preference optional unless the repository explicitly requires it.
 
-Do not rewrite code, invent evidence, or add a dependency. Do not apply a
-vocabulary ban unless the project supplies an approved word list. Report any
-claim that you cannot check. Do not polish it into certainty.
+Do not rewrite code, invent evidence, or add a dependency. Follow the
+approved-word rules in the workflow policy. Do not add a vocabulary ban of your
+own. Report any claim that you cannot check. Do not polish it into certainty.

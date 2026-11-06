@@ -23,8 +23,9 @@ for documentation, reports, handoffs, and pull-request text.
 7. Use one word for one meaning. Do not change words for variety.
 8. Use the simple verb tenses: past, present, and future.
 9. Start a warning or a caution with a short command. Give the reason after it.
-10. When the project supplies an approved word list, use only those words and
-    technical names.
+10. Use approved STE words with their approved meanings, and technical names.
+    When the project supplies an approved word list, use only those words.
+11. Do not use contractions or semicolons.
 
 Then run the checker:
 

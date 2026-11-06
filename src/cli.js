@@ -1828,9 +1828,9 @@ function parse(argv) {
     if (a === "--wait") { out.wait = rest[++i]; continue; }
     if (a === "--comment") { out.comment = rest[++i]; continue; }
     if (a === "--words") {
-      const file = rest[++i];
-      if (!file || file.startsWith("--")) throw new Error("--words requires FILE");
-      out.words = file;
+      // A missing value is a usage error that `dirf ste` reports with exit 2.
+      const file = rest[i + 1];
+      if (file && !file.startsWith("--")) { out.words = file; i++; } else out.words = "";
       continue;
     }
     if (a === "--help" || a === "-h") { out.help = true; continue; }

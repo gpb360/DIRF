@@ -8,13 +8,14 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 ## Unreleased
 
 ### Added
-- **ASD-STE100 writing standard.** `dirf ste check <file-or-dir>` checks prose
-  against the STE writing rules that a program can test: sentence length,
-  paragraph length, passive voice, and one instruction in each step. An
-  optional `--words FILE` list adds an approved-word check. DIRF does not
-  include the STE dictionary. The new `ste100` skill, the workflow policy, and
-  `unslop` apply the rules. The documentation playbook adds a
-  `controlled language` step.
+- **ASD-STE100 checker.** `dirf ste check <file-or-dir>` checks prose against
+  the STE writing rules that a program can test: sentence length, paragraph
+  length, passive voice, and one instruction in each step. An optional
+  `--words FILE` list adds an approved-word check. DIRF does not include the
+  STE dictionary. The workflow policy's existing ASD-STE100 rules now tell
+  agents to run the check. A new `ste100` skill applies the rules, and the
+  documentation playbook adds a `controlled language` step for it. `unslop`
+  now uses the STE sentence limits instead of varying sentence length.
 - **Reverse-engineering routing** — the registry now references
   `reverse-engineer-anything` (REA), so jobs that depend on shipped binaries,
   packages, firmware, network captures, or live runtime evidence route to it

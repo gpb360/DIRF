@@ -47,6 +47,26 @@ test("code, tables, headings, front matter, and comments are not prose", () => {
   assert.deepEqual(proseBlocks(source).map((block) => block.text), ["Short text."]);
 });
 
+test("a finding reports the line where its sentence starts", () => {
+  const source = ["Intro text here.", "", "First sentence is fine.", "The file was", "written by the tool. Last one."].join("\n");
+  assert.deepEqual(checkSte(source).map((finding) => [finding.rule, finding.line]), [["passive-voice", 4]]);
+});
+
+test("an empty quote line ends a quoted paragraph", () => {
+  const quote = ["> One. Two. Three.", ">", "> Four. Five. Six. Seven."].join("\n");
+  assert.deepEqual(rules(quote), []);
+  assert.deepEqual(proseBlocks(quote).map((block) => block.line), [1, 3]);
+});
+
+test("a longer fence is not closed by a shorter inner fence", () => {
+  const source = ["````md", "```", longSentence(40), "```", "````", "Short text."].join("\n");
+  assert.deepEqual(proseBlocks(source).map((block) => block.text), ["Short text."]);
+});
+
+test("front matter after a byte order mark is not prose", () => {
+  assert.deepEqual(proseBlocks(`﻿---\ntitle: ${longSentence(40)}\n---\nShort text.`).map((block) => block.text), ["Short text."]);
+});
+
 test("inline code and links count as words a reader sees", () => {
   assert.deepEqual(words(sentences("Run `npm run check:release --verbose` with [the guide](https://x.y/z).")[0]),
     ["Run", "CODE", "with", "the", "guide"]);
@@ -74,7 +94,14 @@ test("ste check exits 1 with findings, 0 when clean, and 2 for usage", () => {
   assert.equal(report.files, 1, "only Markdown and text files are checked");
   assert.equal(report.results[0].findings[0].rule, "unapproved-word");
   assert.equal(runSteCheck({ _: ["check"] }, io), 2);
-  assert.throws(() => runSteCheck({ _: ["check", join(dir, "missing.md")] }, io), /File not found/);
+  assert.equal(runSteCheck({ _: ["check", join(dir, "missing.md")] }, io), 2, "an input error is not a finding");
+  assert.match(lines.at(-1), /File not found/);
+  assert.equal(runSteCheck({ _: ["check", dir], words: join(dir, "missing.txt") }, io), 2);
+  assert.equal(runSteCheck({ _: ["check", dir], words: "" }, io), 2, "--words without a value is a usage error");
+  const objectWords = join(dir, "..", "object-words.json");
+  writeFileSync(objectWords, '{"the": true}');
+  assert.equal(runSteCheck({ _: ["check", dir], words: objectWords }, io), 2);
+  assert.match(lines.at(-1), /must be a JSON array/);
 });
 
 test("ste100 is a bundled controlled-language skill that a task can request", () => {

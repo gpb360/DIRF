@@ -68,6 +68,10 @@ Use this policy in every generated workflow prompt.
   machine-readable data. Task-specific creative writing keeps its requested form.
   These instructions guide output. Do not claim full STE compliance without
   reviewing the applicable rules and dictionary usage.
+- Run `dirf ste check FILE` on changed prose files. The check tests sentence
+  length, paragraph length, passive voice, and one instruction per step. It does
+  not test the dictionary. Add `--words FILE` when the project supplies an
+  approved-word list. Read each finding before you change the text.
 - Write user-facing updates in simple, ordinary English. Keep internal workflow
   terms such as exact-head, fixed-point, remediation, gate, convergence, and
   evidence ledger out of the update unless the user asks for technical detail.
@@ -95,20 +99,6 @@ Use this policy in every generated workflow prompt.
 - Do not add AI attribution footers or generated-by boilerplate.
 - Pull requests created during the workflow carry a description: what
   changed, why, and how it was verified — never a title-only PR.
-
-## Writing Standard (ASD-STE100)
-- Write documentation, reports, pull-request text, and handoffs to the
-  ASD-STE100 Simplified Technical English writing rules.
-- Write procedural sentences of 20 words or fewer.
-- Write descriptive sentences of 25 words or fewer.
-- Put 6 sentences or fewer in a descriptive paragraph.
-- Write one instruction in each step. Use the imperative and the active voice.
-- Use one word for one meaning.
-- Run `dirf ste check <file>` on changed prose files. Read each finding before
-  you change the text. A finding is a heuristic, not proof.
-- When the project supplies an approved word list, run the check with
-  `--words FILE`. DIRF does not include the STE dictionary.
-- The repository can turn off this standard in its own instructions.
 
 ## Final Prose Pass
 - When the workflow includes a prose-editing capability, apply it once to

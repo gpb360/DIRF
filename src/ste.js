@@ -38,7 +38,7 @@ const CODE_TOKEN = "CODE";
 
 /**
  * @typedef {{ line: number, rule: keyof typeof STE_RULES, message: string, text: string }} SteFinding
- * @typedef {{ line: number, text: string, kind: "paragraph" | "procedure" | "item" }} Block
+ * @typedef {{ line: number, text: string, kind: "paragraph" | "procedure" | "item", lines: { line: number, text: string }[] }} Block
  */
 
 /**
@@ -64,7 +64,7 @@ function plainInline(text) {
  * @returns {Block[]}
  */
 export function proseBlocks(source) {
-  const lines = String(source).replace(/\r\n?/g, "\n").split("\n");
+  const lines = String(source).replace(/^﻿/, "").replace(/\r\n?/g, "\n").split("\n");
   /** @type {Block[]} */
   const blocks = [];
   /** @type {Block | null} */
@@ -80,22 +80,26 @@ export function proseBlocks(source) {
   for (let i = start; i < lines.length; i++) {
     const raw = lines[i];
     const line = raw.trim();
-    const fenceMatch = line.match(/^(```|~~~)/);
-    if (fence) { if (fenceMatch && line.startsWith(fence)) fence = ""; continue; }
+    const fenceMatch = line.match(/^(`{3,}|~{3,})/);
+    // A fence closes only on a line of the same character, at least as long.
+    if (fence) { if (line.startsWith(fence) && [...line.trimEnd()].every((c) => c === fence[0])) fence = ""; continue; }
     if (fenceMatch) { flush(); fence = fenceMatch[1]; continue; }
     if (comment) { if (line.includes("-->")) comment = false; continue; }
     if (line.startsWith("<!--")) { flush(); comment = !line.includes("-->"); continue; }
     if (!line || /^#{1,6}\s/.test(line) || line.startsWith("|") || /^(?:-{3,}|\*{3,}|_{3,})$/.test(line)) { flush(); continue; }
-    const text = line.replace(/^>\s?/, "");
+    const quoted = line.startsWith(">");
+    const text = line.replace(/^(?:>\s?)+/, "").trim();
+    if (quoted && !text) { flush(); continue; }
     const ordered = text.match(/^\d+[.)]\s+(.*)$/);
     const bullet = text.match(/^[-*+]\s+(?:\[[ xX]\]\s+)?(.*)$/);
     if (ordered || bullet) {
       flush();
-      current = { line: i + 1, text: (ordered || bullet)?.[1] || "", kind: ordered ? "procedure" : "item" };
+      const itemText = (ordered || bullet)?.[1] || "";
+      current = { line: i + 1, text: itemText, kind: ordered ? "procedure" : "item", lines: [{ line: i + 1, text: itemText }] };
       continue;
     }
-    if (current) current.text += ` ${text}`;
-    else current = { line: i + 1, text, kind: "paragraph" };
+    if (current) { current.text += ` ${text}`; current.lines.push({ line: i + 1, text }); }
+    else current = { line: i + 1, text, kind: "paragraph", lines: [{ line: i + 1, text }] };
   }
   flush();
   return blocks;
@@ -123,7 +127,7 @@ const excerpt = (text) => (text.length > 80 ? `${text.slice(0, 77)}...` : text);
  */
 export function loadApprovedWords(file) {
   const source = readFileSync(resolve(file), "utf-8");
-  const list = source.trim().startsWith("[")
+  const list = /^[[{]/.test(source.trim())
     ? JSON.parse(source)
     : source.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
   if (!Array.isArray(list)) throw new Error(`Approved word list must be a JSON array or one word per line: ${file}`);
@@ -143,6 +147,25 @@ function isTechnicalName(word, index) {
 }
 
 /**
+ * The source line where each sentence starts, found by counting words line by line.
+ * @param {Block} block
+ * @param {string[]} blockSentences
+ * @returns {number[]}
+ */
+function sentenceLines(block, blockSentences) {
+  /** @type {number[]} */
+  const ends = [];
+  let total = 0;
+  for (const segment of block.lines) { total += words(plainInline(segment.text)).length; ends.push(total); }
+  let seen = 0;
+  return blockSentences.map((sentence) => {
+    const index = ends.findIndex((end) => end > seen);
+    seen += words(sentence).length;
+    return block.lines[index === -1 ? block.lines.length - 1 : index].line;
+  });
+}
+
+/**
  * Check text against the testable STE writing rules.
  * @param {string} source Markdown or plain text.
  * @param {{ words?: Set<string> }} [options]
@@ -156,10 +179,11 @@ export function checkSte(source, options = {}) {
     const blockSentences = sentences(block.text);
     const procedural = block.kind === "procedure";
     const limit = procedural ? STE_LIMITS.procedural : STE_LIMITS.descriptive;
-    for (const sentence of blockSentences) {
+    const lines = sentenceLines(block, blockSentences);
+    for (const [index, sentence] of blockSentences.entries()) {
       const sentenceWords = words(sentence);
       const add = (/** @type {keyof typeof STE_RULES} */ rule, /** @type {string} */ message) =>
-        findings.push({ line: block.line, rule, message, text: excerpt(sentence) });
+        findings.push({ line: lines[index], rule, message, text: excerpt(sentence) });
       if (sentenceWords.length > limit) {
         add("sentence-length", `${sentenceWords.length} words in a ${procedural ? "procedural" : "descriptive"} sentence (maximum ${limit}).`);
       }
@@ -230,15 +254,23 @@ export function runSteCheck(args, io = {}) {
     for (const [rule, text] of Object.entries(STE_RULES)) log(`${rule}: ${text}`);
     return 0;
   }
-  if (sub !== "check" || !targets.length) {
+  if (sub !== "check" || !targets.length || args.words === "") {
     error("usage: dirf ste check <file-or-dir>... [--words FILE] [--json]\n       dirf ste rules");
     return 2;
   }
-  const approved = args.words ? loadApprovedWords(args.words) : undefined;
-  const results = steFiles(targets).map((file) => ({
-    file: relative(process.cwd(), file) || file,
-    findings: checkSte(readFileSync(file, "utf-8"), { words: approved }),
-  }));
+  /** @type {{ file: string, findings: SteFinding[] }[]} */
+  let results;
+  try {
+    const approved = args.words ? loadApprovedWords(args.words) : undefined;
+    results = steFiles(targets).map((file) => ({
+      file: relative(process.cwd(), file) || file,
+      findings: checkSte(readFileSync(file, "utf-8"), { words: approved }),
+    }));
+  } catch (cause) {
+    // Exit 1 means "findings". An unreadable input is an error, not a finding.
+    error(`dirf ste: ${cause instanceof Error ? cause.message : String(cause)}`);
+    return 2;
+  }
   const total = results.reduce((sum, result) => sum + result.findings.length, 0);
   if (args.json) log(JSON.stringify({ files: results.length, findings: total, results }, null, 2));
   else {
@@ -246,7 +278,7 @@ export function runSteCheck(args, io = {}) {
       for (const finding of findings) log(`${file}:${finding.line}: ${finding.rule}: ${finding.message}\n    ${finding.text}`);
     }
     log(total
-      ? `STE check: ${total} finding(s) in ${results.length} file(s). Each finding is a heuristic; review it before you change the text.`
+      ? `STE check: ${total} finding(s) in ${results.length} file(s). Each finding is a heuristic. Review it before you change the text.`
       : `STE check: no findings in ${results.length} file(s).`);
   }
   return total ? 1 : 0;
