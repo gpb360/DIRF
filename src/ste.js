@@ -58,16 +58,28 @@ const marksOf = (text) => (text.match(LINE_MARKS) || []).join("");
  */
 function plainInline(text) {
   return text
+    .replace(/\[\^[^\]\s]+\]/g, (note) => marksOf(note))
     .replace(/!\[[^\]]*\]\([^)]*\)/g, (image) => ` ${marksOf(image)}`)
     .replace(/\[([^\]]*)\]\(([^)]*)\)/g, (_, label, target) => `${label}${marksOf(target)}`)
     .replace(/`[^`]*`/g, (code) => CODE_TOKEN + marksOf(code))
-    .replace(/<[^>]+>/g, (tag) => ` ${marksOf(tag)}`)
+    .replace(/<(?:https?:|mailto:)[^<>\s]*>/g, (link) => CODE_TOKEN + marksOf(link))
+    // Only a real tag is markup. A bare "<", as in "count < 5", is text.
+    .replace(/<\/?[A-Za-z][\w:-]*(?:\s[^<>]*)?\/?>/g, (tag) => ` ${marksOf(tag)}`)
+    .replace(/&(amp|lt|gt|quot|apos|nbsp|#\d+);/g, (_, name) => ENTITIES[name] ?? " ")
     // A URL does not take the punctuation that ends its sentence.
     .replace(/https?:\/\/[^\s\u0001]*[^\s\u0001.,;:!?'")\]]/g, CODE_TOKEN)
     .replace(/[*_]{1,3}([^*_]+)[*_]{1,3}/g, "$1")
+    // A backslash at the end of a line is a Markdown line break, not text.
+    .replace(/\\(?=[\s\u0001]|$)/g, "")
+    // Keep each line mark directly before the next word, not before a space,
+    // so that a mark never stands between a sentence end and its space.
+    .replace(/(\u0001+)(\s+)/g, "$2$1")
     .replace(/\s+/g, " ")
     .trim();
 }
+
+/** @type {Record<string, string>} */
+const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 
 /**
  * Split Markdown or plain text into prose blocks. Code, tables, headings,
@@ -129,7 +141,7 @@ export function proseBlocks(source) {
  */
 function markedSentences(text) {
   const protectedText = plainInline(text).replace(ABBREVIATIONS, "$1");
-  return protectedText.split(/(?<=[.!?])["')\]]?\s+(?=[\u0001\s]*["'(\[]?[A-Z0-9])/).map((piece) => piece.trim());
+  return protectedText.split(/(?<=[.!?])["')\]]*\s+(?=[\u0001\s]*["'(\[]?[A-Z0-9])/).map((piece) => piece.trim());
 }
 
 /** @param {string} sentence */
@@ -236,7 +248,7 @@ export function checkSte(source, options = {}) {
       }
     }
     if (block.kind === "paragraph" && found.length > STE_LIMITS.paragraphSentences) {
-      findings.push({ line: block.line, rule: "paragraph-length",
+      findings.push({ line: found[0].line, rule: "paragraph-length",
         message: `${found.length} sentences in a paragraph (maximum ${STE_LIMITS.paragraphSentences}).`,
         text: excerpt(found[0].text) });
     }

@@ -75,6 +75,31 @@ test("a line that holds only markup does not shift the reported line", () => {
   assert.deepEqual(checkSte(badge).map((finding) => [finding.rule, finding.line]), [["passive-voice", 2]]);
 });
 
+test("a bare less-than sign is text, not the start of a tag", () => {
+  const source = ["Use a count < 5 here.", "The file was written by the tool.", "Open Settings > Advanced."].join("\n");
+  assert.deepEqual(checkSte(source).map((finding) => [finding.rule, finding.line]), [["passive-voice", 2]]);
+  assert.deepEqual(sentences("Read <https://example.com> now. Then stop."), ["Read CODE now.", "Then stop."]);
+});
+
+test("a paragraph-length finding reports the line of its first sentence", () => {
+  const source = ['<p align="center">', "One. Two. Three. Four. Five. Six. Seven."].join("\n");
+  assert.deepEqual(checkSte(source).map((finding) => [finding.rule, finding.line]), [["paragraph-length", 2]]);
+});
+
+test("footnotes, hard breaks, closing marks, and link labels do not merge sentences", () => {
+  assert.deepEqual(sentences("It is done.[^1] Next step."), ["It is done.", "Next step."]);
+  assert.deepEqual(sentences('He said ("done.") Then stop.'), ['He said ("done.', "Then stop."]);
+  const hardBreak = ["It works.\\", "The file was written by the tool."].join("\n");
+  assert.deepEqual(checkSte(hardBreak).map((finding) => [finding.rule, finding.line]), [["passive-voice", 2]]);
+  const label = ["Read [the guide.](docs/", "guide.md) The file was written by the tool."].join("\n");
+  assert.deepEqual(checkSte(label).map((finding) => [finding.rule, finding.line]), [["passive-voice", 2]]);
+});
+
+test("an HTML entity is text, not a semicolon or a word", () => {
+  assert.deepEqual(rules("1. Open the R&amp;D file."), []);
+  assert.deepEqual(sentences("Use a &lt;tag&gt; here."), ["Use a <tag> here."]);
+});
+
 test("a URL does not take the period that ends its sentence", () => {
   const source = `${longSentence(14)} https://example.com. ${longSentence(15)}`;
   assert.deepEqual(rules(source), []);
