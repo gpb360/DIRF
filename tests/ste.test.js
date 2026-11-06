@@ -179,6 +179,24 @@ test("a line that starts with a triple-backtick code span is not a fence", () =>
   assert.deepEqual(proseBlocks(["~~~js `x`", longSentence(40), "~~~", "Short text."].join("\n")).map((block) => block.text), ["Short text."]);
 });
 
+test("a fence can start a list item", () => {
+  for (const marker of ["-", "1."]) {
+    const source = [`${marker} \`\`\`bash`, `   ${longSentence(40)}`, "   ```", "The file was written by the tool."].join("\n");
+    assert.deepEqual(checkSte(source).map((finding) => [finding.rule, finding.line]), [["passive-voice", 4]], marker);
+  }
+});
+
+test("text after several comments on one line is prose", () => {
+  assert.deepEqual(proseBlocks("<!-- a --> <!-- b --> Short text.").map((block) => block.text), ["Short text."]);
+  assert.deepEqual(proseBlocks("<!-- a --> <!-- b\nhidden\n--> Short text.").map((block) => [block.text, block.line]), [["Short text.", 3]]);
+});
+
+test("a long run of backticks stays fast", () => {
+  const started = Date.now();
+  proseBlocks(`${"`".repeat(128000)} x \``);
+  assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
+});
+
 test("a long code span across many lines stays fast", () => {
   const started = Date.now();
   checkSte(`Run \`${"x\n".repeat(16000)}\`. Then stop.`);

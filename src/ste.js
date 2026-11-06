@@ -130,19 +130,23 @@ export function proseBlocks(source) {
     let body = lines[i].trim().replace(/^(?:>\s?)+/, "").trim();
     // A fence closes only on a line of the same character, at least as long.
     if (fence) { if (body.startsWith(fence) && [...body].every((c) => c === fence[0])) fence = ""; continue; }
-    // Text after a comment closes on the same line is still prose.
-    if (comment || body.startsWith("<!--")) {
+    // Text after a comment closes on the same line is still prose, also
+    // after several comments on one line.
+    let stripped = false;
+    while (comment || body.startsWith("<!--")) {
       if (!comment) flush();
+      stripped = true;
       const end = body.indexOf("-->", comment ? 0 : 4);
       comment = end === -1;
       body = comment ? "" : body.slice(end + 3).trim();
-      if (!body) continue;
+      if (!body) break;
     }
-    // A backtick fence has no backtick after it on its line. Otherwise the
-    // line starts with an inline code span, as in "```x``` is code".
-    const fenceMatch = body.match(/^(`{3,})(?!.*`)|^(~{3,})/);
+    if (stripped && !body) continue;
+    // A fence can start a list item. A backtick fence has no backtick after
+    // it on its line. Otherwise the line starts with an inline code span, as
+    // in "```x``` is code". The first (?!`) keeps a long backtick run linear.
+    const fenceMatch = body.replace(/^(?:[-*+]|\d+[.)])\s+/, "").match(/^(`{3,})(?!`)(?!.*`)|^(~{3,})/);
     if (fenceMatch) { flush(); fence = fenceMatch[1] || fenceMatch[2]; continue; }
-    if (body.startsWith("<!--")) { flush(); comment = !body.includes("-->"); continue; }
     if (!body || /^#{1,6}\s/.test(body) || body.startsWith("|") || /^(?:-{3,}|\*{3,}|_{3,})$/.test(body)) { flush(); continue; }
     const ordered = body.match(/^\d+[.)]\s+(.*)$/);
     const bullet = body.match(/^[-*+]\s+(?:\[[ xX]\]\s+)?(.*)$/);
