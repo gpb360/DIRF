@@ -68,6 +68,25 @@ test("a line that starts with a tag or an image still starts a new sentence", ()
   assert.deepEqual(rules(seven), ["paragraph-length"]);
 });
 
+test("a line that holds only markup does not shift the reported line", () => {
+  const br = ["Intro sentence here.", "<br>", "The file was written by the tool."].join("\n");
+  assert.deepEqual(checkSte(br).map((finding) => [finding.rule, finding.line]), [["passive-voice", 3]]);
+  const badge = ["![build](badge.svg)", "The file was written by the tool."].join("\n");
+  assert.deepEqual(checkSte(badge).map((finding) => [finding.rule, finding.line]), [["passive-voice", 2]]);
+});
+
+test("a URL does not take the period that ends its sentence", () => {
+  const source = `${longSentence(14)} https://example.com. ${longSentence(15)}`;
+  assert.deepEqual(rules(source), []);
+  assert.deepEqual(sentences("See https://example.com/a_b?x=1. Then stop."), ["See CODE.", "Then stop."]);
+});
+
+test("text after a comment that closes on the same line is prose", () => {
+  assert.deepEqual(proseBlocks("<!-- note --> Short text.").map((block) => block.text), ["Short text."]);
+  assert.deepEqual(proseBlocks(["<!--", "note", "--> Short text."].join("\n")).map((block) => [block.text, block.line]), [["Short text.", 3]]);
+  assert.deepEqual(proseBlocks("<!-- a --> <!-- b\nhidden\n-->").map((block) => block.text), []);
+});
+
 test("a fence line inside an HTML comment does not hide the rest of the file", () => {
   const source = ["<!--", "```", "-->", "The file was written by the tool."].join("\n");
   assert.deepEqual(checkSte(source).map((finding) => [finding.rule, finding.line]), [["passive-voice", 4]]);
@@ -90,7 +109,7 @@ test("a longer fence is not closed by a shorter inner fence", () => {
 });
 
 test("front matter after a byte order mark is not prose", () => {
-  assert.deepEqual(proseBlocks(`﻿---\ntitle: ${longSentence(40)}\n---\nShort text.`).map((block) => block.text), ["Short text."]);
+  assert.deepEqual(proseBlocks(`\uFEFF---\ntitle: ${longSentence(40)}\n---\nShort text.`).map((block) => block.text), ["Short text."]);
 });
 
 test("inline code and links count as words a reader sees", () => {
@@ -129,7 +148,7 @@ test("ste check exits 1 with findings, 0 when clean, and 2 for usage", () => {
   assert.equal(runSteCheck({ _: ["check", dir], words: objectWords }, io), 2);
   assert.match(lines.at(-1), /must be a JSON array/);
   const bomWords = join(dir, "..", "bom-words.json");
-  writeFileSync(bomWords, '﻿["the", "tool", "writes", "file"]');
+  writeFileSync(bomWords, '\uFEFF["the", "tool", "writes", "file"]');
   assert.equal(runSteCheck({ _: ["check", join(dir, "clean.md")], words: bomWords }, io), 0, "a JSON word list with a byte order mark loads");
 });
 

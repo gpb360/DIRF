@@ -62,7 +62,8 @@ function plainInline(text) {
     .replace(/\[([^\]]*)\]\(([^)]*)\)/g, (_, label, target) => `${label}${marksOf(target)}`)
     .replace(/`[^`]*`/g, (code) => CODE_TOKEN + marksOf(code))
     .replace(/<[^>]+>/g, (tag) => ` ${marksOf(tag)}`)
-    .replace(/https?:\/\/[^\s\u0001]+/g, CODE_TOKEN)
+    // A URL does not take the punctuation that ends its sentence.
+    .replace(/https?:\/\/[^\s\u0001]*[^\s\u0001.,;:!?'")\]]/g, CODE_TOKEN)
     .replace(/[*_]{1,3}([^*_]+)[*_]{1,3}/g, "$1")
     .replace(/\s+/g, " ")
     .trim();
@@ -75,7 +76,7 @@ function plainInline(text) {
  * @returns {Block[]}
  */
 export function proseBlocks(source) {
-  const lines = String(source).replace(/^﻿/, "").replace(/\r\n?/g, "\n").split("\n");
+  const lines = String(source).replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n").split("\n");
   /** @type {Block[]} */
   const blocks = [];
   /** @type {Block | null} */
@@ -90,10 +91,17 @@ export function proseBlocks(source) {
   const flush = () => { if (current && current.text.trim()) blocks.push(current); current = null; };
   for (let i = start; i < lines.length; i++) {
     // Quote markers do not change what a line is: code, comment, or prose.
-    const body = lines[i].trim().replace(/^(?:>\s?)+/, "").trim();
+    let body = lines[i].trim().replace(/^(?:>\s?)+/, "").trim();
     // A fence closes only on a line of the same character, at least as long.
     if (fence) { if (body.startsWith(fence) && [...body].every((c) => c === fence[0])) fence = ""; continue; }
-    if (comment) { if (body.includes("-->")) comment = false; continue; }
+    // Text after a comment closes on the same line is still prose.
+    if (comment || body.startsWith("<!--")) {
+      if (!comment) flush();
+      const end = body.indexOf("-->", comment ? 0 : 4);
+      comment = end === -1;
+      body = comment ? "" : body.slice(end + 3).trim();
+      if (!body) continue;
+    }
     const fenceMatch = body.match(/^(`{3,}|~{3,})/);
     if (fenceMatch) { flush(); fence = fenceMatch[1]; continue; }
     if (body.startsWith("<!--")) { flush(); comment = !body.includes("-->"); continue; }
@@ -147,7 +155,7 @@ const excerpt = (text) => (text.length > 80 ? `${text.slice(0, 77)}...` : text);
  * @returns {Set<string>}
  */
 export function loadApprovedWords(file) {
-  const source = readFileSync(resolve(file), "utf-8").replace(/^﻿/, "");
+  const source = readFileSync(resolve(file), "utf-8").replace(/^\uFEFF/, "");
   const list = /^[[{]/.test(source.trim())
     ? JSON.parse(source)
     : source.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
@@ -178,7 +186,9 @@ function blockSentences(block) {
   const result = [];
   let marks = 0;
   for (const piece of pieces) {
-    const leading = piece.match(/^\u0001*/)?.[0].length || 0;
+    // Count every line mark before the first word. Markup that stood alone on
+    // a line leaves spaces and punctuation between the marks.
+    const leading = marksOf(piece.match(/^[^A-Za-z0-9]*/)?.[0] || "").length;
     const index = Math.max(0, Math.min(marks + leading, block.lines.length) - 1);
     marks += (piece.match(LINE_MARKS) || []).length;
     const text = unmarked(piece);
