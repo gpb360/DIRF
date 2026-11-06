@@ -3,6 +3,7 @@
 // observes a running session.
 
 const COST_ORDER = new Map([["low", 0], ["medium", 1], ["high", 2]]);
+const EFFORT_ORDER = new Map([["light", 0], ["standard", 1], ["heavy", 2]]);
 const ADVICE_CAPABILITY = "model selection advice";
 const MAX_CATALOG_LABEL_LENGTH = 120;
 
@@ -51,29 +52,52 @@ export function normalizeModelCatalog(data, sha256 = null) {
     }
     const capabilities = cleanStrings(model.capabilities.map((capability, capabilityIndex) =>
       catalogLabel(capability, `Model catalog entry ${name} capability ${capabilityIndex + 1}`)));
-    return { name, cost_tier: costTier, capabilities };
+    // Optional provider declaration ("anthropic", "openai", "z.ai", ...).
+    // Absent means provider-agnostic: eligible under any provider filter.
+    const provider = model.provider === undefined || model.provider === null || !String(model.provider).trim()
+      ? null
+      : modelIdentifier(String(model.provider).trim(), `Model catalog entry ${name} provider`);
+    return { name, cost_tier: costTier, capabilities, provider };
   });
   return { models, ...(sha256 ? { sha256 } : {}) };
 }
 
-export function requiredModelCapabilities(skillFlow = {}) {
+// Capability -> { stages, effort }. Effort is the STRONGEST declared weight
+// among the steps sharing a capability, so one assignment satisfies every
+// step that requires it. Steps without effort default to "standard", which
+// preserves the historical lowest-tier pick.
+export function capabilityEffortRequirements(skillFlow = {}) {
   const requirements = new Map();
   for (const step of skillFlow.steps || []) {
     const capability = String(step.capability || "").trim();
     if (!capability || capability === ADVICE_CAPABILITY || step.invocation === "user") continue;
-    const current = requirements.get(capability) || new Set();
-    if (step.stage) current.add(step.stage);
+    // Unrecognized effort values degrade to "standard" here; validate.js is
+    // the surface that reports them, so this core stays tolerant of drafts.
+    const declared = String(step.effort || "standard").trim().toLowerCase();
+    const effort = EFFORT_ORDER.has(declared) ? declared : "standard";
+    const current = requirements.get(capability) || { stages: new Set(), effort: "standard" };
+    if (step.stage) current.stages.add(step.stage);
+    if (EFFORT_ORDER.get(effort) > EFFORT_ORDER.get(current.effort)) current.effort = effort;
     requirements.set(capability, current);
   }
   return requirements;
+}
+
+export function requiredModelCapabilities(skillFlow = {}) {
+  const stagesByCapability = new Map();
+  for (const [capability, requirement] of capabilityEffortRequirements(skillFlow)) {
+    stagesByCapability.set(capability, requirement.stages);
+  }
+  return stagesByCapability;
 }
 
 function covers(model, capability) {
   return model.capabilities.includes("*") || model.capabilities.includes(capability);
 }
 
-export function buildModelAdvice(skillFlow = {}, catalog = null) {
-  const requirements = requiredModelCapabilities(skillFlow);
+export function buildModelAdvice(skillFlow = {}, catalog = null, { providers = null } = {}) {
+  const requirements = capabilityEffortRequirements(skillFlow);
+  const providerSet = providers && providers.length ? new Set(providers.map((p) => String(p).trim().toLowerCase())) : null;
   const base = {
     advisory_only: true,
     invoked_models: false,
@@ -91,48 +115,82 @@ export function buildModelAdvice(skillFlow = {}, catalog = null) {
     };
   }
 
+  // Provider filter: a model is eligible when it declares no provider or one
+  // in the requested set. Capabilities with no match inside the set fall back
+  // to the full catalog (provider-agnostic entries cover every filter).
+  const inProviderSet = (model) => !model.provider || !providerSet || providerSet.has(model.provider.toLowerCase());
+  const eligibleFor = (capability) => catalog.models.filter((model) => inProviderSet(model) && covers(model, capability));
+  const fellBackOutsideSet = [];
+
   const assignments = new Map();
   const uncovered = [];
-  for (const [capability, stages] of requirements) {
-    const eligible = catalog.models.filter((model) => covers(model, capability))
-      .sort((a, b) => COST_ORDER.get(a.cost_tier) - COST_ORDER.get(b.cost_tier) ||
-        (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-    const chosen = eligible[0];
-    if (!chosen) {
+  for (const [capability, requirement] of requirements) {
+    let eligible = eligibleFor(capability);
+    if (!eligible.length && providerSet) {
+      eligible = catalog.models.filter((model) => covers(model, capability));
+      if (eligible.length) fellBackOutsideSet.push(capability);
+    }
+    if (!eligible.length) {
       uncovered.push(capability);
       continue;
     }
+    // Weight-aware pick: heavy steps prefer the fleet's strongest tier first,
+    // falling back down if no high-tier model covers the capability; every
+    // other effort prefers the cheapest sufficient tier (the historical pick).
+    const heavy = requirement.effort === "heavy";
+    const dir = heavy ? -1 : 1;
+    eligible.sort((a, b) => dir * (COST_ORDER.get(a.cost_tier) - COST_ORDER.get(b.cost_tier)) ||
+      (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    const chosen = eligible[0];
     const current = assignments.get(chosen.name) || {
       model: chosen.name,
       cost_tier: chosen.cost_tier,
+      ...(chosen.provider ? { provider: chosen.provider } : {}),
       capabilities: [],
       stages: [],
+      _heavyCapabilities: new Set(),
     };
     current.capabilities.push(capability);
-    current.stages.push(...stages);
+    current.stages.push(...requirement.stages);
+    if (heavy) current._heavyCapabilities.add(capability);
     assignments.set(chosen.name, current);
   }
 
-  const recommendations = [...assignments.values()].map((assignment) => ({
-    ...assignment,
-    capabilities: cleanStrings(assignment.capabilities),
-    stages: cleanStrings(assignment.stages),
-    rationale: `Lowest host-reported cost tier that declares: ${cleanStrings(assignment.capabilities).join(", ")}.`,
-  }));
+  const recommendations = [...assignments.values()].map((assignment) => {
+    const { _heavyCapabilities, ...rest } = assignment;
+    const capabilities = cleanStrings(assignment.capabilities);
+    const heavyCaps = cleanStrings([..._heavyCapabilities]);
+    const otherCaps = capabilities.filter((capability) => !heavyCaps.includes(capability));
+    const rationale = !heavyCaps.length
+      ? `Lowest host-reported cost tier that declares: ${capabilities.join(", ")}.`
+      : !otherCaps.length
+        ? `Selected for the strongest host-reported cost tier (covers effort: heavy): ${capabilities.join(", ")}.`
+        : `Strongest host-reported cost tier for effort: heavy (${heavyCaps.join(", ")}); the same tier covers the remaining steps (${otherCaps.join(", ")}).`;
+    return {
+      ...rest,
+      capabilities,
+      stages: cleanStrings(assignment.stages),
+      rationale,
+    };
+  });
   const status = recommendations.length && !uncovered.length
     ? "recommended"
     : recommendations.length ? "partial" : "unavailable";
+  const rationaleSuffix = fellBackOutsideSet.length
+    ? ` Declared provider set had no match for: ${cleanStrings(fellBackOutsideSet).join(", ")}; fell back to models outside the set.`
+    : "";
   return {
     ...base,
     status,
     catalog_source: "host-provided file",
     ...(catalog.sha256 ? { catalog_sha256: catalog.sha256 } : {}),
+    ...(providerSet ? { providers: providers.map((p) => String(p).trim()).filter(Boolean) } : {}),
     recommendations,
     uncovered_capabilities: uncovered,
-    rationale: status === "recommended"
+    rationale: (status === "recommended"
       ? "Every declared preflight workflow capability has a suggestion from the host-provided catalog."
       : status === "partial"
         ? "Some declared preflight workflow capabilities have no match in the host-provided catalog."
-        : "No host-reported model declares the preflight workflow capabilities, so DIRF made no recommendation.",
+        : "No host-reported model declares the preflight workflow capabilities, so DIRF made no recommendation.") + rationaleSuffix,
   };
 }

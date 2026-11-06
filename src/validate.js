@@ -149,6 +149,10 @@ export function validateSnapshot(data, label = "workflow") {
         const requirements = requiredModelCapabilities(data.skill_flow);
         const assigned = new Set();
         for (const [index, recommendation] of advice.recommendations.entries()) {
+          if (recommendation?.provider !== undefined &&
+              (typeof recommendation.provider !== "string" || !recommendation.provider.trim())) {
+            errors.push(`${label}: model_advice recommendation ${index + 1} provider must be a non-empty string`);
+          }
           const expectedStages = new Set();
           for (const capability of Array.isArray(recommendation?.capabilities) ? recommendation.capabilities : []) {
             if (!requirements.has(capability)) {
@@ -250,6 +254,14 @@ export function validateSnapshot(data, label = "workflow") {
       // is meaningful; absent is fine (agnostic/optional).
       if (step?.output !== undefined && (typeof step.output !== "string" || !step.output.trim())) {
         errors.push(`${label}: skill_flow step ${index + 1} output must be a non-empty string`);
+      }
+      // Optional effort weight (model-advice tier preference). Absent means
+      // "standard", which keeps the historical lowest-tier pick. Accepts the
+      // same normalized forms as the advice engine (trim + case-fold), so a
+      // value the engine honors never fails validation.
+      if (step?.effort !== undefined &&
+          !["light", "standard", "heavy"].includes(String(step.effort).trim().toLowerCase())) {
+        errors.push(`${label}: skill_flow step ${index + 1} effort must be light, standard, or heavy`);
       }
     }
   }

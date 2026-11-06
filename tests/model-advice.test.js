@@ -89,4 +89,126 @@ test("model catalogs reject ambiguous or malformed entries", () => {
   assert.throws(() => normalizeModelCatalog({ models: [
     { name: "x".repeat(121), cost_tier: "low", capabilities: ["testing"] },
   ] }), /120 characters or fewer/);
+  assert.throws(() => normalizeModelCatalog({ models: [
+    { name: "safe-model", cost_tier: "low", capabilities: ["testing"], provider: "has space" },
+  ] }), /must be an identifier using only/);
+});
+
+test("provider filter restricts picks to the declared provider set", () => {
+  const catalog = normalizeModelCatalog({ models: [
+    { name: "claude-haiku", cost_tier: "low", capabilities: ["code review", "testing"], provider: "anthropic" },
+    { name: "claude-opus", cost_tier: "high", capabilities: ["*"], provider: "anthropic" },
+    { name: "gpt-mini", cost_tier: "low", capabilities: ["*"], provider: "openai" },
+  ] });
+  const advice = buildModelAdvice(flow, catalog, { providers: ["anthropic"] });
+
+  assert.equal(advice.status, "recommended");
+  assert.deepEqual(advice.providers, ["anthropic"]);
+  const models = advice.recommendations.map((r) => r.model);
+  assert.ok(models.every((m) => m.startsWith("claude-")), `non-anthropic pick: ${models}`);
+  const reviewer = advice.recommendations.find((r) => r.capabilities.includes("code review"));
+  assert.equal(reviewer.provider, "anthropic");
+});
+
+test("mixed provider set picks the cheapest sufficient model across providers", () => {
+  const catalog = normalizeModelCatalog({ models: [
+    { name: "claude-haiku", cost_tier: "low", capabilities: ["testing"], provider: "anthropic" },
+    { name: "gpt-mini", cost_tier: "low", capabilities: ["code review"], provider: "openai" },
+    { name: "glm-air", cost_tier: "medium", capabilities: ["*"], provider: "z.ai" },
+  ] });
+  const advice = buildModelAdvice(flow, catalog, { providers: ["anthropic", "openai"] });
+
+  assert.equal(advice.status, "recommended");
+  const byCapability = {};
+  for (const r of advice.recommendations) {
+    for (const capability of r.capabilities) byCapability[capability] = r.model;
+  }
+  assert.equal(byCapability["code review"], "gpt-mini");
+  assert.equal(byCapability.testing, "claude-haiku");
+});
+
+test("provider filter falls back outside the set when nothing in the set covers a capability", () => {
+  const catalog = normalizeModelCatalog({ models: [
+    { name: "claude-haiku", cost_tier: "low", capabilities: ["testing"], provider: "anthropic" },
+    { name: "gpt-mini", cost_tier: "low", capabilities: ["code review"], provider: "openai" },
+  ] });
+  const advice = buildModelAdvice(flow, catalog, { providers: ["openai"] });
+
+  assert.equal(advice.status, "recommended");
+  const tester = advice.recommendations.find((r) => r.capabilities.includes("testing"));
+  assert.equal(tester.model, "claude-haiku");
+  assert.match(advice.rationale, /fell back to models outside the set/);
+});
+
+const heavyFlow = {
+  steps: [
+    { stage: "review", capability: "code review", effort: "heavy" },
+    { stage: "verify", capability: "testing", effort: "light" },
+  ],
+};
+
+test("heavy effort prefers the strongest tier; light keeps the cheapest", () => {
+  const catalog = normalizeModelCatalog({ models: [
+    { name: "haiku", cost_tier: "low", capabilities: ["*"] },
+    { name: "sonnet", cost_tier: "medium", capabilities: ["*"] },
+    { name: "opus", cost_tier: "high", capabilities: ["*"] },
+  ] });
+  const advice = buildModelAdvice(heavyFlow, catalog);
+
+  const reviewer = advice.recommendations.find((r) => r.capabilities.includes("code review"));
+  const tester = advice.recommendations.find((r) => r.capabilities.includes("testing"));
+  assert.equal(reviewer.model, "opus");
+  assert.match(reviewer.rationale, /effort: heavy/);
+  assert.equal(tester.model, "haiku");
+});
+
+test("heavy effort falls back down the tiers when no high-tier model covers", () => {
+  const catalog = normalizeModelCatalog({ models: [
+    { name: "haiku", cost_tier: "low", capabilities: ["*"] },
+    { name: "sonnet", cost_tier: "medium", capabilities: ["code review"] },
+  ] });
+  const advice = buildModelAdvice(heavyFlow, catalog);
+
+  const reviewer = advice.recommendations.find((r) => r.capabilities.includes("code review"));
+  assert.equal(reviewer.model, "sonnet");
+});
+
+test("one model serving heavy and standard steps labels each in the rationale", () => {
+  const catalog = normalizeModelCatalog({ models: [
+    { name: "opus", cost_tier: "high", capabilities: ["*"] },
+  ] });
+  const mixedFlow = {
+    steps: [
+      { stage: "review", capability: "code review", effort: "heavy" },
+      { stage: "verify", capability: "testing" },
+    ],
+  };
+  const advice = buildModelAdvice(mixedFlow, catalog);
+
+  assert.equal(advice.recommendations.length, 1);
+  const { rationale, capabilities } = advice.recommendations[0];
+  assert.match(rationale, /effort: heavy \(code review\)/);
+  assert.match(rationale, /remaining steps \(testing\)/);
+  assert.deepEqual(capabilities, ["code review", "testing"]);
+});
+
+test("standard effort keeps the historical lowest-tier pick", () => {
+  const catalog = normalizeModelCatalog({ models: [
+    { name: "haiku", cost_tier: "low", capabilities: ["*"] },
+    { name: "opus", cost_tier: "high", capabilities: ["*"] },
+  ] });
+  const advice = buildModelAdvice(flow, catalog);
+  assert.equal(advice.recommendations.length, 1);
+  assert.equal(advice.recommendations[0].model, "haiku");
+  assert.doesNotMatch(advice.recommendations[0].rationale, /effort/);
+});
+
+test("unrecognized effort degrades to standard instead of throwing", () => {
+  const catalog = normalizeModelCatalog({ models: [
+    { name: "haiku", cost_tier: "low", capabilities: ["*"] },
+  ] });
+  const draftFlow = { steps: [{ stage: "review", capability: "code review", effort: "extreme" }] };
+  const advice = buildModelAdvice(draftFlow, catalog);
+  assert.equal(advice.status, "recommended");
+  assert.equal(advice.recommendations[0].model, "haiku");
 });

@@ -59,6 +59,16 @@ In DIRF, use `details:` arrays, keep
 `skill_flow.steps[].output` as a short checkpoint, and keep `SKILL.md` and
 playbook bodies below about 500 lines.
 
+## Weight the steps
+
+Declare `effort:` on `skill_flow` steps that need it — `light` for mechanical
+work, `heavy` for deep analysis or synthesis. Default is `standard` (the
+historical cheapest-sufficient pick). The host model catalog turns these
+weights into concrete model suggestions: `heavy` steps match the strongest
+declared tier first, `standard`/`light` steps match the cheapest that covers
+the capability. Weight only what you can defend — a heavy flag on every step
+is the same as no weights at all.
+
 ## Prompt the positive
 
 State the behavior you want. A prohibition can make the forbidden behavior

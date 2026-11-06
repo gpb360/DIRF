@@ -62,7 +62,7 @@ function modelAdvicePresentation(advice) {
   return {
     summary: advice.rationale,
     recommendations: (advice.recommendations || []).map((recommendation) => ({
-      label: `${recommendation.model} (${recommendation.cost_tier})`,
+      label: `${recommendation.model} (${recommendation.cost_tier}${recommendation.provider ? `, ${recommendation.provider}` : ""})`,
       detail: `${recommendation.capabilities.join(", ")} for preflight stages ${recommendation.stages.join(", ")} — ${recommendation.rationale}`,
     })),
     uncovered: advice.uncovered_capabilities || [],

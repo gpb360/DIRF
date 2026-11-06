@@ -799,6 +799,28 @@ test("schema v2 requires complete persisted flow fields", () => {
   assert.ok(errors.includes("demo.json: skill_flow step 1 reason must be a non-empty string"));
 });
 
+test("effort validation accepts the normalized forms the advice engine honors", () => {
+  const base = {
+    schema_version: 2,
+    name: "demo",
+    task: "build",
+    playbook: "fullstack-feature",
+    playbook_description: "Build",
+    agents: [],
+    baseline_skills: [],
+    questions: [],
+    policy: "policies/workflow-policy.md",
+  };
+  const errorsFor = (effort) => validateSnapshot({
+    ...base,
+    skill_flow: { label: "build", steps: [{ stage: "build", skill: "tdd", reason: "Test", status: "recommended", effort }] },
+  }, "demo.json").filter((error) => error.includes("effort"));
+
+  assert.deepEqual(errorsFor("Heavy"), [], "the engine trims and case-folds effort; validation must accept the same forms");
+  assert.deepEqual(errorsFor(" heavy "), []);
+  assert.deepEqual(errorsFor("extreme"), ["demo.json: skill_flow step 1 effort must be light, standard, or heavy"]);
+});
+
 test("schema v4 rejects persisted runtime paths", () => {
   const errors = validateSnapshot({
     schema_version: 4,
