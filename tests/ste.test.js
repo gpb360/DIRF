@@ -173,6 +173,18 @@ test("an empty quote line ends a quoted paragraph", () => {
   assert.deepEqual(proseBlocks(quote).map((block) => block.line), [1, 3]);
 });
 
+test("a line that starts with a triple-backtick code span is not a fence", () => {
+  const source = ["```require('process');``` works like any module.", "The file was written by the tool."].join("\n");
+  assert.deepEqual(checkSte(source).map((finding) => [finding.rule, finding.line]), [["passive-voice", 2]]);
+  assert.deepEqual(proseBlocks(["~~~js `x`", longSentence(40), "~~~", "Short text."].join("\n")).map((block) => block.text), ["Short text."]);
+});
+
+test("a long code span across many lines stays fast", () => {
+  const started = Date.now();
+  checkSte(`Run \`${"x\n".repeat(16000)}\`. Then stop.`);
+  assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
+});
+
 test("a longer fence is not closed by a shorter inner fence", () => {
   const source = ["````md", "```", longSentence(40), "```", "````", "Short text."].join("\n");
   assert.deepEqual(proseBlocks(source).map((block) => block.text), ["Short text."]);

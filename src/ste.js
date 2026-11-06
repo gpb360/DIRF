@@ -86,7 +86,8 @@ function plainInline(text) {
     .replace(/\\(?=[\s\u0001]|$)/g, "")
     // Keep each line mark directly before the next word, not before a space,
     // so that a mark never stands between a sentence end and its space.
-    .replace(/(\u0001+)(\s+)/g, "$2$1")
+    // Start only at the first mark of a run, so a long run stays linear.
+    .replace(/(?<!\u0001)(\u0001+)(\s+)/g, "$2$1")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -137,8 +138,10 @@ export function proseBlocks(source) {
       body = comment ? "" : body.slice(end + 3).trim();
       if (!body) continue;
     }
-    const fenceMatch = body.match(/^(`{3,}|~{3,})/);
-    if (fenceMatch) { flush(); fence = fenceMatch[1]; continue; }
+    // A backtick fence has no backtick after it on its line. Otherwise the
+    // line starts with an inline code span, as in "```x``` is code".
+    const fenceMatch = body.match(/^(`{3,})(?!.*`)|^(~{3,})/);
+    if (fenceMatch) { flush(); fence = fenceMatch[1] || fenceMatch[2]; continue; }
     if (body.startsWith("<!--")) { flush(); comment = !body.includes("-->"); continue; }
     if (!body || /^#{1,6}\s/.test(body) || body.startsWith("|") || /^(?:-{3,}|\*{3,}|_{3,})$/.test(body)) { flush(); continue; }
     const ordered = body.match(/^\d+[.)]\s+(.*)$/);
