@@ -113,6 +113,13 @@ test("a link label that starts with a caret is a link, not a footnote", () => {
   assert.deepEqual(sentences("Read [^caret](docs/caret.md) now."), ["Read ^caret now."]);
 });
 
+test("long link destinations and labels are still links", () => {
+  const dataUri = `data:image/png;base64,${"A".repeat(2222)}`;
+  assert.deepEqual(rules(`1. Click ![Save icon](${dataUri}) to save the file.`), []);
+  assert.deepEqual(rules(`Read this first. Click ![${"word ".repeat(120)}](${dataUri}) now.`), []);
+  assert.deepEqual(sentences(`See [the guide](https://example.com/${"a".repeat(3000)} "Guide title") now.`), ["See the guide now."]);
+});
+
 test("unclosed brackets in a long paragraph stay fast", () => {
   const started = Date.now();
   checkSte(`${"[a ![b [^c ".repeat(20000)}end.`);

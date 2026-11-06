@@ -52,16 +52,21 @@ const LINE_MARKS = /\u0001/g;
  */
 const marksOf = (text) => (text.match(LINE_MARKS) || []).join("");
 
+// A link destination: no spaces except a line wrap, then an optional title.
+const LINK_DESTINATION = String.raw`\((?:[^()\s]|\s+\u0001)*(?:\s+(?:"[^"]*"|'[^']*'))?\)`;
+
 /**
  * Replace inline Markdown with the words a reader sees. Code and URLs count as one word.
  * @param {string} text
  */
 function plainInline(text) {
   return text
-    // Bounded repeats keep unclosed brackets in a long paragraph fast.
-    .replace(/\[\^[^\]\s]{1,100}\](?!\()/g, (note) => marksOf(note))
-    .replace(/!\[[^\]]{0,500}\]\([^)]{0,2000}\)/g, (image) => ` ${marksOf(image)}`)
-    .replace(/\[([^\]]{0,500})\]\(([^)]{0,2000})\)/g, (_, label, target) => `${label}${marksOf(target)}`)
+    // A label stops at the next "[" and a destination stops at a space that
+    // is not a line wrap. Each scan then ends at the next bracket or space,
+    // so unclosed brackets stay fast with no length limit.
+    .replace(/\[\^[^[\]\s]+\](?!\()/g, (note) => marksOf(note))
+    .replace(new RegExp(`!\\[[^[\\]]*\\]${LINK_DESTINATION}`, "g"), (image) => ` ${marksOf(image)}`)
+    .replace(new RegExp(`\\[([^[\\]]*)\\]${LINK_DESTINATION}`, "g"), (link, label) => `${label}${marksOf(link.slice(label.length + 2))}`)
     .replace(/`[^`]*`/g, (code) => CODE_TOKEN + marksOf(code))
     .replace(/<!--[\s\S]*?-->/g, (comment) => ` ${marksOf(comment)}`)
     .replace(/<(?:https?:|mailto:)[^<>\s]*>/g, (link) => CODE_TOKEN + marksOf(link))
