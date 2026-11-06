@@ -49,6 +49,7 @@ import { buildModelAdvice, normalizeModelCatalog } from "./model-advice.js";
 import { run as runReviewReport } from "../skills/code-review/scripts/review-report.mjs";
 import { run as runReviewLedger } from "../skills/code-review/scripts/review-ledger.mjs";
 import { bindingsFromPlan, refreshSkillBindings } from "./skill-bindings.js";
+import { runSteCheck } from "./ste.js";
 
 const LIFECYCLE = {
   clarify: "Use the best installed interview capability before implementation.",
@@ -1826,6 +1827,12 @@ function parse(argv) {
     if (a === "--auto") { out.auto = true; continue; }
     if (a === "--wait") { out.wait = rest[++i]; continue; }
     if (a === "--comment") { out.comment = rest[++i]; continue; }
+    if (a === "--words") {
+      const file = rest[++i];
+      if (!file || file.startsWith("--")) throw new Error("--words requires FILE");
+      out.words = file;
+      continue;
+    }
     if (a === "--help" || a === "-h") { out.help = true; continue; }
     out._.push(a);
   }
@@ -1877,6 +1884,8 @@ Usage:
   dirf review <validate|render|ready> review.json     validate, render, or prove a PR review is ready
   dirf review trigger review.json                    emit a bounded same-PR fix request
   dirf review verify-update request.json updated-review.json  compare the report targets
+  dirf ste check <file-or-dir>... [--words FILE] [--json]  check prose against ASD-STE100 writing rules
+  dirf ste rules                                       list the STE rules the checker tests
   dirf state which [--path DIR]                       what project am I in? (slug + store path)
   dirf state list                                      list all registered projects
   dirf state register [--path DIR]                    register a project explicitly
@@ -2141,6 +2150,7 @@ async function main() {
   else if (cmd === "flow") { cmdFlow(args); }
   else if (cmd === "govern") { cmdGovern(args); }
   else if (cmd === "review") { cmdReview(args); }
+  else if (cmd === "ste") { process.exitCode = runSteCheck(args); }
   else if (cmd === "state") {
     const sub = args._[0];
     const subArgs = { ...args, _: args._.slice(1) };

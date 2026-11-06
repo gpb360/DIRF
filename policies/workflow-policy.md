@@ -96,6 +96,20 @@ Use this policy in every generated workflow prompt.
 - Pull requests created during the workflow carry a description: what
   changed, why, and how it was verified — never a title-only PR.
 
+## Writing Standard (ASD-STE100)
+- Write documentation, reports, pull-request text, and handoffs to the
+  ASD-STE100 Simplified Technical English writing rules.
+- Write procedural sentences of 20 words or fewer.
+- Write descriptive sentences of 25 words or fewer.
+- Put 6 sentences or fewer in a descriptive paragraph.
+- Write one instruction in each step. Use the imperative and the active voice.
+- Use one word for one meaning.
+- Run `dirf ste check <file>` on changed prose files. Read each finding before
+  you change the text. A finding is a heuristic, not proof.
+- When the project supplies an approved word list, run the check with
+  `--words FILE`. DIRF does not include the STE dictionary.
+- The repository can turn off this standard in its own instructions.
+
 ## Final Prose Pass
 - When the workflow includes a prose-editing capability, apply it once to
   human-facing output such as documentation, reports, pull-request text,
