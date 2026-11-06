@@ -59,6 +59,15 @@ test("a link or code span that wraps across lines does not shift the reported li
   assert.deepEqual(checkSte(code).map((finding) => [finding.rule, finding.line]), [["passive-voice", 3]]);
 });
 
+test("a line that starts with a tag or an image still starts a new sentence", () => {
+  for (const start of ["<br>", "![logo](logo.png)", "<https://example.com>"]) {
+    const source = [`${longSentence(14)}`, `${start} The file was written by the tool.`].join("\n");
+    assert.deepEqual(checkSte(source).map((finding) => [finding.rule, finding.line]), [["passive-voice", 2]], start);
+  }
+  const seven = ["One. Two. Three.", "<br> Four. Five. Six. Seven."].join("\n");
+  assert.deepEqual(rules(seven), ["paragraph-length"]);
+});
+
 test("a fence line inside an HTML comment does not hide the rest of the file", () => {
   const source = ["<!--", "```", "-->", "The file was written by the tool."].join("\n");
   assert.deepEqual(checkSte(source).map((finding) => [finding.rule, finding.line]), [["passive-voice", 4]]);

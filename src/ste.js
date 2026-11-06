@@ -121,7 +121,7 @@ export function proseBlocks(source) {
  */
 function markedSentences(text) {
   const protectedText = plainInline(text).replace(ABBREVIATIONS, "$1");
-  return protectedText.split(/(?<=[.!?])["')\]]?\s+(?=\u0001*["'(\[]?[A-Z0-9])/).map((piece) => piece.trim());
+  return protectedText.split(/(?<=[.!?])["')\]]?\s+(?=[\u0001\s]*["'(\[]?[A-Z0-9])/).map((piece) => piece.trim());
 }
 
 /** @param {string} sentence */
