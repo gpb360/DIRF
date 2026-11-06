@@ -138,9 +138,9 @@ export function buildModelAdvice(skillFlow = {}, catalog = null, { providers = n
     // falling back down if no high-tier model covers the capability; every
     // other effort prefers the cheapest sufficient tier (the historical pick).
     const heavy = requirement.effort === "heavy";
-    eligible.sort((a, b) => heavy
-      ? (COST_ORDER.get(b.cost_tier) - COST_ORDER.get(a.cost_tier)) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
-      : (COST_ORDER.get(a.cost_tier) - COST_ORDER.get(b.cost_tier)) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    const dir = heavy ? -1 : 1;
+    eligible.sort((a, b) => dir * (COST_ORDER.get(a.cost_tier) - COST_ORDER.get(b.cost_tier)) ||
+      (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     const chosen = eligible[0];
     const current = assignments.get(chosen.name) || {
       model: chosen.name,
@@ -148,23 +148,29 @@ export function buildModelAdvice(skillFlow = {}, catalog = null, { providers = n
       ...(chosen.provider ? { provider: chosen.provider } : {}),
       capabilities: [],
       stages: [],
-      _heavy: false,
+      _heavyCapabilities: new Set(),
     };
     current.capabilities.push(capability);
     current.stages.push(...requirement.stages);
-    if (heavy) current._heavy = true;
+    if (heavy) current._heavyCapabilities.add(capability);
     assignments.set(chosen.name, current);
   }
 
   const recommendations = [...assignments.values()].map((assignment) => {
-    const { _heavy, ...rest } = assignment;
+    const { _heavyCapabilities, ...rest } = assignment;
+    const capabilities = cleanStrings(assignment.capabilities);
+    const heavyCaps = cleanStrings([..._heavyCapabilities]);
+    const otherCaps = capabilities.filter((capability) => !heavyCaps.includes(capability));
+    const rationale = !heavyCaps.length
+      ? `Lowest host-reported cost tier that declares: ${capabilities.join(", ")}.`
+      : !otherCaps.length
+        ? `Selected for the strongest host-reported cost tier (covers effort: heavy): ${capabilities.join(", ")}.`
+        : `Strongest host-reported cost tier for effort: heavy (${heavyCaps.join(", ")}); the same tier covers the remaining steps (${otherCaps.join(", ")}).`;
     return {
       ...rest,
-      capabilities: cleanStrings(assignment.capabilities),
+      capabilities,
       stages: cleanStrings(assignment.stages),
-      rationale: _heavy
-        ? `Selected for the strongest host-reported cost tier (covers effort: heavy): ${cleanStrings(assignment.capabilities).join(", ")}.`
-        : `Lowest host-reported cost tier that declares: ${cleanStrings(assignment.capabilities).join(", ")}.`,
+      rationale,
     };
   });
   const status = recommendations.length && !uncovered.length

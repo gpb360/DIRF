@@ -173,6 +173,25 @@ test("heavy effort falls back down the tiers when no high-tier model covers", ()
   assert.equal(reviewer.model, "sonnet");
 });
 
+test("one model serving heavy and standard steps labels each in the rationale", () => {
+  const catalog = normalizeModelCatalog({ models: [
+    { name: "opus", cost_tier: "high", capabilities: ["*"] },
+  ] });
+  const mixedFlow = {
+    steps: [
+      { stage: "review", capability: "code review", effort: "heavy" },
+      { stage: "verify", capability: "testing" },
+    ],
+  };
+  const advice = buildModelAdvice(mixedFlow, catalog);
+
+  assert.equal(advice.recommendations.length, 1);
+  const { rationale, capabilities } = advice.recommendations[0];
+  assert.match(rationale, /effort: heavy \(code review\)/);
+  assert.match(rationale, /remaining steps \(testing\)/);
+  assert.deepEqual(capabilities, ["code review", "testing"]);
+});
+
 test("standard effort keeps the historical lowest-tier pick", () => {
   const catalog = normalizeModelCatalog({ models: [
     { name: "haiku", cost_tier: "low", capabilities: ["*"] },

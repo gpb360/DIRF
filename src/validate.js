@@ -256,8 +256,11 @@ export function validateSnapshot(data, label = "workflow") {
         errors.push(`${label}: skill_flow step ${index + 1} output must be a non-empty string`);
       }
       // Optional effort weight (model-advice tier preference). Absent means
-      // "standard", which keeps the historical lowest-tier pick.
-      if (step?.effort !== undefined && !["light", "standard", "heavy"].includes(step.effort)) {
+      // "standard", which keeps the historical lowest-tier pick. Accepts the
+      // same normalized forms as the advice engine (trim + case-fold), so a
+      // value the engine honors never fails validation.
+      if (step?.effort !== undefined &&
+          !["light", "standard", "heavy"].includes(String(step.effort).trim().toLowerCase())) {
         errors.push(`${label}: skill_flow step ${index + 1} effort must be light, standard, or heavy`);
       }
     }
