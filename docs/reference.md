@@ -188,9 +188,9 @@ Markdown and HTML.
 ```
 # building workflows
 dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
-dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--open]   full pipeline: route -> JSON -> md + html
-dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--research] discovery through handoff, without implementation
-dirf create <name> "<task>" [--path DIR] [--profile FILE] [--models FILE]             route -> workflow JSON only
+dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--providers LIST] [--open]   full pipeline: route -> JSON -> md + html
+dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--providers LIST] [--research] discovery through handoff, without implementation
+dirf create <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--providers LIST]             route -> workflow JSON only
 dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
 dirf list [--path DIR]                               list a project's attempts
 dirf status [--path DIR] [--json]                    show project and repository state (--json is machine-readable)
@@ -234,7 +234,7 @@ dirf export graphify [--out DIR] [--skip-render]     export the portfolio as a g
 # inspection + registries
 dirf skills scan [--path DIR]                        scan host, show installed skills + resolved refs
 dirf inspect [<path>]                                detect a project's optimization stack + suggest gaps
-dirf flow "<task>" [--path DIR] [--profile FILE] [--models FILE]     show the ordered skill flow and optional model advice
+dirf flow "<task>" [--path DIR] [--profile FILE] [--models FILE] [--providers LIST]     show the ordered skill flow and optional model advice
 dirf validate                                        validate registries + workflows
 dirf validate <folder>                               validate one folder DAG
 dirf graph <folder>                                  show deterministic execution order
@@ -323,9 +323,26 @@ useful:
 ]}
 ```
 
-Pass it with `--models FILE` to `build`, `plan`, `create`, or `flow`. DIRF
+Catalog entries may declare an optional `provider` (e.g. `"anthropic"`,
+`"openai"`, `"z.ai"`). Entries without one are provider-agnostic and eligible
+under any provider filter. Pass `--providers LIST` (comma-separated) with
+`--models FILE` to restrict picks to that set; capabilities the set cannot
+cover fall back outside it, and the rationale says so. The advice remains
+diagnostic: DIRF never discovers providers or invokes a model.
+
+Playbook `skill_flow` steps may declare an optional `effort` weight —
+`light`, `standard` (default), or `heavy`. `heavy` steps are matched to the
+strongest host-reported cost tier first (falling back down the tiers when no
+high-tier model covers the capability); every other effort keeps the lowest
+sufficient tier. This is how a fleet's light models carry cheap steps while
+flagship models carry the deep ones.
+
+Pass the catalog with `--models FILE` to `build`, `plan`, `create`, or `flow`. DIRF
 stores a stable recommendation for the workflow capabilities known before
-execution. See the [model-advice contract](../skills/model-advice/README.md) for
+execution. Re-running with a different catalog file or `--providers` list
+regenerates the assignment for the same workflow — the setup is data, so a
+different model mix is a file swap, not a rewrite. See the
+[model-advice contract](../skills/model-advice/README.md) for
 the matching rules, recorded evidence, and boundaries.
 
 **Scan roots** (all optional): `~/.agents/skills/`, `~/.codex/skills/`,

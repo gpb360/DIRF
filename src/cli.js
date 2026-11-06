@@ -2,9 +2,9 @@
 // DIRF — Do It Right First. Unified CLI. Node built-ins only.
 //
 //   dirf setup [path] [--reserve-percent N]              configure a target repository
-//   dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--open] [--no-focused-output] [--playbooks DIR]
-//   dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--research] [--playbooks DIR]  lifecycle planning attempt
-//   dirf create <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--playbooks DIR]  route -> attempt workflow JSON only
+//   dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--providers LIST] [--open] [--no-focused-output] [--playbooks DIR]
+//   dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--providers LIST] [--research] [--playbooks DIR]  lifecycle planning attempt
+//   dirf create <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--providers LIST] [--playbooks DIR]  route -> attempt workflow JSON only
 //   dirf learn [URL|FILE|TEXT] [--path DIR] [--profile FILE] [--file FILE] create a read-only learning review
 //   dirf render <name-or-id> [--path DIR] [--open]       render the latest matching attempt
 //   dirf list [--path DIR]                               list saved attempts
@@ -252,6 +252,16 @@ function readModelCatalog(file) {
   return normalizeModelCatalog(catalog, sha256);
 }
 
+// --providers "anthropic,openai" -> ["anthropic","openai"]. Comma-separated,
+// trimmed; empty entries dropped. Advisory only: restricts which catalog
+// models the preflight advice may pick from.
+function requestedProviders(value) {
+  if (!value) return null;
+  const providers = String(value).split(",").map((p) => p.trim()).filter(Boolean);
+  if (!providers.length) throw new Error("--providers requires a comma-separated provider list");
+  return providers;
+}
+
 function repositoryContext(root) {
   const candidates = [
     "AGENTS.md", "CONTEXT.md", "docs/CONTEXT.md", "docs/context.md",
@@ -360,8 +370,10 @@ function assembleTaskRouting(task, path, options = {}) {
     throw new Error(`Task Routing validation failed:\n${blockingGaps.map((gap) => `  - ${gap.question}`).join("\n")}`);
   }
   const modelCatalog = readModelCatalog(options.models);
+  const providers = requestedProviders(options.providers);
+  if (providers && !options.models) throw new Error("--providers requires --models FILE");
   const modelAdvice = (options.models || skillFlow.steps.some((step) => step.capability === "model selection advice"))
-    ? buildModelAdvice(skillFlow, modelCatalog)
+    ? buildModelAdvice(skillFlow, modelCatalog, { providers })
     : null;
   return { selection, discovered, hostAgents, facts, skillFlow, capabilityProfile: profileSnapshot, modelAdvice };
 }
@@ -418,6 +430,7 @@ function cmdBuild(args) {
     projectPlaybooks: args.playbooks,
     profile: args.profile,
     models: args.models,
+    providers: args.providers,
   });
   const attempt = createAttempt(target, args.name);
   const planPath = savePlan(plan, attempt, target);
@@ -438,6 +451,7 @@ function cmdPlan(args) {
     projectPlaybooks: args.playbooks,
     profile: args.profile,
     models: args.models,
+    providers: args.providers,
   });
   const attempt = createAttempt(target, args.name);
   const planPath = savePlan(plan, attempt, target);
@@ -453,6 +467,7 @@ function cmdCreate(args) {
     projectPlaybooks: args.playbooks,
     profile: args.profile,
     models: args.models,
+    providers: args.providers,
   });
   const attempt = createAttempt(target, args.name);
   savePlan(plan, attempt, target);
@@ -1893,6 +1908,12 @@ function parse(argv) {
       out.models = file;
       continue;
     }
+    if (a === "--providers") {
+      const list = rest[++i];
+      if (!list || list.startsWith("--")) throw new Error("--providers requires a comma-separated provider list");
+      out.providers = list;
+      continue;
+    }
     if (a === "--force") { out.force = true; continue; }
     if (a === "--settings") { out.settings = rest[++i]; continue; }
     if (a === "--skill-dir") { out.skillDir = rest[++i]; continue; }
@@ -1965,9 +1986,9 @@ const HELP = `DIRF — Do It Right First
 
 Usage:
   dirf setup [path] [--tracker local] [--context single|multi] [--reserve-percent 5]
-  dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--open] [--no-focused-output] [--playbooks DIR]
-  dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--research] [--open] [--no-focused-output] [--playbooks DIR]
-  dirf create <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--playbooks DIR]   JSON only
+  dirf build  <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--providers LIST] [--open] [--no-focused-output] [--playbooks DIR]
+  dirf plan   <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--providers LIST] [--research] [--open] [--no-focused-output] [--playbooks DIR]
+  dirf create <name> "<task>" [--path DIR] [--profile FILE] [--models FILE] [--providers LIST] [--playbooks DIR]   JSON only
   dirf learn [URL|FILE|TEXT] [--path DIR] [--profile FILE] [--file FILE] [--language CODE] [--name NAME] [--json]
                                                       ingest a source; implementation requires an accepted recommendation and decision
   dirf render <name-or-id> [--path DIR] [--open]       re-render an attempt
@@ -2001,7 +2022,7 @@ Usage:
   dirf export graphify [--out DIR] [--skip-render]    export portfolio as a graphify graph (+ HTML render)
   dirf doctor [--path DIR] [--json]                  show executable, revision, version, and store identity
   dirf inspect [<path>]                                detect a project's optimization stack + suggest gaps
-  dirf flow "<task>" [--path DIR] [--profile FILE] [--models FILE]
+  dirf flow "<task>" [--path DIR] [--profile FILE] [--models FILE] [--providers LIST]
                                                       show the ordered skill flow and optional diagnostic model advice
   dirf govern <digest|evaluate|append|verify> [...]    decide actions and maintain a hash-linked evidence ledger
   dirf review <validate|render|ready> review.json     validate, render, or prove a PR review is ready
@@ -2046,8 +2067,8 @@ Plain language (natural-English aliases for the same commands):
 
 function cmdFlow(args) {
   const task = args._.join(" ");
-  if (!task) { console.error("usage: dirf flow \"<task>\" [--path DIR] [--profile FILE] [--models FILE]"); process.exit(2); }
-  const { skillFlow: flow, capabilityProfile, modelAdvice } = assembleTaskRouting(task, projectRoot(args.path), { profile: args.profile, models: args.models });
+  if (!task) { console.error("usage: dirf flow \"<task>\" [--path DIR] [--profile FILE] [--models FILE] [--providers LIST]"); process.exit(2); }
+  const { skillFlow: flow, capabilityProfile, modelAdvice } = assembleTaskRouting(task, projectRoot(args.path), { profile: args.profile, models: args.models, providers: args.providers });
   console.log(`Flow: ${flow.label}`);
   console.log(`Playbook: ${flow.playbook}${flow.branches.length ? ` (branches: ${flow.branches.join(", ")})` : ""}\n`);
   if (capabilityProfile) {

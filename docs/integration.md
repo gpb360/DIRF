@@ -149,6 +149,31 @@ above and the [current review playbook](../playbooks/pr-review/README.md).
 Existing shell aliases or update scripts are user-owned: inspect and remove
 them manually if obsolete. Installing this change does not alter host settings.
 
+## Shared store across laptops
+
+`DIRF_HOME` redirects the store. Point every machine at the same network
+share and they share one registry, handoffs, and attempts:
+
+```bash
+node scripts/bootstrap-laptop.js --store "\\\\server\\dirf-store" \
+  --repo "<dirf-repo-url>" --pin "<reviewed-commit>" --token "<32+ chars>"
+```
+
+The contract, in short:
+
+- Clone each shared project at the **same absolute path** on every laptop.
+  Slugs hash the absolute path (`identityKeyForPath`), so different paths
+  silently fork state. Passing a registered slug by name avoids this only
+  for reference-accepting tools.
+- Use the **same** `DIRF_ORCHESTRATOR_TOKEN` everywhere. `execution-authority.json`
+  stores its hash; a mismatching token is rejected (`bindExecutionAuthority`).
+  Restrict the share's ACLs accordingly.
+- Writes are atomic and progress updates are lock-serialized, but there is
+  no merge: concurrent writers are last-writer-wins. Keep one attempt owned
+  by one laptop at a time.
+- Real SMB/NAS shares only. Sync-folder services (OneDrive, Dropbox) fight
+  the temp-file-and-rename write pattern.
+
 ## Troubleshooting
 
 - Command missing or wrong revision: run the direct Node command and check
