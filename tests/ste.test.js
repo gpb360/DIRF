@@ -52,6 +52,23 @@ test("a finding reports the line where its sentence starts", () => {
   assert.deepEqual(checkSte(source).map((finding) => [finding.rule, finding.line]), [["passive-voice", 4]]);
 });
 
+test("a link or code span that wraps across lines does not shift the reported line", () => {
+  const link = ["Read the [agent", "guide](docs/AGENT_GUIDE.md) first. Then", "the file was written by the tool."].join("\n");
+  assert.deepEqual(checkSte(link).map((finding) => [finding.rule, finding.line]), [["passive-voice", 2]]);
+  const code = ["Run `npm run", "check:release` now.", "The file was written by the tool."].join("\n");
+  assert.deepEqual(checkSte(code).map((finding) => [finding.rule, finding.line]), [["passive-voice", 3]]);
+});
+
+test("a fence line inside an HTML comment does not hide the rest of the file", () => {
+  const source = ["<!--", "```", "-->", "The file was written by the tool."].join("\n");
+  assert.deepEqual(checkSte(source).map((finding) => [finding.rule, finding.line]), [["passive-voice", 4]]);
+});
+
+test("a fenced code block inside a quote is not prose", () => {
+  const source = ["> ```", `> ${longSentence(40)}`, "> ```", "> Short text."].join("\n");
+  assert.deepEqual(proseBlocks(source).map((block) => block.text), ["Short text."]);
+});
+
 test("an empty quote line ends a quoted paragraph", () => {
   const quote = ["> One. Two. Three.", ">", "> Four. Five. Six. Seven."].join("\n");
   assert.deepEqual(rules(quote), []);
@@ -102,6 +119,9 @@ test("ste check exits 1 with findings, 0 when clean, and 2 for usage", () => {
   writeFileSync(objectWords, '{"the": true}');
   assert.equal(runSteCheck({ _: ["check", dir], words: objectWords }, io), 2);
   assert.match(lines.at(-1), /must be a JSON array/);
+  const bomWords = join(dir, "..", "bom-words.json");
+  writeFileSync(bomWords, '﻿["the", "tool", "writes", "file"]');
+  assert.equal(runSteCheck({ _: ["check", join(dir, "clean.md")], words: bomWords }, io), 0, "a JSON word list with a byte order mark loads");
 });
 
 test("ste100 is a bundled controlled-language skill that a task can request", () => {

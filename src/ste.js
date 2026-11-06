@@ -41,17 +41,28 @@ const CODE_TOKEN = "CODE";
  * @typedef {{ line: number, text: string, kind: "paragraph" | "procedure" | "item", lines: { line: number, text: string }[] }} Block
  */
 
+// Marks the start of each source line inside a joined paragraph, so that a
+// finding can report the line where its sentence starts. It is not a word character.
+const LINE_MARK = "\u0001";
+const LINE_MARKS = /\u0001/g;
+
+/**
+ * The line marks inside text that inline cleanup removes, so that no mark is lost.
+ * @param {string} text
+ */
+const marksOf = (text) => (text.match(LINE_MARKS) || []).join("");
+
 /**
  * Replace inline Markdown with the words a reader sees. Code and URLs count as one word.
  * @param {string} text
  */
 function plainInline(text) {
   return text
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/`[^`]*`/g, CODE_TOKEN)
-    .replace(/<[^>]+>/g, " ")
-    .replace(/https?:\/\/\S+/g, CODE_TOKEN)
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, (image) => ` ${marksOf(image)}`)
+    .replace(/\[([^\]]*)\]\(([^)]*)\)/g, (_, label, target) => `${label}${marksOf(target)}`)
+    .replace(/`[^`]*`/g, (code) => CODE_TOKEN + marksOf(code))
+    .replace(/<[^>]+>/g, (tag) => ` ${marksOf(tag)}`)
+    .replace(/https?:\/\/[^\s\u0001]+/g, CODE_TOKEN)
     .replace(/[*_]{1,3}([^*_]+)[*_]{1,3}/g, "$1")
     .replace(/\s+/g, " ")
     .trim();
@@ -78,37 +89,47 @@ export function proseBlocks(source) {
   }
   const flush = () => { if (current && current.text.trim()) blocks.push(current); current = null; };
   for (let i = start; i < lines.length; i++) {
-    const raw = lines[i];
-    const line = raw.trim();
-    const fenceMatch = line.match(/^(`{3,}|~{3,})/);
+    // Quote markers do not change what a line is: code, comment, or prose.
+    const body = lines[i].trim().replace(/^(?:>\s?)+/, "").trim();
     // A fence closes only on a line of the same character, at least as long.
-    if (fence) { if (line.startsWith(fence) && [...line.trimEnd()].every((c) => c === fence[0])) fence = ""; continue; }
+    if (fence) { if (body.startsWith(fence) && [...body].every((c) => c === fence[0])) fence = ""; continue; }
+    if (comment) { if (body.includes("-->")) comment = false; continue; }
+    const fenceMatch = body.match(/^(`{3,}|~{3,})/);
     if (fenceMatch) { flush(); fence = fenceMatch[1]; continue; }
-    if (comment) { if (line.includes("-->")) comment = false; continue; }
-    if (line.startsWith("<!--")) { flush(); comment = !line.includes("-->"); continue; }
-    if (!line || /^#{1,6}\s/.test(line) || line.startsWith("|") || /^(?:-{3,}|\*{3,}|_{3,})$/.test(line)) { flush(); continue; }
-    const quoted = line.startsWith(">");
-    const text = line.replace(/^(?:>\s?)+/, "").trim();
-    if (quoted && !text) { flush(); continue; }
-    const ordered = text.match(/^\d+[.)]\s+(.*)$/);
-    const bullet = text.match(/^[-*+]\s+(?:\[[ xX]\]\s+)?(.*)$/);
+    if (body.startsWith("<!--")) { flush(); comment = !body.includes("-->"); continue; }
+    if (!body || /^#{1,6}\s/.test(body) || body.startsWith("|") || /^(?:-{3,}|\*{3,}|_{3,})$/.test(body)) { flush(); continue; }
+    const ordered = body.match(/^\d+[.)]\s+(.*)$/);
+    const bullet = body.match(/^[-*+]\s+(?:\[[ xX]\]\s+)?(.*)$/);
     if (ordered || bullet) {
       flush();
       const itemText = (ordered || bullet)?.[1] || "";
       current = { line: i + 1, text: itemText, kind: ordered ? "procedure" : "item", lines: [{ line: i + 1, text: itemText }] };
       continue;
     }
-    if (current) { current.text += ` ${text}`; current.lines.push({ line: i + 1, text }); }
-    else current = { line: i + 1, text, kind: "paragraph", lines: [{ line: i + 1, text }] };
+    if (current) { current.text += ` ${body}`; current.lines.push({ line: i + 1, text: body }); }
+    else current = { line: i + 1, text: body, kind: "paragraph", lines: [{ line: i + 1, text: body }] };
   }
   flush();
   return blocks;
 }
 
+/**
+ * Split text into sentences. Line marks stay in place, and empty pieces stay
+ * in the list so that their marks are still counted.
+ * @param {string} text
+ * @returns {string[]}
+ */
+function markedSentences(text) {
+  const protectedText = plainInline(text).replace(ABBREVIATIONS, "$1");
+  return protectedText.split(/(?<=[.!?])["')\]]?\s+(?=\u0001*["'(\[]?[A-Z0-9])/).map((piece) => piece.trim());
+}
+
+/** @param {string} sentence */
+const unmarked = (sentence) => sentence.replace(LINE_MARKS, "").replace(/\s+/g, " ").trim();
+
 /** @param {string} text */
 export function sentences(text) {
-  const protectedText = plainInline(text).replace(ABBREVIATIONS, "$1");
-  return protectedText.split(/(?<=[.!?])["')\]]?\s+(?=["'(\[]?[A-Z0-9])/).map((/** @type {string} */ s) => s.trim()).filter(Boolean);
+  return markedSentences(text).map(unmarked).filter(Boolean);
 }
 
 /** @param {string} sentence */
@@ -126,7 +147,7 @@ const excerpt = (text) => (text.length > 80 ? `${text.slice(0, 77)}...` : text);
  * @returns {Set<string>}
  */
 export function loadApprovedWords(file) {
-  const source = readFileSync(resolve(file), "utf-8");
+  const source = readFileSync(resolve(file), "utf-8").replace(/^﻿/, "");
   const list = /^[[{]/.test(source.trim())
     ? JSON.parse(source)
     : source.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
@@ -147,22 +168,23 @@ function isTechnicalName(word, index) {
 }
 
 /**
- * The source line where each sentence starts, found by counting words line by line.
+ * The sentences of a block, each with the source line where it starts.
  * @param {Block} block
- * @param {string[]} blockSentences
- * @returns {number[]}
+ * @returns {{ line: number, text: string }[]}
  */
-function sentenceLines(block, blockSentences) {
-  /** @type {number[]} */
-  const ends = [];
-  let total = 0;
-  for (const segment of block.lines) { total += words(plainInline(segment.text)).length; ends.push(total); }
-  let seen = 0;
-  return blockSentences.map((sentence) => {
-    const index = ends.findIndex((end) => end > seen);
-    seen += words(sentence).length;
-    return block.lines[index === -1 ? block.lines.length - 1 : index].line;
-  });
+function blockSentences(block) {
+  const pieces = markedSentences(block.lines.map((segment) => LINE_MARK + segment.text).join(" "));
+  /** @type {{ line: number, text: string }[]} */
+  const result = [];
+  let marks = 0;
+  for (const piece of pieces) {
+    const leading = piece.match(/^\u0001*/)?.[0].length || 0;
+    const index = Math.max(0, Math.min(marks + leading, block.lines.length) - 1);
+    marks += (piece.match(LINE_MARKS) || []).length;
+    const text = unmarked(piece);
+    if (text) result.push({ line: block.lines[index].line, text });
+  }
+  return result;
 }
 
 /**
@@ -176,14 +198,13 @@ export function checkSte(source, options = {}) {
   const findings = [];
   const approved = options.words;
   for (const block of proseBlocks(source)) {
-    const blockSentences = sentences(block.text);
     const procedural = block.kind === "procedure";
     const limit = procedural ? STE_LIMITS.procedural : STE_LIMITS.descriptive;
-    const lines = sentenceLines(block, blockSentences);
-    for (const [index, sentence] of blockSentences.entries()) {
+    const found = blockSentences(block);
+    for (const { line, text: sentence } of found) {
       const sentenceWords = words(sentence);
       const add = (/** @type {keyof typeof STE_RULES} */ rule, /** @type {string} */ message) =>
-        findings.push({ line: lines[index], rule, message, text: excerpt(sentence) });
+        findings.push({ line, rule, message, text: excerpt(sentence) });
       if (sentenceWords.length > limit) {
         add("sentence-length", `${sentenceWords.length} words in a ${procedural ? "procedural" : "descriptive"} sentence (maximum ${limit}).`);
       }
@@ -204,10 +225,10 @@ export function checkSte(source, options = {}) {
         if (unknown.length) add("unapproved-word", `Not in the approved word list: ${unknown.join(", ")}.`);
       }
     }
-    if (block.kind === "paragraph" && blockSentences.length > STE_LIMITS.paragraphSentences) {
+    if (block.kind === "paragraph" && found.length > STE_LIMITS.paragraphSentences) {
       findings.push({ line: block.line, rule: "paragraph-length",
-        message: `${blockSentences.length} sentences in a paragraph (maximum ${STE_LIMITS.paragraphSentences}).`,
-        text: excerpt(blockSentences[0]) });
+        message: `${found.length} sentences in a paragraph (maximum ${STE_LIMITS.paragraphSentences}).`,
+        text: excerpt(found[0].text) });
     }
   }
   return findings;
