@@ -58,14 +58,16 @@ const marksOf = (text) => (text.match(LINE_MARKS) || []).join("");
  */
 function plainInline(text) {
   return text
-    .replace(/\[\^[^\]\s]+\]/g, (note) => marksOf(note))
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, (image) => ` ${marksOf(image)}`)
-    .replace(/\[([^\]]*)\]\(([^)]*)\)/g, (_, label, target) => `${label}${marksOf(target)}`)
+    // Bounded repeats keep unclosed brackets in a long paragraph fast.
+    .replace(/\[\^[^\]\s]{1,100}\](?!\()/g, (note) => marksOf(note))
+    .replace(/!\[[^\]]{0,500}\]\([^)]{0,2000}\)/g, (image) => ` ${marksOf(image)}`)
+    .replace(/\[([^\]]{0,500})\]\(([^)]{0,2000})\)/g, (_, label, target) => `${label}${marksOf(target)}`)
     .replace(/`[^`]*`/g, (code) => CODE_TOKEN + marksOf(code))
+    .replace(/<!--[\s\S]*?-->/g, (comment) => ` ${marksOf(comment)}`)
     .replace(/<(?:https?:|mailto:)[^<>\s]*>/g, (link) => CODE_TOKEN + marksOf(link))
     // Only a real tag is markup. A bare "<", as in "count < 5", is text.
     .replace(/<\/?[A-Za-z][\w:-]*(?:\s[^<>]*)?\/?>/g, (tag) => ` ${marksOf(tag)}`)
-    .replace(/&(amp|lt|gt|quot|apos|nbsp|#\d+);/g, (_, name) => ENTITIES[name] ?? " ")
+    .replace(/&(amp|lt|gt|quot|apos|nbsp|#\d{1,7}|#x[0-9a-f]{1,6});/gi, (_, name) => decodeEntity(name))
     // A URL does not take the punctuation that ends its sentence.
     .replace(/https?:\/\/[^\s\u0001]*[^\s\u0001.,;:!?'")\]]/g, CODE_TOKEN)
     .replace(/[*_]{1,3}([^*_]+)[*_]{1,3}/g, "$1")
@@ -80,6 +82,16 @@ function plainInline(text) {
 
 /** @type {Record<string, string>} */
 const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+
+/**
+ * The text of a named or numeric HTML entity.
+ * @param {string} name The entity without "&" and ";".
+ */
+function decodeEntity(name) {
+  if (!name.startsWith("#")) return ENTITIES[name.toLowerCase()] ?? " ";
+  const code = /^#x/i.test(name) ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
+  return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : " ";
+}
 
 /**
  * Split Markdown or plain text into prose blocks. Code, tables, headings,

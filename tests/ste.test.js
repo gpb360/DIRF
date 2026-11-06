@@ -97,7 +97,26 @@ test("footnotes, hard breaks, closing marks, and link labels do not merge senten
 
 test("an HTML entity is text, not a semicolon or a word", () => {
   assert.deepEqual(rules("1. Open the R&amp;D file."), []);
-  assert.deepEqual(sentences("Use a &lt;tag&gt; here."), ["Use a <tag> here."]);
+  assert.deepEqual(rules("1. Open the R&#x26;D file."), []);
+  assert.deepEqual(sentences("Use a &lt;tag&gt; here. Don&#39;t stop."), ["Use a <tag> here.", "Don't stop."]);
+});
+
+test("an inline HTML comment is not prose", () => {
+  const inline = "Run the tool now. <!-- TODO: this text was written badly --> Then stop.";
+  assert.deepEqual(rules(inline), []);
+  assert.deepEqual(sentences(inline), ["Run the tool now.", "Then stop."]);
+  const wrapped = ["1. Open the file. <!-- see note; then fix", "this later --> Save it."].join("\n");
+  assert.deepEqual(rules(wrapped), []);
+});
+
+test("a link label that starts with a caret is a link, not a footnote", () => {
+  assert.deepEqual(sentences("Read [^caret](docs/caret.md) now."), ["Read ^caret now."]);
+});
+
+test("unclosed brackets in a long paragraph stay fast", () => {
+  const started = Date.now();
+  checkSte(`${"[a ![b [^c ".repeat(20000)}end.`);
+  assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
 });
 
 test("a URL does not take the period that ends its sentence", () => {
