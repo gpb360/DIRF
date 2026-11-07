@@ -695,7 +695,7 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
 
   // Explicit final prose work may not be part of the selected playbook.
   // Resolve by declared capability, keeping installed definitions authoritative.
-  const proseCapabilities = new Set(["prose editing", "plain-language repair"]);
+  const proseCapabilities = new Set(["prose editing", "plain-language repair", "controlled language"]);
   const requestedSteps = [];
   const requestedSkills = Object.entries(skillIndex)
     .filter(([name, item]) => item.invocation !== "user" && namedRequests.has(name))

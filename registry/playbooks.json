@@ -57,6 +57,11 @@
           "output": "functional and performance evidence for the completed page",
           "verification": "focused tests, responsive checks, and the relevant performance check pass"
         }
+      },
+      "gates": {
+        "verify performance and tests": {
+          "kind": "decision"
+        }
       }
     },
     "questions": [
@@ -129,9 +134,12 @@
         "confirm no issues or checks remain"
       ],
       "gates": {
-        "confirm no issues or checks remain": {
+        "review the updated PR again": {
           "kind": "verify",
-          "verify": "dirf review ready review.json"
+          "check": "review-json"
+        },
+        "confirm no issues or checks remain": {
+          "kind": "decision"
         }
       },
       "agent_contracts": {
@@ -253,6 +261,11 @@
           "output": "the proven root cause and smallest source-level correction",
           "verification": "the patch changes only the causal seam and preserves surrounding behavior"
         }
+      },
+      "gates": {
+        "verify": {
+          "kind": "decision"
+        }
       }
     },
     "questions": [
@@ -358,7 +371,12 @@
       },
       "output": "small working feature slice",
       "validation": "run focused tests or build for touched surface",
-      "recovery": "if contracts are unclear, stop after documenting the needed API/data decision"
+      "recovery": "if contracts are unclear, stop after documenting the needed API/data decision",
+      "gates": {
+        "verify end-to-end behavior": {
+          "kind": "decision"
+        }
+      }
     },
     "questions": [
       "What is the user-visible success criteria?",
@@ -507,6 +525,11 @@
           "output": "the complete rendered campaign and a checked manifest",
           "verification": "every manifest row has the expected file, duration, dimensions, and no render failure"
         }
+      },
+      "gates": {
+        "batch render and verify campaign manifest": {
+          "kind": "decision"
+        }
       }
     },
     "questions": [
@@ -602,6 +625,11 @@
           "output": "runtime and regression evidence for the Electron slice",
           "verification": "the packaged or development runtime exercises the touched IPC and UI behavior"
         }
+      },
+      "gates": {
+        "verify runtime behavior": {
+          "kind": "decision"
+        }
       }
     },
     "questions": [
@@ -682,6 +710,11 @@
           ],
           "output": "a concise evidence-backed recommendation and open uncertainties",
           "verification": "the conclusion follows from cited evidence and separates fact, inference, and recommendation"
+        }
+      },
+      "gates": {
+        "synthesize": {
+          "kind": "decision"
         }
       }
     },
@@ -837,6 +870,9 @@
         "choose the smallest justified adaptation": {
           "kind": "decision",
           "artifact_type": "research"
+        },
+        "verify the result and retain the learning": {
+          "kind": "decision"
         }
       },
       "output": "one passage-grounded learning note with an adopt, adapt, experiment, reject, or defer disposition for each material idea; if approved, one reversible experiment with verification evidence",
@@ -961,6 +997,11 @@
           "output": "the smallest architecture or code change addressing the measured cause",
           "verification": "the patch targets the measured bottleneck and preserves correctness"
         }
+      },
+      "gates": {
+        "remeasure": {
+          "kind": "decision"
+        }
       }
     },
     "questions": [
@@ -1025,6 +1066,11 @@
           ],
           "output": "a trust-boundary map and evidence-backed, prioritized security findings with bounded remediations",
           "verification": "authorization, data exposure, secrets, injection, and fail-open behavior are checked where applicable"
+        }
+      },
+      "gates": {
+        "recommend fixes": {
+          "kind": "decision"
         }
       }
     },
@@ -1104,6 +1150,11 @@
           "output": "machine-checked registry and routing evidence",
           "verification": "DIRF validation and the focused agent-discovery checks pass"
         }
+      },
+      "gates": {
+        "validate": {
+          "kind": "decision"
+        }
       }
     },
     "questions": [
@@ -1182,6 +1233,11 @@
           "output": "applicable authentication, authorization, validation, and exposure findings",
           "verification": "security checks cover the endpoint trust boundary and tenant or identity scope"
         }
+      },
+      "gates": {
+        "report gaps": {
+          "kind": "decision"
+        }
       }
     },
     "questions": [
@@ -1257,7 +1313,12 @@
       },
       "output": "clear docs grounded in current repo behavior",
       "validation": "run or verify every documented command where practical",
-      "recovery": "if behavior cannot be verified, mark it explicitly"
+      "recovery": "if behavior cannot be verified, mark it explicitly",
+      "gates": {
+        "verify commands": {
+          "kind": "decision"
+        }
+      }
     },
     "questions": [
       "Who is the doc for?",
@@ -1275,6 +1336,11 @@
           "stage": "prose",
           "reason": "Remove filler and vague claims while preserving meaning and tone.",
           "capability": "prose editing"
+        },
+        {
+          "stage": "prose",
+          "reason": "Apply the ASD-STE100 writing rules and run dirf ste check on the changed files.",
+          "capability": "controlled language"
         },
         {
           "stage": "verify",
@@ -1327,6 +1393,11 @@
           ],
           "output": "deployment validation evidence without unapproved production mutation",
           "verification": "local or approved environment checks pass and any unrun production step is explicit"
+        }
+      },
+      "gates": {
+        "verify": {
+          "kind": "decision"
         }
       }
     },
@@ -1389,6 +1460,11 @@
           ],
           "output": "one routed playbook with only the material missing context and no repository change",
           "verification": "the selected playbook best matches the task and the handoff stops before unauthorized edits"
+        }
+      },
+      "gates": {
+        "stop before edits": {
+          "kind": "decision"
         }
       }
     },
@@ -1465,6 +1541,9 @@
         },
         "assign agents and ownership": {
           "kind": "soft"
+        },
+        "define verification gates": {
+          "kind": "decision"
         }
       },
       "agent_contracts": {
@@ -1544,6 +1623,9 @@
           },
           "assign agents and ownership": {
             "kind": "soft"
+          },
+          "define verification gates": {
+            "kind": "decision"
           }
         },
         "agent_contracts": {
@@ -1610,6 +1692,9 @@
           },
           "assign agents and ownership": {
             "kind": "soft"
+          },
+          "define verification gates": {
+            "kind": "decision"
           }
         },
         "agent_contracts": {
@@ -1790,7 +1875,12 @@
           "performance-benchmarker",
           "test-engineer",
           "frontend-developer"
-        ]
+        ],
+        "gates": {
+          "rediscover and recapture the complete final matrix": {
+            "kind": "decision"
+          }
+        }
       },
       "agent_contracts": {
         "ux-researcher": {
@@ -1814,6 +1904,11 @@
           ],
           "output": "responsive runtime evidence across relevant viewports and states",
           "verification": "small and large viewports, layout stability, and primary interactions are exercised"
+        }
+      },
+      "gates": {
+        "verify responsive behavior": {
+          "kind": "decision"
         }
       }
     },
@@ -1912,6 +2007,11 @@
           ],
           "output": "bounded fixes linked one-to-one with owned visual issues",
           "verification": "each fix resolves its issue without altering unowned surfaces"
+        }
+      },
+      "gates": {
+        "independently recapture and verify the complete matrix": {
+          "kind": "decision"
         }
       }
     },
@@ -2036,6 +2136,11 @@
           "output": "user-facing regression and quality evidence",
           "verification": "the touched states are exercised across relevant viewports, inputs, and reduced-motion settings"
         }
+      },
+      "gates": {
+        "verify user-facing quality": {
+          "kind": "decision"
+        }
       }
     },
     "questions": [
@@ -2092,6 +2197,9 @@
       ],
       "gates": {
         "check evidence requirements": {
+          "kind": "decision"
+        },
+        "emit allow/deny/approval decision contract": {
           "kind": "decision"
         }
       },
@@ -2186,6 +2294,9 @@
         "consume authority and execute through one adapter": {
           "kind": "verify",
           "verify": "prove single-use consumption occurred before credentials or external effects"
+        },
+        "verify outcome and tamper-evident ledger": {
+          "kind": "decision"
         }
       },
       "output": "allow, require_approval, or deny decision plus a verified hash-linked execution ledger",
@@ -2275,7 +2386,12 @@
       "requirements": [
         "Read-only audit: do not edit application code or implement corrections. Isolated proof fixtures and the requested report are permitted.",
         "Complete the report even when findings remain. Merge readiness and implementation are separate tasks."
-      ]
+      ],
+      "gates": {
+        "deliver findings and recommendations": {
+          "kind": "decision"
+        }
+      }
     },
     "questions": [],
     "skill_flow": {

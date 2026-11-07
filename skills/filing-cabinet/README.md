@@ -11,23 +11,23 @@ capabilities: ["worktree hygiene", "governed maintenance"]
 
 # Worktree cleanup
 
-This skill inventories every worktree in a repository, checks its branch and age,
-and recommends `retain` / `review` / `archive` / `remove` behind an explicit
+This skill inventories every worktree in a repository and checks its branch and
+age. It recommends `retain` / `review` / `archive` / `remove` behind an explicit
 single-use approval contract. It never deletes, archives, or rewrites anything
-itself — the approval contract is enforced before any destructive action.
+itself. The approval contract applies before any destructive action.
 
 ## When to use
 
 - The repository has many worktrees and nobody remembers what they are.
 - A session needs to know which worktree holds valid unmerged work.
-- Cleanup was proposed and needs an evidence-backed decision.
+- Someone proposed a cleanup, and the cleanup needs an evidence-backed decision.
 
 ## How it works
 
 1. **Inventory** — run the bundled script
-   (`scripts/filing-cabinet.mjs`) in the repository: it lists every worktree
-   with its branch, merge status against the default branch, ahead/behind
-   counts, dirty state, and last commit date.
+   (`scripts/filing-cabinet.mjs`) in the repository. It lists every worktree
+   with its branch and its merge status against the default branch. It also
+   shows ahead/behind counts, dirty state, and last commit date.
 2. **Classify** per the risk classes in the decision contract:
 
    | Action class | Risk | Gate |
@@ -42,8 +42,8 @@ itself — the approval contract is enforced before any destructive action.
 
 3. **Recommend** — each worktree gets exactly one of
    `retain` / `review` / `archive` / `remove` with the evidence that supports it.
-4. **Act only on approval** — the operator approves per item; the approval is
-   single-use, names the exact worktree/branch and action, and binds the
+4. **Act only on approval** — the operator approves each item. The approval is
+   single-use. It names the exact worktree/branch and action, and it binds the
    evidence digest. Nothing runs without it.
 
 ## Evidence requirements (summary)
@@ -60,9 +60,9 @@ See [CONTRACT.md](CONTRACT.md) for the full allow/deny/approval contract.
 
 - The inventory script is read-only. It never checks out, deletes, archives,
   merges, pushes, or rewrites anything.
-- A dirty worktree is never recommended for removal without review.
-- Valid unmerged work found in a cleanup candidate is consolidated into a PR
-  before any removal is approved.
+- Never recommend a dirty worktree for removal without review.
+- Before anyone approves a removal, consolidate valid unmerged work from the
+  cleanup candidate into a PR.
 - `dirf worktree archive` records cleanup status; it does not move files.
   Moving a worktree is a separate filesystem action requiring its own approval.
 - The repository owner is the sole authority; no agent-initiated destructive

@@ -225,6 +225,10 @@ dirf review validate <review.json>                      validate a review artifa
 dirf review render <review.json>                        render a review artifact as Markdown
 dirf review ready <review.json>                         fail closed unless the exact PR is merge-ready
 
+# writing standard (ASD-STE100)
+dirf ste check <file-or-dir>... [--words FILE] [--json]  check prose against the STE writing rules (exit 1 on findings)
+dirf ste rules                                          list the STE rules that the checker tests
+
 # portfolio (cross-project view — see "Portfolio" below)
 dirf portfolio [--json]                              classify every project: active/idle/stale/completed/archived/empty
 dirf project <complete|reopen|archive|status> [...]  explicit project status override

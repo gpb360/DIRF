@@ -1,0 +1,274 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { checkSte, proseBlocks, runSteCheck, sentences, words } from "../src/ste.js";
+import { bundledSkills } from "../src/skills.js";
+import { buildFlow } from "../src/flow.js";
+import { loadPlaybooks } from "../src/router.js";
+
+const rules = (text, options) => checkSte(text, options).map((finding) => finding.rule);
+const longSentence = (count) => `${Array.from({ length: count }, (_, i) => `word${i === 0 ? "" : i}`).join(" ")}.`.replace(/^w/, "W");
+
+test("descriptive sentences allow 25 words and procedural steps allow 20", () => {
+  assert.deepEqual(rules(longSentence(25)), []);
+  assert.deepEqual(rules(longSentence(26)), ["sentence-length"]);
+  assert.deepEqual(rules(`1. ${longSentence(20)}`), []);
+  assert.deepEqual(rules(`1. ${longSentence(21)}`), ["sentence-length"]);
+  assert.deepEqual(rules(`- ${longSentence(21)}`), [], "bullet items are descriptive");
+});
+
+test("paragraphs allow six sentences", () => {
+  assert.deepEqual(rules("One. Two. Three. Four. Five. Six."), []);
+  assert.deepEqual(rules("One. Two. Three. Four. Five. Six. Seven."), ["paragraph-length"]);
+});
+
+test("passive voice is flagged, adjectives that end in ed are not", () => {
+  assert.deepEqual(rules("The file was written by the tool."), ["passive-voice"]);
+  assert.deepEqual(rules("The change is not fully tested."), ["passive-voice"]);
+  assert.deepEqual(rules("The tool writes the file."), []);
+  assert.deepEqual(rules("The speed is need based."), []);
+  assert.deepEqual(rules("A dirty worktree is never recommended for removal."), ["passive-voice"]);
+  assert.deepEqual(rules("The inventory script is read-only."), [], "a hyphenated adjective is not a participle");
+});
+
+test("a step with more than one instruction is flagged", () => {
+  assert.deepEqual(rules("1. Open the file and then save it."), ["one-instruction"]);
+  assert.deepEqual(rules("1. Open the file; save it."), ["one-instruction"]);
+  assert.deepEqual(rules("1. Open the file."), []);
+});
+
+test("code, tables, headings, front matter, and comments are not prose", () => {
+  const source = [
+    "---", "name: x", "---", "# A heading that is very long but it is a heading and not a sentence at all ok",
+    "```", longSentence(40), "```", "| a | b |", "<!-- " + longSentence(40) + " -->", "Short text.",
+  ].join("\n");
+  assert.deepEqual(proseBlocks(source).map((block) => block.text), ["Short text."]);
+});
+
+test("a finding reports the line where its sentence starts", () => {
+  const source = ["Intro text here.", "", "First sentence is fine.", "The file was", "written by the tool. Last one."].join("\n");
+  assert.deepEqual(checkSte(source).map((finding) => [finding.rule, finding.line]), [["passive-voice", 4]]);
+});
+
+test("a link or code span that wraps across lines does not shift the reported line", () => {
+  const link = ["Read the [agent", "guide](docs/AGENT_GUIDE.md) first. Then", "the file was written by the tool."].join("\n");
+  assert.deepEqual(checkSte(link).map((finding) => [finding.rule, finding.line]), [["passive-voice", 2]]);
+  const code = ["Run `npm run", "check:release` now.", "The file was written by the tool."].join("\n");
+  assert.deepEqual(checkSte(code).map((finding) => [finding.rule, finding.line]), [["passive-voice", 3]]);
+});
+
+test("a line that starts with a tag or an image still starts a new sentence", () => {
+  for (const start of ["<br>", "![logo](logo.png)", "<https://example.com>"]) {
+    const source = [`${longSentence(14)}`, `${start} The file was written by the tool.`].join("\n");
+    assert.deepEqual(checkSte(source).map((finding) => [finding.rule, finding.line]), [["passive-voice", 2]], start);
+  }
+  const seven = ["One. Two. Three.", "<br> Four. Five. Six. Seven."].join("\n");
+  assert.deepEqual(rules(seven), ["paragraph-length"]);
+});
+
+test("a line that holds only markup does not shift the reported line", () => {
+  const br = ["Intro sentence here.", "<br>", "The file was written by the tool."].join("\n");
+  assert.deepEqual(checkSte(br).map((finding) => [finding.rule, finding.line]), [["passive-voice", 3]]);
+  const badge = ["![build](badge.svg)", "The file was written by the tool."].join("\n");
+  assert.deepEqual(checkSte(badge).map((finding) => [finding.rule, finding.line]), [["passive-voice", 2]]);
+});
+
+test("a bare less-than sign is text, not the start of a tag", () => {
+  const source = ["Use a count < 5 here.", "The file was written by the tool.", "Open Settings > Advanced."].join("\n");
+  assert.deepEqual(checkSte(source).map((finding) => [finding.rule, finding.line]), [["passive-voice", 2]]);
+  assert.deepEqual(sentences("Read <https://example.com> now. Then stop."), ["Read CODE now.", "Then stop."]);
+});
+
+test("a paragraph-length finding reports the line of its first sentence", () => {
+  const source = ['<p align="center">', "One. Two. Three. Four. Five. Six. Seven."].join("\n");
+  assert.deepEqual(checkSte(source).map((finding) => [finding.rule, finding.line]), [["paragraph-length", 2]]);
+});
+
+test("footnotes, hard breaks, closing marks, and link labels do not merge sentences", () => {
+  assert.deepEqual(sentences("It is done.[^1] Next step."), ["It is done.", "Next step."]);
+  assert.deepEqual(sentences('He said ("done.") Then stop.'), ['He said ("done.', "Then stop."]);
+  const hardBreak = ["It works.\\", "The file was written by the tool."].join("\n");
+  assert.deepEqual(checkSte(hardBreak).map((finding) => [finding.rule, finding.line]), [["passive-voice", 2]]);
+  const label = ["Read [the guide.](docs/", "guide.md) The file was written by the tool."].join("\n");
+  assert.deepEqual(checkSte(label).map((finding) => [finding.rule, finding.line]), [["passive-voice", 2]]);
+});
+
+test("an HTML entity is text, not a semicolon or a word", () => {
+  assert.deepEqual(rules("1. Open the R&amp;D file."), []);
+  assert.deepEqual(rules("1. Open the R&#x26;D file."), []);
+  assert.deepEqual(rules("1. Run the tests &mdash; all of them &copy;."), []);
+  assert.deepEqual(rules("1. Run the tests &mdash; all of them.", { words: new Set(["run", "the", "tests", "all", "of", "them"]) }), []);
+  assert.deepEqual(sentences("Use a &lt;tag&gt; here. Don&#39;t stop."), ["Use a <tag> here.", "Don't stop."]);
+});
+
+test("an inline HTML comment is not prose", () => {
+  const inline = "Run the tool now. <!-- TODO: this text was written badly --> Then stop.";
+  assert.deepEqual(rules(inline), []);
+  assert.deepEqual(sentences(inline), ["Run the tool now.", "Then stop."]);
+  const wrapped = ["1. Open the file. <!-- see note; then fix", "this later --> Save it."].join("\n");
+  assert.deepEqual(rules(wrapped), []);
+});
+
+test("a link label that starts with a caret is a link, not a footnote", () => {
+  assert.deepEqual(sentences("Read [^caret](docs/caret.md) now."), ["Read ^caret now."]);
+});
+
+test("long link destinations and labels are still links", () => {
+  const dataUri = `data:image/png;base64,${"A".repeat(2222)}`;
+  assert.deepEqual(rules(`1. Click ![Save icon](${dataUri}) to save the file.`), []);
+  assert.deepEqual(rules(`Read this first. Click ![${"word ".repeat(120)}](${dataUri}) now.`), []);
+  assert.deepEqual(sentences(`See [the guide](https://example.com/${"a".repeat(3000)} "Guide title") now.`), ["See the guide now."]);
+});
+
+test("CommonMark link destination forms are links", () => {
+  for (const target of ["(<docs/setup guide.md>)", "( docs/guide.md )", '(docs/guide.md "Title" )',
+    "(https://en.wikipedia.org/wiki/Foo_(bar))", "(docs/guide.md (Title))"]) {
+    assert.deepEqual(sentences(`Open [the guide]${target} now.`), ["Open the guide now."], target);
+  }
+  const wrappedTitle = ["1. Open [the setup guide](docs/setup.md", '"Setup") and read the first section before you install it.'].join("\n");
+  assert.deepEqual(rules(wrappedTitle), []);
+  assert.deepEqual(rules("1. Open [the setup guide](<docs/setup guide.md>) and read the first section before you install the tool on your computer."), []);
+});
+
+test("unclosed brackets in a long paragraph stay fast", () => {
+  const inputs = {
+    brackets: `${"[a ![b [^c ".repeat(20000)}end.`,
+    "unclosed link before image lines": `See [the release notes](\n${"![shot](shot.png)\n".repeat(4000)}end.`,
+    "unclosed link before footnote lines": `See [the release notes](\n${"[^1]\n".repeat(4000)}end.`,
+    "spaces after an unclosed link": `See [the notes](${" ".repeat(20000)}end.`,
+    "unclosed links with titles": `${'[a](b "c '.repeat(20000)}end.`,
+  };
+  for (const [name, input] of Object.entries(inputs)) {
+    const started = Date.now();
+    checkSte(input);
+    assert.ok(Date.now() - started < 2000, `${name} took ${Date.now() - started} ms`);
+  }
+});
+
+test("a URL does not take the period that ends its sentence", () => {
+  const source = `${longSentence(14)} https://example.com. ${longSentence(15)}`;
+  assert.deepEqual(rules(source), []);
+  assert.deepEqual(sentences("See https://example.com/a_b?x=1. Then stop."), ["See CODE.", "Then stop."]);
+});
+
+test("text after a comment that closes on the same line is prose", () => {
+  assert.deepEqual(proseBlocks("<!-- note --> Short text.").map((block) => block.text), ["Short text."]);
+  assert.deepEqual(proseBlocks(["<!--", "note", "--> Short text."].join("\n")).map((block) => [block.text, block.line]), [["Short text.", 3]]);
+  assert.deepEqual(proseBlocks("<!-- a --> <!-- b\nhidden\n-->").map((block) => block.text), []);
+});
+
+test("a fence line inside an HTML comment does not hide the rest of the file", () => {
+  const source = ["<!--", "```", "-->", "The file was written by the tool."].join("\n");
+  assert.deepEqual(checkSte(source).map((finding) => [finding.rule, finding.line]), [["passive-voice", 4]]);
+});
+
+test("a fenced code block inside a quote is not prose", () => {
+  const source = ["> ```", `> ${longSentence(40)}`, "> ```", "> Short text."].join("\n");
+  assert.deepEqual(proseBlocks(source).map((block) => block.text), ["Short text."]);
+});
+
+test("an empty quote line ends a quoted paragraph", () => {
+  const quote = ["> One. Two. Three.", ">", "> Four. Five. Six. Seven."].join("\n");
+  assert.deepEqual(rules(quote), []);
+  assert.deepEqual(proseBlocks(quote).map((block) => block.line), [1, 3]);
+});
+
+test("a line that starts with a triple-backtick code span is not a fence", () => {
+  const source = ["```require('process');``` works like any module.", "The file was written by the tool."].join("\n");
+  assert.deepEqual(checkSte(source).map((finding) => [finding.rule, finding.line]), [["passive-voice", 2]]);
+  assert.deepEqual(proseBlocks(["~~~js `x`", longSentence(40), "~~~", "Short text."].join("\n")).map((block) => block.text), ["Short text."]);
+});
+
+test("a fence can start a list item", () => {
+  for (const marker of ["-", "1."]) {
+    const source = [`${marker} \`\`\`bash`, `   ${longSentence(40)}`, "   ```", "The file was written by the tool."].join("\n");
+    assert.deepEqual(checkSte(source).map((finding) => [finding.rule, finding.line]), [["passive-voice", 4]], marker);
+  }
+});
+
+test("text after several comments on one line is prose", () => {
+  assert.deepEqual(proseBlocks("<!-- a --> <!-- b --> Short text.").map((block) => block.text), ["Short text."]);
+  assert.deepEqual(proseBlocks("<!-- a --> <!-- b\nhidden\n--> Short text.").map((block) => [block.text, block.line]), [["Short text.", 3]]);
+});
+
+test("many unclosed comment openers stay fast", () => {
+  const started = Date.now();
+  checkSte(`Text ${"<!-- ".repeat(64000)}end.`);
+  assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
+});
+
+test("a long run of backticks stays fast", () => {
+  const started = Date.now();
+  proseBlocks(`${"`".repeat(128000)} x \``);
+  assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
+});
+
+test("a long code span across many lines stays fast", () => {
+  const started = Date.now();
+  checkSte(`Run \`${"x\n".repeat(16000)}\`. Then stop.`);
+  assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
+});
+
+test("a longer fence is not closed by a shorter inner fence", () => {
+  const source = ["````md", "```", longSentence(40), "```", "````", "Short text."].join("\n");
+  assert.deepEqual(proseBlocks(source).map((block) => block.text), ["Short text."]);
+});
+
+test("front matter after a byte order mark is not prose", () => {
+  assert.deepEqual(proseBlocks(`\uFEFF---\ntitle: ${longSentence(40)}\n---\nShort text.`).map((block) => block.text), ["Short text."]);
+});
+
+test("inline code and links count as words a reader sees", () => {
+  assert.deepEqual(words(sentences("Run `npm run check:release --verbose` with [the guide](https://x.y/z).")[0]),
+    ["Run", "CODE", "with", "the", "guide"]);
+  assert.deepEqual(sentences("Use e.g. this. Then stop."), ["Use e.g this.", "Then stop."]);
+});
+
+test("approved word list flags other words but accepts names, numbers, and code", () => {
+  const approved = new Set(["the", "tool", "write", "writes", "file", "use"]);
+  assert.deepEqual(checkSte("The tool writes the file.", { words: approved }), []);
+  assert.deepEqual(checkSte("Use the tool on 3 files in GitHub with `x` and API.", { words: approved })
+    .map((finding) => finding.message), ["Not in the approved word list: on, in, with, and."]);
+});
+
+test("ste check exits 1 with findings, 0 when clean, and 2 for usage", () => {
+  const dir = mkdtempSync(join(tmpdir(), "dirf-ste-"));
+  writeFileSync(join(dir, "clean.md"), "The tool writes the file.\n");
+  const wordsFile = join(mkdtempSync(join(tmpdir(), "dirf-ste-words-")), "words.txt");
+  writeFileSync(wordsFile, "# approved\nthe\ntool\n");
+  writeFileSync(join(dir, "image.png"), "not prose");
+  const lines = [];
+  const io = { log: (line) => lines.push(line), error: (line) => lines.push(line) };
+  assert.equal(runSteCheck({ _: ["check", join(dir, "clean.md")] }, io), 0);
+  assert.equal(runSteCheck({ _: ["check", dir], words: wordsFile, json: true }, io), 1);
+  const report = JSON.parse(lines.at(-1));
+  assert.equal(report.files, 1, "only Markdown and text files are checked");
+  assert.equal(report.results[0].findings[0].rule, "unapproved-word");
+  assert.equal(runSteCheck({ _: ["check"] }, io), 2);
+  assert.equal(runSteCheck({ _: ["check", join(dir, "missing.md")] }, io), 2, "an input error is not a finding");
+  assert.match(lines.at(-1), /File not found/);
+  assert.equal(runSteCheck({ _: ["check", dir], words: join(dir, "missing.txt") }, io), 2);
+  assert.equal(runSteCheck({ _: ["check", dir], words: "" }, io), 2, "--words without a value is a usage error");
+  const objectWords = join(dir, "..", "object-words.json");
+  writeFileSync(objectWords, '{"the": true}');
+  assert.equal(runSteCheck({ _: ["check", dir], words: objectWords }, io), 2);
+  assert.match(lines.at(-1), /must be a JSON array/);
+  const bomWords = join(dir, "..", "bom-words.json");
+  writeFileSync(bomWords, '\uFEFF["the", "tool", "writes", "file"]');
+  assert.equal(runSteCheck({ _: ["check", join(dir, "clean.md")], words: bomWords }, io), 0, "a JSON word list with a byte order mark loads");
+});
+
+test("ste100 is a bundled controlled-language skill that a task can request", () => {
+  const skill = bundledSkills().ste100;
+  assert.deepEqual(skill.capabilities, ["controlled language"]);
+  const selection = { playbook: "audit-remediation", skill_flow: { label: "l", steps: [] } };
+  const flow = buildFlow(selection, { task: "read-only audit; use ste100" }, {});
+  assert.deepEqual(flow.steps.filter((step) => step.stage === "prose").map((step) => step.skill), ["ste100"]);
+});
+
+test("the documentation playbook ends prose work with the controlled-language pass", () => {
+  const steps = loadPlaybooks().documentation.skill_flow.steps.map((step) => step.capability);
+  assert.deepEqual(steps, ["minimalism", "prose editing", "controlled language", "code review"]);
+});

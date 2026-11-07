@@ -68,6 +68,11 @@ Use this policy in every generated workflow prompt.
   machine-readable data. Task-specific creative writing keeps its requested form.
   These instructions guide output. Do not claim full STE compliance without
   reviewing the applicable rules and dictionary usage.
+- Run `dirf ste check FILE` on changed prose files. The check tests sentence
+  length, paragraph length, passive voice, and one instruction per step. It does
+  not test the dictionary. Add `--words FILE` when the project supplies an
+  approved-word list. The check is a heuristic and reads only a subset of
+  Markdown. Read each finding before you change the text.
 - Write user-facing updates in simple, ordinary English. Keep internal workflow
   terms such as exact-head, fixed-point, remediation, gate, convergence, and
   evidence ledger out of the update unless the user asks for technical detail.
