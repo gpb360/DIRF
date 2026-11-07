@@ -86,9 +86,10 @@ export function updateProgressSection(handoffMarkdown, { message, timestamp, upd
   if (!completed) completed = ensureSection(parsed.sections, "Completed");
   const completedItems = meaningfulLines(completed)
     .filter((line) => line.startsWith("- "));
+  // A re-recorded entry moves to the end, so list order is recency order and
+  // trimming the oldest never drops what this checkpoint just touched.
   const completedEntry = `- ${message}`;
-  if (!completedItems.includes(completedEntry)) completedItems.push(completedEntry);
-  completed.content = sectionContent(completedItems);
+  completed.content = sectionContent([...completedItems.filter((item) => item !== completedEntry), completedEntry]);
 
   const changedFiles = (files || []).map((file) => String(file).trim()).filter(Boolean);
   if (changedFiles.length) {
@@ -97,7 +98,8 @@ export function updateProgressSection(handoffMarkdown, { message, timestamp, upd
     const existing = meaningfulLines(changed)
       .filter((line) => line.startsWith("- "))
       .map((line) => line.slice(2).trim());
-    const merged = [...new Set([...existing, ...changedFiles])];
+    const touched = new Set(changedFiles);
+    const merged = [...existing.filter((file) => !touched.has(file)), ...touched];
     changed.content = sectionContent(merged.map((file) => `- ${file}`));
   }
 

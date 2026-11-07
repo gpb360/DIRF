@@ -227,6 +227,28 @@ test("MCP write and progress tools return the budget warning field", async (t) =
   assert.match(progress.warning, /^Canonical handoff is \d+ bytes/);
 });
 
+test("a re-recorded entry counts as newest, so its own checkpoint never trims it", (t) => {
+  const previousHome = process.env.DIRF_HOME;
+  process.env.DIRF_HOME = mkdtempSync(join(tmpdir(), "dirf-recency-home-"));
+  const root = mkdtempSync(join(tmpdir(), "dirf-recency-repo-"));
+  removeAfter(t, process.env.DIRF_HOME, root);
+  t.after(() => { if (previousHome === undefined) delete process.env.DIRF_HOME; else process.env.DIRF_HOME = previousHome; });
+  execFileSync("git", ["init", "-q"], { cwd: root, timeout: TIMEOUT });
+  const { slug } = registerProject(root);
+  recordProgress(slug, { message: "step0", next: "n", files: ["src/state.js"] });
+  for (let i = 1; i <= CANONICAL_LIST_LIMIT; i += 1) recordProgress(slug, { message: `step${i}`, next: "n", files: [`f${i}`] });
+  recordProgress(slug, { message: "step0", next: "n", files: ["src/state.js"] });
+
+  const canonical = parseCurrentHandoff(readHandoff(slug));
+  assert.equal(canonical.completedSteps.at(-1), "step0");
+  assert.equal(canonical.changedFiles.at(-1), "src/state.js");
+  const history = readFileSync(join(storeProjectDir(slug), "HANDOFF-history.md"), "utf8");
+  // The first step0 aged out on the 11th entry; re-recording it trims step1.
+  assert.deepEqual(historyEntries(history, "Completed"), ["step0", "step1"]);
+  assert.deepEqual(historyEntries(history, "Changed files"), ["src/state.js", "f1"]);
+  assert.deepEqual(canonical.completedSteps, [...Array.from({ length: CANONICAL_LIST_LIMIT - 1 }, (_, i) => `step${i + 2}`), "step0"]);
+});
+
 test("history is written before the canonical handoff, so a crash between them loses nothing", (t) => {
   const previousHome = process.env.DIRF_HOME;
   process.env.DIRF_HOME = mkdtempSync(join(tmpdir(), "dirf-order-home-"));
