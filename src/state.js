@@ -2521,12 +2521,13 @@ export function handoffBudgetWarning(markdown) {
   const lines = text ? text.split("\n").length - (text.endsWith("\n") ? 1 : 0) : 0;
   const bytes = Buffer.byteLength(text, "utf8");
   if (lines <= HANDOFF_BUDGET.lines && bytes <= HANDOFF_BUDGET.bytes) return null;
-  return `Canonical handoff is ${lines} lines / ${bytes} bytes (budget ${HANDOFF_BUDGET.lines} lines / ${HANDOFF_BUDGET.bytes} bytes). Move detail into the attempt handoff or an artifact and leave a link.`;
+  return `Canonical handoff is ${lines} lines / ${bytes} bytes (budget ${HANDOFF_BUDGET.lines} lines / ${HANDOFF_BUDGET.bytes} bytes). Move detail into the attempt handoff or an artifact, leave a link, and rewrite it with "dirf state write-handoff --file FILE".`;
 }
 
 export function writeHandoff(slug, markdown) {
   recoverPendingProgress(slug);
   atomicWrite(join(storeProjectDir(slug), "HANDOFF.md"), markdown);
+  return { warning: handoffBudgetWarning(markdown) };
 }
 
 function progressAttempt(slug, idOrName) {
@@ -2911,6 +2912,7 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
       reason: canonicalAccepted ? null : canonicalDecision.reason,
       attempt_accepted: attemptDecision?.accepted ?? null,
       attempt_reason: attemptDecision?.reason ?? null,
+      warning: canonicalAccepted ? handoffBudgetWarning(updatedHandoff) : null,
     };
 }
 
@@ -3013,8 +3015,9 @@ export function importHandoff(targetPath, slug, { force = false } = {}) {
     const ts = timestampIso(new Date());
     cpSync(storeHandoff, join(storeProjectDir(slug), `HANDOFF.md.${ts}.bak`));
   }
-  atomicWrite(storeHandoff, readFileSync(local, "utf8"));
-  return { imported: true };
+  const markdown = readFileSync(local, "utf8");
+  atomicWrite(storeHandoff, markdown);
+  return { imported: true, warning: handoffBudgetWarning(markdown) };
 }
 
 // Remove the migration backup after the user confirms the store works.
