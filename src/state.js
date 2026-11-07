@@ -2848,6 +2848,7 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
         reason: rejectionReason,
         attempt_accepted: attemptDecision?.accepted ?? null,
         attempt_reason: attemptDecision?.reason ?? null,
+        warning: null,
       };
     }
 
@@ -2899,7 +2900,7 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
     if (attemptDecision?.accepted) {
       atomicWrite(join(storeAttemptDir(slug, attempt.id), "HANDOFF.md"), updatedAttemptHandoff);
     }
-    if (canonicalAccepted) writeHandoff(slug, updatedHandoff);
+    const canonicalWarning = canonicalAccepted ? writeHandoff(slug, updatedHandoff).warning : null;
     // No bound attempt means no lifecycle plan; the canonical write above stands.
     const lifecycle = applyProgressLifecyclePlanLocked(slug, attempt?.id, lifecyclePlan, lifecycleTime);
     if (attemptDecision?.accepted) rmSync(pendingProgressPath(slug));
@@ -2913,7 +2914,7 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
       reason: canonicalAccepted ? null : canonicalDecision.reason,
       attempt_accepted: attemptDecision?.accepted ?? null,
       attempt_reason: attemptDecision?.reason ?? null,
-      warning: canonicalAccepted ? handoffBudgetWarning(updatedHandoff) : null,
+      warning: canonicalWarning,
     };
 }
 

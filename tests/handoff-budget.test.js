@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HANDOFF_BUDGET, handoffBudgetWarning } from "../src/state.js";
@@ -17,7 +17,7 @@ const BIG = `# DIRF Handoff\n\n${lines(200)}`;
 function fixture(t) {
   const home = mkdtempSync(join(tmpdir(), "dirf-budget-home-"));
   const project = mkdtempSync(join(tmpdir(), "dirf-budget-proj-"));
-  t.after(() => { for (const dir of [home, project]) rmSync(dir, { recursive: true, force: true }); });
+  t.after(() => { for (const dir of [home, project]) rmSync(dir, { recursive: true, force: true, maxRetries: 3 }); });
   execFileSync("git", ["init", "-q"], { cwd: project, timeout: TIMEOUT });
   const env = { ...process.env, DIRF_HOME: home };
   execFileSync(process.execPath, [CLI, "setup", project], { encoding: "utf8", timeout: TIMEOUT, env });
@@ -71,13 +71,31 @@ test("record-progress warns from the canonical handoff it actually wrote", (t) =
   assert.match(over.stderr, /^Warning: Canonical handoff is \d+ lines/m);
 });
 
-// Sends tool calls over stdio JSON-RPC and resolves with each parsed tool result.
+test("import-handoff warns when the promoted handoff is over budget", (t) => {
+  const { project, cli } = fixture(t);
+  mkdirSync(join(project, ".dirf"), { recursive: true });
+  writeFileSync(join(project, ".dirf", "HANDOFF.md"), BIG);
+  const imported = cli("state", "import-handoff", "--force");
+  assert.equal(imported.status, 0, imported.stderr);
+  assert.match(imported.stderr, /^Warning: Canonical handoff is 202 lines/);
+});
+
+// Sends tool calls over stdio JSON-RPC and resolves with each parsed tool
+// result once the server has exited, so cleanup never races an open handle.
 function mcpCall(env, calls) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [MCP], { stdio: ["pipe", "pipe", "ignore"], env });
     const results = [];
+    let failure = null;
     let buf = "";
-    const timer = setTimeout(() => { child.kill(); reject(new Error("MCP timeout")); }, TIMEOUT);
+    const timer = setTimeout(() => { failure = new Error("MCP timeout"); child.kill(); }, TIMEOUT);
+    const stop = (error = null) => { failure ??= error; child.kill(); };
+    child.on("exit", () => {
+      clearTimeout(timer);
+      if (failure) reject(failure);
+      else if (results.length === calls.length) resolve(results);
+      else reject(new Error(`MCP exited after ${results.length} of ${calls.length} results`));
+    });
     child.stdout.on("data", (chunk) => {
       buf += chunk;
       let nl;
@@ -85,9 +103,11 @@ function mcpCall(env, calls) {
         const message = JSON.parse(buf.slice(0, nl));
         buf = buf.slice(nl + 1);
         if (message.id === 0) continue; // initialize handshake
-        if (!message.result) { clearTimeout(timer); child.kill(); reject(new Error(JSON.stringify(message.error))); return; }
+        if (!message.result || message.result.isError) {
+          return stop(new Error(JSON.stringify(message.error ?? message.result.content)));
+        }
         results.push(JSON.parse(message.result.content[0].text));
-        if (results.length === calls.length) { clearTimeout(timer); child.kill(); resolve(results); }
+        if (results.length === calls.length) return stop();
       }
     });
     child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test", version: "1" } } })}\n`);
