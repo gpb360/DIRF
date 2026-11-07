@@ -4,7 +4,8 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HANDOFF_BUDGET_BYTES, handoffBudgetWarning, readHandoff, recordProgress, registerProject, storeProjectDir, writeHandoff } from "../src/state.js";
+import { pathToFileURL } from "node:url";
+import { claimAttemptCheckout, createAttemptInStore, HANDOFF_BUDGET_BYTES, handoffBudgetWarning, readHandoff, recordProgress, registerProject, storeProjectDir, updateAttemptLifecycle, writeHandoff } from "../src/state.js";
 import { CANONICAL_LIST_LIMIT, compactProgressLists, historyEntries, mergeProgressHistory, parseCurrentHandoff } from "../src/handoff-update.js";
 
 const CLI = join(process.cwd(), "src", "cli.js");
@@ -45,7 +46,15 @@ test("compaction keeps the newest entries and returns the rest for history", () 
   assert.deepEqual(archived, { Completed: ["- step 0", "- step 1"] });
   assert.deepEqual(parseCurrentHandoff(markdown).completedSteps, items.slice(2).map((item) => item.slice(2)));
   assert.equal(parseCurrentHandoff(markdown).nextAction, "Go");
-  assert.match(markdown, /## History\n\nOlder entries are kept in full, oldest first: \/store\/HANDOFF-history\.md/);
+  assert.match(markdown, /## Trimmed history\n\nOlder entries are kept in full, oldest first: \/store\/HANDOFF-history\.md/);
+
+  // Only the oldest entries move: prose in the section and a user's own
+  // History section stay exactly where they were.
+  const notes = `# DIRF Handoff\n\n## Changed files\n\nSee PR notes.\n${items.join("\n")}\n\n## History\n\nMy own notes.\n`;
+  const kept = compactProgressLists(notes, "/h");
+  assert.deepEqual(kept.archived, { "Changed files": ["- step 0", "- step 1"] });
+  assert.match(kept.markdown, /## Changed files\n\nSee PR notes\.\n- step 2\n/);
+  assert.match(kept.markdown, /## History\n\nMy own notes\.\n/);
 
   const within = `# DIRF Handoff\n\n## Completed\n\n${items.slice(2).join("\n")}\n`;
   assert.deepEqual(compactProgressLists(within, "/x"), { markdown: within, archived: {} });
@@ -75,7 +84,7 @@ test("record-progress trims the canonical lists without losing an entry", (t) =>
     recordProgress(slug, { message: `checkpoint ${i}`, next: "continue", files: [`src/file-${i}.js`] });
     if (i === CANONICAL_LIST_LIMIT - 1) {
       assert.equal(existsSync(historyPath), false, "no history while the lists fit");
-      assert.doesNotMatch(readHandoff(slug), /## History/);
+      assert.doesNotMatch(readHandoff(slug), /## Trimmed history/);
     }
   }
 
@@ -86,7 +95,48 @@ test("record-progress trims the canonical lists without losing an entry", (t) =>
   assert.equal(canonical.changedFiles.length, CANONICAL_LIST_LIMIT);
   assert.deepEqual([...historyEntries(history, "Completed"), ...canonical.completedSteps], all);
   assert.deepEqual(historyEntries(history, "Changed files"), ["src/file-0.js", "src/file-1.js", "src/file-2.js"]);
-  assert.match(readHandoff(slug), new RegExp(`## History\\n\\nOlder entries are kept in full, oldest first: .*HANDOFF-history\\.md`));
+  assert.match(readHandoff(slug), new RegExp(`## Trimmed history\\n\\nOlder entries are kept in full, oldest first: .*HANDOFF-history\\.md`));
+});
+
+test("crash-recovery replay past the trim boundary keeps both windows newest-first", (t) => {
+  const previousHome = process.env.DIRF_HOME;
+  process.env.DIRF_HOME = mkdtempSync(join(tmpdir(), "dirf-replay-home-"));
+  const root = mkdtempSync(join(tmpdir(), "dirf-replay-repo-"));
+  removeAfter(t, process.env.DIRF_HOME, root);
+  t.after(() => { if (previousHome === undefined) delete process.env.DIRF_HOME; else process.env.DIRF_HOME = previousHome; });
+  execFileSync("git", ["init", "-q"], { cwd: root, timeout: TIMEOUT });
+  const { slug } = registerProject(root);
+  const attempt = createAttemptInStore(slug, "replay");
+  writeFileSync(join(attempt.folder, "workflow.json"), JSON.stringify({ workflow: { phases: ["build", "verify"] } }));
+  updateAttemptLifecycle(slug, attempt.id, "start");
+  claimAttemptCheckout(slug, attempt.id, root);
+  const checkpoint = (i) => ({ attemptId: attempt.id, phase: "build", message: `s${i}`, files: [`f${i}`], next: "n" });
+  for (let i = 0; i < 13; i += 1) recordProgress(slug, checkpoint(i));
+
+  // Exit right after the attempt handoff is written, before the canonical one.
+  const stateUrl = pathToFileURL(join(process.cwd(), "src", "state.js")).href;
+  const attemptHandoff = join(attempt.folder, "HANDOFF.md");
+  const crashed = spawnSync(process.execPath, ["--input-type=module", "-e", `
+    import fs from "node:fs"; import { syncBuiltinESMExports } from "node:module";
+    const rename = fs.renameSync;
+    fs.renameSync = (from, to) => { rename(from, to); if (to === ${JSON.stringify(attemptHandoff)}) process.exit(73); };
+    syncBuiltinESMExports();
+    const { recordProgress } = await import(${JSON.stringify(stateUrl)});
+    recordProgress(${JSON.stringify(slug)}, ${JSON.stringify(checkpoint(13))});
+  `], { encoding: "utf8", timeout: TIMEOUT, env: process.env });
+  assert.equal(crashed.status, 73, crashed.stderr);
+  // The dead child's lock is reclaimed once it is stale; skip the wait.
+  const now = Date.now;
+  Date.now = () => now() + 3_600_000;
+  try { recordProgress(slug, checkpoint(14)); } finally { Date.now = now; }
+
+  const canonical = parseCurrentHandoff(readHandoff(slug));
+  const history = readFileSync(join(storeProjectDir(slug), "HANDOFF-history.md"), "utf8");
+  const range = (from, to, prefix) => Array.from({ length: to - from }, (_, i) => `${prefix}${from + i}`);
+  assert.deepEqual(canonical.completedSteps, range(5, 15, "s"));
+  assert.deepEqual(canonical.changedFiles, range(5, 15, "f"));
+  assert.deepEqual([...historyEntries(history, "Completed"), ...canonical.completedSteps], range(0, 15, "s"));
+  assert.deepEqual([...historyEntries(history, "Changed files"), ...canonical.changedFiles], range(0, 15, "f"));
 });
 
 test("write-handoff warns on stderr when over budget but still writes and exits 0", (t) => {

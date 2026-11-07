@@ -2889,11 +2889,11 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
       && recordedAttemptContext.updateNumber > (canonicalContext.updateNumber || 0)) {
       // Entries already trimmed into the history are not missing; replaying
       // them would push newer entries out of the canonical window.
-      const archived = new Set(historyEntries(history, "Completed"));
-      for (const message of recordedAttemptContext.completedSteps.filter((step) => !archived.has(step))) {
-        canonicalProgressBase = updateProgressSection(canonicalProgressBase, {
-          message, files: recordedAttemptContext.changedFiles,
-        });
+      const archivedSteps = new Set(historyEntries(history, "Completed"));
+      const archivedFiles = new Set(historyEntries(history, "Changed files"));
+      const files = recordedAttemptContext.changedFiles.filter((file) => !archivedFiles.has(file));
+      for (const message of recordedAttemptContext.completedSteps.filter((step) => !archivedSteps.has(step))) {
+        canonicalProgressBase = updateProgressSection(canonicalProgressBase, { message, files });
       }
     }
     const compacted = canonicalAccepted

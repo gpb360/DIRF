@@ -110,7 +110,7 @@ canonical handoff exceeds 8192 bytes; MCP `dirf_write_handoff` and
 `dirf_record_progress` return the same text as a `warning` field. The write
 still succeeds. `record-progress` keeps only the newest 10 `Completed` and
 `Changed files` entries in the canonical handoff. Older entries move, in full,
-to `HANDOFF-history.md` beside it, and a `History` section links there. Attempt
+to `HANDOFF-history.md` beside it, and a `Trimmed history` section links there. Attempt
 handoffs keep their complete lists.
 
 ### Typed artifact provenance

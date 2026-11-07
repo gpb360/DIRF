@@ -136,9 +136,16 @@ export function parseCurrentHandoff(handoffMarkdown) {
 
 // The canonical handoff is read first by every session, so record-progress
 // keeps only the newest entries of its growing lists. Trimmed entries are
-// returned for the append-only history file; nothing is discarded.
+// returned for the append-only history file; nothing is discarded. Like
+// updateProgressSection, history keeps one copy of a repeated entry.
 export const CANONICAL_LIST_LIMIT = 10;
 const COMPACTED_LISTS = [["Completed", "Completed steps"], ["Changed files"]];
+const HISTORY_HEADING = "Trimmed history"; // DIRF-owned; rewritten on each trim
+
+const isListEntry = (line) => {
+  const trimmed = line.trim();
+  return trimmed.startsWith("- ") && !/^-\s+_\([^)]+\)_$/.test(trimmed);
+};
 
 export function compactProgressLists(handoffMarkdown, historyPath, limit = CANONICAL_LIST_LIMIT) {
   const parsed = splitSections(handoffMarkdown);
@@ -146,13 +153,20 @@ export function compactProgressLists(handoffMarkdown, historyPath, limit = CANON
   for (const names of COMPACTED_LISTS) {
     const section = findSection(parsed.sections, names);
     if (!section) continue;
-    const items = meaningfulLines(section).filter((line) => line.startsWith("- "));
-    if (items.length <= limit) continue;
-    archived[names[0]] = items.slice(0, items.length - limit);
-    section.content = sectionContent(items.slice(-limit));
+    let excess = section.content.filter(isListEntry).length - limit;
+    if (excess <= 0) continue;
+    // Remove only the oldest entries; any other line in the section stays.
+    const moved = [];
+    section.content = section.content.filter((line) => {
+      if (excess <= 0 || !isListEntry(line)) return true;
+      moved.push(line.trim());
+      excess -= 1;
+      return false;
+    });
+    archived[names[0]] = moved;
   }
   if (!Object.keys(archived).length) return { markdown: handoffMarkdown, archived };
-  ensureSection(parsed.sections, "History").content = sectionContent([
+  ensureSection(parsed.sections, HISTORY_HEADING).content = sectionContent([
     `Older entries are kept in full, oldest first: ${historyPath}`,
   ]);
   return { markdown: renderSections(parsed), archived };
