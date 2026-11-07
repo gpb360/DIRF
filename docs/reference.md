@@ -105,6 +105,16 @@ work through DIRF; if ownership conflicts, ask which attempt owns the checkout.
 The shared project handoff at `~/.dirf/projects/<slug>/HANDOFF.md` is supporting
 context, not a way to select current work. Use `dirf state read-handoff` for
 explicit diagnosis or recovery, and `dirf state write-handoff` to update it.
+`write-handoff`, `import-handoff`, and `record-progress` warn on stderr when the
+canonical handoff exceeds 8192 bytes; MCP `dirf_write_handoff` and
+`dirf_record_progress` return the same text as a `warning` field. The write
+still succeeds. `record-progress` keeps only the newest 10 `Completed` and
+`Changed files` entries in the canonical handoff; an entry recorded again moves
+to the end, so the newest are the most recently recorded. Older entries move, in
+full, to `HANDOFF-history.md` beside it, and a `Trimmed history` section links
+there. Attempt handoffs keep their complete lists, in the same recency order.
+The next `record-progress` trims any canonical handoff this way, including one
+written with `write-handoff` or `import-handoff`.
 
 ### Typed artifact provenance
 

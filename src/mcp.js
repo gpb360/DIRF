@@ -44,8 +44,8 @@ const TOOLS = [
   { name: "dirf_resolve_project", description: "Resolve which DIRF project a path belongs to (default: server cwd).", inputSchema: { type: "object", properties: { path: { type: "string" } } } },
   { name: "dirf_list_projects", description: "List all registered DIRF projects.", inputSchema: { type: "object", properties: {} } },
   { name: "dirf_read_handoff", description: "Read the canonical handoff for a project (slug or path; default: server cwd).", inputSchema: { type: "object", properties: { project: { type: "string" } } } },
-  { name: "dirf_write_handoff", description: "Replace the canonical handoff for a project with the given content.", inputSchema: { type: "object", properties: { project: { type: "string" }, content: { type: "string" } }, required: ["content"] } },
-  { name: "dirf_record_progress", description: "Record workflow progress in HANDOFF.md - call this after completing each step. Updates current phase, last action, completed steps, and next action.", inputSchema: { type: "object", properties: { project: { type: "string", description: "Project slug or path (default: server cwd)" }, attempt: { type: "string", description: "Attempt id or unique name; required when the project has multiple attempts or requirementUpdate is supplied" }, message: { type: "string", description: "What was just completed" }, currentPhase: { type: "string", description: "Current workflow phase" }, nextAction: { type: "string", description: "Exact next step" }, changedFiles: { type: "array", items: { type: "string" }, description: "Files changed in this step" }, workItem: { type: "string", description: "Stable work identity such as pr:1442" }, reviewRevision: { type: "string", description: "Reviewed commit SHA" }, requirementUpdate: REQUIREMENT_UPDATE_SCHEMA }, required: ["message", "nextAction"] } },
+  { name: "dirf_write_handoff", description: "Replace the canonical handoff for a project with the given content. Returns warning (string or null) when it exceeds the size budget.", inputSchema: { type: "object", properties: { project: { type: "string" }, content: { type: "string" } }, required: ["content"] } },
+  { name: "dirf_record_progress", description: "Record workflow progress in HANDOFF.md - call this after completing each step. Updates current phase, last action, completed steps, and next action. Returns warning (string or null) when the canonical handoff exceeds the size budget.", inputSchema: { type: "object", properties: { project: { type: "string", description: "Project slug or path (default: server cwd)" }, attempt: { type: "string", description: "Attempt id or unique name; required when the project has multiple attempts or requirementUpdate is supplied" }, message: { type: "string", description: "What was just completed" }, currentPhase: { type: "string", description: "Current workflow phase" }, nextAction: { type: "string", description: "Exact next step" }, changedFiles: { type: "array", items: { type: "string" }, description: "Files changed in this step" }, workItem: { type: "string", description: "Stable work identity such as pr:1442" }, reviewRevision: { type: "string", description: "Reviewed commit SHA" }, requirementUpdate: REQUIREMENT_UPDATE_SCHEMA }, required: ["message", "nextAction"] } },
   { name: "dirf_list_attempts", description: "List attempts for a project.", inputSchema: { type: "object", properties: { project: { type: "string" } } } },
   { name: "dirf_get_attempt", description: "Get one attempt by id or name.", inputSchema: { type: "object", properties: { project: { type: "string" }, id: { type: "string" } }, required: ["id"] } },
   { name: "dirf_read_assignment", description: "Read the complete workflow and handoff for one exact attempt id.", inputSchema: { type: "object", properties: { project: { type: "string" }, attempt: { type: "string", description: "Exact attempt id; names and paths are rejected" } }, required: ["attempt"] } },
@@ -92,8 +92,8 @@ function callTool(name, args) {
     }
     case "dirf_write_handoff": {
       const slug = resolveSlugFromParams(args);
-      writeHandoff(slug, args.content);
-      return { ok: true, slug };
+      const { warning } = writeHandoff(slug, args.content);
+      return { ok: true, slug, warning };
     }
     case "dirf_record_progress": {
       // recordProgress serializes the checkpoint itself; avoid mutating the
@@ -123,6 +123,7 @@ function callTool(name, args) {
         reason: outcome.reason,
         attempt_accepted: outcome.attempt_accepted,
         attempt_reason: outcome.attempt_reason,
+        warning: outcome.warning ?? null,
         message: outcome.accepted
           ? "Progress recorded"
           : outcome.recorded

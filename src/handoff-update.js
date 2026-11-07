@@ -43,11 +43,17 @@ function renderSections({ preamble, sections }) {
   return `${lines.join("\n").replace(/\n+$/, "")}\n`;
 }
 
+const isPlaceholder = (line) => /^(?:-\s+)?_\([^)]+\)_$/.test(line);
+
 function meaningfulLines(section) {
   return section.content
     .map((line) => line.trim())
-    .filter((line) => line && !/^(?:-\s+)?_\([^)]+\)_$/.test(line));
+    .filter((line) => line && !isPlaceholder(line));
 }
+
+const bulletValues = (section) => section
+  ? meaningfulLines(section).filter((line) => line.startsWith("- ")).map((line) => line.slice(2).trim())
+  : [];
 
 export function updateProgressSection(handoffMarkdown, { message, timestamp, updateNumber, phase, next, files, workItem, reviewRevision, attemptId }) {
   const parsed = splitSections(handoffMarkdown);
@@ -80,25 +86,33 @@ export function updateProgressSection(handoffMarkdown, { message, timestamp, upd
   if (!completed) completed = ensureSection(parsed.sections, "Completed");
   const completedItems = meaningfulLines(completed)
     .filter((line) => line.startsWith("- "));
+  // A re-recorded entry moves to the end, so list order is recency order and
+  // trimming the oldest never drops what this checkpoint just touched.
   const completedEntry = `- ${message}`;
-  if (!completedItems.includes(completedEntry)) completedItems.push(completedEntry);
-  completed.content = sectionContent(completedItems);
+  completed.content = sectionContent([...completedItems.filter((item) => item !== completedEntry), completedEntry]);
 
-  const changedFiles = (files || []).map((file) => String(file).trim()).filter(Boolean);
-  if (changedFiles.length) {
-    let changed = findSection(parsed.sections, ["Changed files"]);
-    if (!changed) changed = ensureSection(parsed.sections, "Changed files");
-    const existing = meaningfulLines(changed)
-      .filter((line) => line.startsWith("- "))
-      .map((line) => line.slice(2).trim());
-    const merged = [...new Set([...existing, ...changedFiles])];
-    changed.content = sectionContent(merged.map((file) => `- ${file}`));
-  }
+  mergeChangedFiles(parsed.sections, files);
 
   if (next) {
     ensureSection(parsed.sections, "Exact next action").content = sectionContent([next]);
   }
 
+  return renderSections(parsed);
+}
+
+// Touched files move to the end of Changed files, so order is recency order.
+function mergeChangedFiles(sections, files) {
+  const touched = new Set((files || []).map((file) => String(file).trim()).filter(Boolean));
+  if (!touched.size) return;
+  const changed = ensureSection(sections, "Changed files");
+  const existing = bulletValues(changed);
+  changed.content = sectionContent([...existing.filter((file) => !touched.has(file)), ...touched].map((file) => `- ${file}`));
+}
+
+// Adds files to Changed files without recording a step (crash-recovery replay).
+export function addChangedFiles(handoffMarkdown, files) {
+  const parsed = splitSections(handoffMarkdown);
+  mergeChangedFiles(parsed.sections, files);
   return renderSections(parsed);
 }
 
@@ -115,9 +129,6 @@ export function parseCurrentHandoff(handoffMarkdown) {
   const reviewRevision = findSection(sections, ["Review revision"]);
   const updateNumber = findSection(sections, ["Update number"]);
   const firstValue = (section) => section ? meaningfulLines(section)[0] || null : null;
-  const bulletValues = (section) => section
-    ? meaningfulLines(section).filter((line) => line.startsWith("- ")).map((line) => line.slice(2).trim())
-    : [];
 
   return {
     objective: firstValue(objective),
@@ -132,4 +143,60 @@ export function parseCurrentHandoff(handoffMarkdown) {
     attemptId: firstValue(findSection(sections, ["Attempt ID"])),
     updateNumber: Number.parseInt(firstValue(updateNumber) || "", 10) || null,
   };
+}
+
+// The canonical handoff is read first by every session, so record-progress
+// keeps only the newest entries of its growing lists. Trimmed entries are
+// returned for the append-only history file; nothing is discarded. Like
+// updateProgressSection, history keeps one copy of a repeated entry.
+export const CANONICAL_LIST_LIMIT = 10;
+const COMPACTED_LISTS = [["Completed", "Completed steps"], ["Changed files"]];
+const HISTORY_HEADING = "Trimmed history"; // DIRF-owned; rewritten on each trim
+
+const isListEntry = (line) => {
+  const trimmed = line.trim();
+  return trimmed.startsWith("- ") && !isPlaceholder(trimmed);
+};
+
+export function compactProgressLists(handoffMarkdown, historyPath) {
+  const parsed = splitSections(handoffMarkdown);
+  const archived = {};
+  for (const names of COMPACTED_LISTS) {
+    const section = findSection(parsed.sections, names);
+    if (!section) continue;
+    let excess = section.content.filter(isListEntry).length - CANONICAL_LIST_LIMIT;
+    if (excess <= 0) continue;
+    // Remove only the oldest entries; any other line in the section stays.
+    const moved = [];
+    section.content = section.content.filter((line) => {
+      if (excess <= 0 || !isListEntry(line)) return true;
+      moved.push(line.trim());
+      excess -= 1;
+      return false;
+    });
+    archived[names[0]] = moved;
+  }
+  if (!Object.keys(archived).length) return { markdown: handoffMarkdown, archived };
+  ensureSection(parsed.sections, HISTORY_HEADING).content = sectionContent([
+    `Older entries are kept in full, oldest first: ${historyPath}`,
+  ]);
+  return { markdown: renderSections(parsed), archived };
+}
+
+// Appends archived entries to the history file, skipping any it already holds
+// so a replayed checkpoint cannot duplicate them.
+export function mergeProgressHistory(historyMarkdown, archived) {
+  const parsed = splitSections(historyMarkdown || "# DIRF handoff history\n\nEntries trimmed from the canonical HANDOFF.md, oldest first.\n");
+  for (const [name, entries] of Object.entries(archived)) {
+    const section = ensureSection(parsed.sections, name);
+    const items = meaningfulLines(section).filter((line) => line.startsWith("- "));
+    const seen = new Set(items);
+    for (const entry of entries) if (!seen.has(entry)) { items.push(entry); seen.add(entry); }
+    section.content = sectionContent(items);
+  }
+  return renderSections(parsed);
+}
+
+export function historyEntries(historyMarkdown, name) {
+  return bulletValues(findSection(splitSections(historyMarkdown || "").sections, [name]));
 }

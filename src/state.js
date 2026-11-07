@@ -16,7 +16,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSyn
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { resolveGoverningArtifact, validateArtifactGraph, validatePlanDelta } from "./artifacts.js";
-import { parseCurrentHandoff, updateProgressSection } from "./handoff-update.js";
+import { addChangedFiles, compactProgressLists, historyEntries, mergeProgressHistory, parseCurrentHandoff, updateProgressSection } from "./handoff-update.js";
 import { parseSummaryCursor, SUMMARY_PAGE_SIZE, validateRequirementMappingUpdate } from "./summary-validation.js";
 // The review-json built-in check enforces the real review artifact schema —
 // the one the pr-review playbook's declared validation (`dirf review ready
@@ -2511,9 +2511,25 @@ function readProjectHandoffFile(slug) {
   return readFileSync(path, "utf8");
 }
 
+// The canonical handoff is what a new session reads first, so it must stay
+// small: longer injected context lowers adherence. Over budget is a warning,
+// never an error — detail belongs in attempt handoffs and artifacts, linked.
+export const HANDOFF_BUDGET_BYTES = 8192;
+
+export function handoffBudgetWarning(markdown) {
+  const bytes = Buffer.byteLength(String(markdown ?? ""), "utf8");
+  if (bytes <= HANDOFF_BUDGET_BYTES) return null;
+  return `Canonical handoff is ${bytes} bytes (budget ${HANDOFF_BUDGET_BYTES}). Move detail into the attempt handoff or an artifact, leave a link, and rewrite the canonical handoff.`;
+}
+
+function handoffHistoryPath(slug) {
+  return join(storeProjectDir(slug), "HANDOFF-history.md");
+}
+
 export function writeHandoff(slug, markdown) {
   recoverPendingProgress(slug);
   atomicWrite(join(storeProjectDir(slug), "HANDOFF.md"), markdown);
+  return { warning: handoffBudgetWarning(markdown) };
 }
 
 function progressAttempt(slug, idOrName) {
@@ -2834,6 +2850,7 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
         reason: rejectionReason,
         attempt_accepted: attemptDecision?.accepted ?? null,
         attempt_reason: attemptDecision?.reason ?? null,
+        warning: null,
       };
     }
 
@@ -2865,18 +2882,29 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
     // on the next accepted write, without replacing project-specific sections.
     let canonicalProgressBase = canonicalBase;
     const canonicalContext = parseCurrentHandoff(canonicalBase);
+    const historyPath = handoffHistoryPath(slug);
+    const history = canonicalAccepted && existsSync(historyPath) ? readFileSync(historyPath, "utf8") : null;
     if (canonicalAccepted && attemptDecision?.accepted
       && canonicalContext.attemptId === attempt.id
       && recordedAttemptContext.updateNumber > (canonicalContext.updateNumber || 0)) {
-      for (const message of recordedAttemptContext.completedSteps) {
-        canonicalProgressBase = updateProgressSection(canonicalProgressBase, {
-          message, files: recordedAttemptContext.changedFiles,
-        });
+      // Replay only what the canonical handoff is missing. Entries it already
+      // holds keep their position, and entries trimmed into the history are
+      // not missing; re-adding either would reorder the recency window.
+      const present = (list, historyName) => new Set([...canonicalContext[list], ...historyEntries(history, historyName)]);
+      const knownSteps = present("completedSteps", "Completed");
+      const knownFiles = present("changedFiles", "Changed files");
+      const files = recordedAttemptContext.changedFiles.filter((file) => !knownFiles.has(file));
+      for (const message of recordedAttemptContext.completedSteps.filter((step) => !knownSteps.has(step))) {
+        canonicalProgressBase = updateProgressSection(canonicalProgressBase, { message });
       }
+      // Files are replayed on their own: a missing file must not depend on
+      // its step also being missing.
+      canonicalProgressBase = addChangedFiles(canonicalProgressBase, files);
     }
-    const updatedHandoff = canonicalAccepted
-      ? updateProgressSection(canonicalProgressBase, update)
-      : canonicalBase;
+    const compacted = canonicalAccepted
+      ? compactProgressLists(updateProgressSection(canonicalProgressBase, update), historyPath)
+      : { markdown: canonicalBase, archived: {} };
+    const updatedHandoff = compacted.markdown;
     const updatedAttemptHandoff = attemptDecision?.accepted
       ? updateProgressSection(attemptBase, update)
       : attemptHandoff;
@@ -2885,8 +2913,12 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
     if (attemptDecision?.accepted) {
       atomicWrite(join(storeAttemptDir(slug, attempt.id), "HANDOFF.md"), updatedAttemptHandoff);
     }
-    if (canonicalAccepted) writeHandoff(slug, updatedHandoff);
-    const lifecycle = applyProgressLifecyclePlanLocked(slug, attempt.id, lifecyclePlan, lifecycleTime);
+    // History first: a crash between the two writes leaves entries in both
+    // files, never in neither.
+    if (Object.keys(compacted.archived).length) atomicWrite(historyPath, mergeProgressHistory(history, compacted.archived));
+    const canonicalWarning = canonicalAccepted ? writeHandoff(slug, updatedHandoff).warning : null;
+    // No bound attempt means no lifecycle plan; the canonical write above stands.
+    const lifecycle = applyProgressLifecyclePlanLocked(slug, attempt?.id, lifecyclePlan, lifecycleTime);
     if (attemptDecision?.accepted) rmSync(pendingProgressPath(slug));
     return {
       handoff: updatedHandoff,
@@ -2898,6 +2930,7 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
       reason: canonicalAccepted ? null : canonicalDecision.reason,
       attempt_accepted: attemptDecision?.accepted ?? null,
       attempt_reason: attemptDecision?.reason ?? null,
+      warning: canonicalWarning,
     };
 }
 
@@ -3000,8 +3033,9 @@ export function importHandoff(targetPath, slug, { force = false } = {}) {
     const ts = timestampIso(new Date());
     cpSync(storeHandoff, join(storeProjectDir(slug), `HANDOFF.md.${ts}.bak`));
   }
-  atomicWrite(storeHandoff, readFileSync(local, "utf8"));
-  return { imported: true };
+  const markdown = readFileSync(local, "utf8");
+  atomicWrite(storeHandoff, markdown);
+  return { imported: true, warning: handoffBudgetWarning(markdown) };
 }
 
 // Remove the migration backup after the user confirms the store works.

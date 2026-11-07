@@ -1225,8 +1225,9 @@ function cmdStateWriteHandoff(args) {
     console.error("usage: dirf state write-handoff [--path DIR|--slug S] --file FILE|-");
     process.exitCode = 2; return;
   }
-  writeHandoff(slug, md);
+  const { warning } = writeHandoff(slug, md);
   console.log(`Wrote canonical handoff for ${slug}`);
+  if (warning) console.error(`Warning: ${warning}`);
 }
 
 function cmdStateListAttempts(args) {
@@ -1648,12 +1649,14 @@ function cmdStateImportHandoff(args) {
     rl.question(`Promote local HANDOFF.md into the store for ${slug}? [y/N] `, (answer) => {
       rl.close();
       if (!/^y/i.test(answer.trim())) { console.log("aborted"); return; }
-      importHandoff(target, slug, { force: true });
+      const { warning } = importHandoff(target, slug, { force: true });
       console.log(`Promoted local HANDOFF.md for ${slug}`);
+      if (warning) console.error(`Warning: ${warning}`);
     });
   } else {
-    importHandoff(target, slug, { force: true });
+    const { warning } = importHandoff(target, slug, { force: true });
     console.log(`Promoted local HANDOFF.md for ${slug}`);
+    if (warning) console.error(`Warning: ${warning}`);
   }
 }
 
@@ -1876,6 +1879,7 @@ function cmdRecordProgress(args) {
     console.log(`   ${message}`);
     if (updateData.phase) console.log(`   Phase: ${updateData.phase}`);
     console.log(`   Next: ${updateData.next}`);
+    if (outcome.warning) console.error(`Warning: ${outcome.warning}`);
 
   } catch (error) {
     console.error(`Failed to record progress: ${error.message}`);
