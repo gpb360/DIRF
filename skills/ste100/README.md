@@ -51,8 +51,8 @@ subset of Markdown:
 
 The checker does not read other Markdown correctly. For example, it does not
 read indented code blocks, Setext headings, reference-style links, footnote
-definitions, or labels that contain brackets. It skips `.mdx`, `.rst`, and
-`.adoc` files. Sentence
+definitions, or labels that contain brackets. When it reads a directory, it
+skips `.mdx`, `.rst`, and `.adoc` files. Sentence
 splits can also be wrong after an abbreviation such as "etc.", after a
 typographic quote, or before a lowercase word. In these cases a finding can
 be wrong or missing.

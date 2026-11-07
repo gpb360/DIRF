@@ -103,7 +103,7 @@ function plainInline(text) {
     .replace(/<(?:https?:|mailto:)[^<>\s]*>/g, (link) => CODE_TOKEN + marksOf(link))
     // Only a real tag is markup. A bare "<", as in "count < 5", is text.
     .replace(/<\/?[A-Za-z][\w:-]*(?:\s[^<>]*)?\/?>/g, (tag) => ` ${marksOf(tag)}`)
-    .replace(/&(amp|lt|gt|quot|apos|nbsp|#\d{1,7}|#x[0-9a-f]{1,6});/gi, (_, name) => decodeEntity(name))
+    .replace(/&([a-z][a-z0-9]{1,31}|#\d{1,7}|#x[0-9a-f]{1,6});/gi, (_, name) => decodeEntity(name))
     // A URL does not take the punctuation that ends its sentence.
     .replace(/https?:\/\/[^\s\u0001]*[^\s\u0001.,;:!?'")\]]/g, CODE_TOKEN)
     .replace(/[*_]{1,3}([^*_]+)[*_]{1,3}/g, "$1")

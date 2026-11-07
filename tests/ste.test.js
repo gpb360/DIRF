@@ -98,6 +98,8 @@ test("footnotes, hard breaks, closing marks, and link labels do not merge senten
 test("an HTML entity is text, not a semicolon or a word", () => {
   assert.deepEqual(rules("1. Open the R&amp;D file."), []);
   assert.deepEqual(rules("1. Open the R&#x26;D file."), []);
+  assert.deepEqual(rules("1. Run the tests &mdash; all of them &copy;."), []);
+  assert.deepEqual(rules("1. Run the tests &mdash; all of them.", { words: new Set(["run", "the", "tests", "all", "of", "them"]) }), []);
   assert.deepEqual(sentences("Use a &lt;tag&gt; here. Don&#39;t stop."), ["Use a <tag> here.", "Don't stop."]);
 });
 
