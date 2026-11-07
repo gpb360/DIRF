@@ -2511,6 +2511,19 @@ function readProjectHandoffFile(slug) {
   return readFileSync(path, "utf8");
 }
 
+// The canonical handoff is what a new session reads first, so it must stay
+// small: longer injected context lowers adherence. Over budget is a warning,
+// never an error — detail belongs in attempt handoffs and artifacts, linked.
+export const HANDOFF_BUDGET = Object.freeze({ lines: 120, bytes: 8192 });
+
+export function handoffBudgetWarning(markdown) {
+  const text = String(markdown ?? "");
+  const lines = text ? text.split("\n").length - (text.endsWith("\n") ? 1 : 0) : 0;
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (lines <= HANDOFF_BUDGET.lines && bytes <= HANDOFF_BUDGET.bytes) return null;
+  return `Canonical handoff is ${lines} lines / ${bytes} bytes (budget ${HANDOFF_BUDGET.lines} lines / ${HANDOFF_BUDGET.bytes} bytes). Move detail into the attempt handoff or an artifact and leave a link.`;
+}
+
 export function writeHandoff(slug, markdown) {
   recoverPendingProgress(slug);
   atomicWrite(join(storeProjectDir(slug), "HANDOFF.md"), markdown);

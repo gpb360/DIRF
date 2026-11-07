@@ -7,7 +7,7 @@ import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
 import {
   resolveProject, resolveProjectReference, listProjects,
-  writeHandoff, listAttempts, getAttempt, readAttemptAssignment, storeProjectDir, recordProgress, projectHandoffContextState,
+  writeHandoff, handoffBudgetWarning, listAttempts, getAttempt, readAttemptAssignment, storeProjectDir, recordProgress, projectHandoffContextState,
   attemptSummary, deriveSlug, getProject,
 } from "./state.js";
 import { resolve } from "node:path";
@@ -93,7 +93,7 @@ function callTool(name, args) {
     case "dirf_write_handoff": {
       const slug = resolveSlugFromParams(args);
       writeHandoff(slug, args.content);
-      return { ok: true, slug };
+      return { ok: true, slug, warning: handoffBudgetWarning(args.content) };
     }
     case "dirf_record_progress": {
       // recordProgress serializes the checkpoint itself; avoid mutating the
@@ -123,6 +123,7 @@ function callTool(name, args) {
         reason: outcome.reason,
         attempt_accepted: outcome.attempt_accepted,
         attempt_reason: outcome.attempt_reason,
+        warning: outcome.accepted ? handoffBudgetWarning(outcome.handoff) : null,
         message: outcome.accepted
           ? "Progress recorded"
           : outcome.recorded
