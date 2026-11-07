@@ -81,6 +81,34 @@ _Avoid_: Resume command, process launch
 The Project's shared coordination snapshot. Resolve checkout responsibility first and load that Attempt's Handoff. Reconcile warnings about related work before continuing. Use the Project handoff as supporting context when it does not conflict with the active Attempt.
 _Avoid_: Attempt handoff, local handoff
 
+**Evidence Publication**:
+An explicitly created, shareable projection containing only the selected and redacted evidence from an Attempt. It grows through approved additions at one stable location; published items are never deleted or overwritten.
+_Avoid_: Evidence sync, remote Attempt, canonical evidence store
+
+**Publication Revision**:
+A hash-identified record of one authorized addition to an Evidence Publication. Publication Revisions form its append-only audit history.
+_Avoid_: Publication copy, replacement publication
+
+**Artifact Acceptance**:
+The human-owned decision that makes an Artifact eligible to govern an Attempt's Workflow. It does not authorize external disclosure.
+_Avoid_: Publication approval, artifact publishing
+
+**Publication Approval**:
+The human-owned decision that authorizes the selected and redacted contents of an Evidence Publication. It does not make a published item a governing Artifact.
+_Avoid_: Artifact acceptance, workflow approval
+
+**Publication Candidate**:
+The exact, hash-identified set of selected and redacted items proposed for the next Publication Revision. Publication Approval applies only to these bytes.
+_Avoid_: Draft folder, live Attempt view
+
+**Publication Preflight**:
+Deterministic, fail-closed validation of a Publication Candidate for secrets, credentials, and private data. Any finding blocks Publication Approval and publication without an override.
+_Avoid_: Best-effort scan, publication warning
+
+**Publication Artifact**:
+The normalized Markdown and metadata-only provenance manifest produced locally from one explicitly authorized source through DIRF's document ingestion contract. Original source bytes remain local and are never part of an Evidence Publication.
+_Avoid_: Source document, uploaded original, document copy
+
 **Project Rollup**:
 A count-based summary of the lifecycle states of a Project's Attempts. A Project has no lifecycle status of its own and may contain multiple In Progress Attempts.
 _Avoid_: Project status
