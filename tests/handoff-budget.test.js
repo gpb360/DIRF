@@ -227,6 +227,41 @@ test("MCP write and progress tools return the budget warning field", async (t) =
   assert.match(progress.warning, /^Canonical handoff is \d+ bytes/);
 });
 
+test("recovering one attempt's crash keeps another attempt's newer entries in place", (t) => {
+  const previousHome = process.env.DIRF_HOME;
+  process.env.DIRF_HOME = mkdtempSync(join(tmpdir(), "dirf-interleave-home-"));
+  const root = mkdtempSync(join(tmpdir(), "dirf-interleave-repo-"));
+  removeAfter(t, process.env.DIRF_HOME, root);
+  t.after(() => { if (previousHome === undefined) delete process.env.DIRF_HOME; else process.env.DIRF_HOME = previousHome; });
+  execFileSync("git", ["init", "-q"], { cwd: root, timeout: TIMEOUT });
+  const { slug } = registerProject(root);
+  const a = createAttemptInStore(slug, "aaa", new Date(Date.now() - 5000));
+  const b = createAttemptInStore(slug, "bbb");
+  const record = (attempt, message) => ({ attemptId: attempt.id, message, next: "n", files: [`${message}.js`] });
+  recordProgress(slug, record(a, "a1"));
+  recordProgress(slug, record(b, "b1"));
+  recordProgress(slug, record(a, "a2"));
+
+  // A dies after its attempt handoff lands, before the canonical write.
+  const canonicalPath = join(storeProjectDir(slug), "HANDOFF.md");
+  const stateUrl = pathToFileURL(join(process.cwd(), "src", "state.js")).href;
+  const crashed = spawnSync(process.execPath, ["--input-type=module", "-e", `
+    import fs from "node:fs"; import { syncBuiltinESMExports } from "node:module";
+    const rename = fs.renameSync;
+    fs.renameSync = (from, to) => { if (to === ${JSON.stringify(canonicalPath)}) process.exit(73); rename(from, to); };
+    syncBuiltinESMExports();
+    const { recordProgress } = await import(${JSON.stringify(stateUrl)});
+    recordProgress(${JSON.stringify(slug)}, ${JSON.stringify(record(a, "a3"))});
+  `], { encoding: "utf8", timeout: TIMEOUT, env: process.env });
+  assert.equal(crashed.status, 73, crashed.stderr);
+  const now = Date.now;
+  Date.now = () => now() + 3_600_000;
+  let canonical;
+  try { canonical = parseCurrentHandoff(readHandoff(slug)); } finally { Date.now = now; }
+  assert.deepEqual(canonical.completedSteps, ["a1", "b1", "a2", "a3"]);
+  assert.deepEqual(canonical.changedFiles, ["a1.js", "b1.js", "a2.js", "a3.js"]);
+});
+
 test("a re-recorded entry counts as newest, so its own checkpoint never trims it", (t) => {
   const previousHome = process.env.DIRF_HOME;
   process.env.DIRF_HOME = mkdtempSync(join(tmpdir(), "dirf-recency-home-"));

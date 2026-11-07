@@ -2887,12 +2887,14 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
     if (canonicalAccepted && attemptDecision?.accepted
       && canonicalContext.attemptId === attempt.id
       && recordedAttemptContext.updateNumber > (canonicalContext.updateNumber || 0)) {
-      // Entries already trimmed into the history are not missing; replaying
-      // them would push newer entries out of the canonical window.
-      const archivedSteps = new Set(historyEntries(history, "Completed"));
-      const archivedFiles = new Set(historyEntries(history, "Changed files"));
-      const files = recordedAttemptContext.changedFiles.filter((file) => !archivedFiles.has(file));
-      for (const message of recordedAttemptContext.completedSteps.filter((step) => !archivedSteps.has(step))) {
+      // Replay only what the canonical handoff is missing. Entries it already
+      // holds keep their position, and entries trimmed into the history are
+      // not missing; re-adding either would reorder the recency window.
+      const present = (list, historyName) => new Set([...canonicalContext[list], ...historyEntries(history, historyName)]);
+      const knownSteps = present("completedSteps", "Completed");
+      const knownFiles = present("changedFiles", "Changed files");
+      const files = recordedAttemptContext.changedFiles.filter((file) => !knownFiles.has(file));
+      for (const message of recordedAttemptContext.completedSteps.filter((step) => !knownSteps.has(step))) {
         canonicalProgressBase = updateProgressSection(canonicalProgressBase, { message, files });
       }
     }
