@@ -112,7 +112,8 @@ still succeeds. `record-progress` keeps only the newest 10 `Completed` and
 `Changed files` entries in the canonical handoff; an entry recorded again moves
 to the end, so the newest are the most recently recorded. Older entries move, in full,
 to `HANDOFF-history.md` beside it, and a `Trimmed history` section links there. Attempt
-handoffs keep their complete lists. The next `record-progress` trims any canonical
+handoffs keep their complete lists, in the same recency order. The next
+`record-progress` trims any canonical
 handoff this way, including one written with `write-handoff` or `import-handoff`.
 
 ### Typed artifact provenance

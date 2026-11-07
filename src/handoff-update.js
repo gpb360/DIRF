@@ -91,22 +91,28 @@ export function updateProgressSection(handoffMarkdown, { message, timestamp, upd
   const completedEntry = `- ${message}`;
   completed.content = sectionContent([...completedItems.filter((item) => item !== completedEntry), completedEntry]);
 
-  const changedFiles = (files || []).map((file) => String(file).trim()).filter(Boolean);
-  if (changedFiles.length) {
-    let changed = findSection(parsed.sections, ["Changed files"]);
-    if (!changed) changed = ensureSection(parsed.sections, "Changed files");
-    const existing = meaningfulLines(changed)
-      .filter((line) => line.startsWith("- "))
-      .map((line) => line.slice(2).trim());
-    const touched = new Set(changedFiles);
-    const merged = [...existing.filter((file) => !touched.has(file)), ...touched];
-    changed.content = sectionContent(merged.map((file) => `- ${file}`));
-  }
+  mergeChangedFiles(parsed.sections, files);
 
   if (next) {
     ensureSection(parsed.sections, "Exact next action").content = sectionContent([next]);
   }
 
+  return renderSections(parsed);
+}
+
+// Touched files move to the end of Changed files, so order is recency order.
+function mergeChangedFiles(sections, files) {
+  const touched = new Set((files || []).map((file) => String(file).trim()).filter(Boolean));
+  if (!touched.size) return;
+  const changed = ensureSection(sections, "Changed files");
+  const existing = bulletValues(changed);
+  changed.content = sectionContent([...existing.filter((file) => !touched.has(file)), ...touched].map((file) => `- ${file}`));
+}
+
+// Adds files to Changed files without recording a step (crash-recovery replay).
+export function addChangedFiles(handoffMarkdown, files) {
+  const parsed = splitSections(handoffMarkdown);
+  mergeChangedFiles(parsed.sections, files);
   return renderSections(parsed);
 }
 

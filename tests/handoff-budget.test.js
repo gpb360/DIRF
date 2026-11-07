@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { claimAttemptCheckout, createAttemptInStore, HANDOFF_BUDGET_BYTES, handoffBudgetWarning, readHandoff, recordProgress, registerProject, storeProjectDir, updateAttemptLifecycle, writeHandoff } from "../src/state.js";
-import { CANONICAL_LIST_LIMIT, compactProgressLists, historyEntries, mergeProgressHistory, parseCurrentHandoff } from "../src/handoff-update.js";
+import { addChangedFiles, CANONICAL_LIST_LIMIT, compactProgressLists, historyEntries, mergeProgressHistory, parseCurrentHandoff } from "../src/handoff-update.js";
 
 const CLI = join(process.cwd(), "src", "cli.js");
 const MCP = join(process.cwd(), "src", "mcp.js");
@@ -260,6 +260,39 @@ test("recovering one attempt's crash keeps another attempt's newer entries in pl
   try { canonical = parseCurrentHandoff(readHandoff(slug)); } finally { Date.now = now; }
   assert.deepEqual(canonical.completedSteps, ["a1", "b1", "a2", "a3"]);
   assert.deepEqual(canonical.changedFiles, ["a1.js", "b1.js", "a2.js", "a3.js"]);
+});
+
+test("re-recording an entry inside the window moves it to the end of both handoffs", (t) => {
+  const previousHome = process.env.DIRF_HOME;
+  process.env.DIRF_HOME = mkdtempSync(join(tmpdir(), "dirf-window-home-"));
+  const root = mkdtempSync(join(tmpdir(), "dirf-window-repo-"));
+  removeAfter(t, process.env.DIRF_HOME, root);
+  t.after(() => { if (previousHome === undefined) delete process.env.DIRF_HOME; else process.env.DIRF_HOME = previousHome; });
+  execFileSync("git", ["init", "-q"], { cwd: root, timeout: TIMEOUT });
+  const { slug } = registerProject(root);
+  const attempt = createAttemptInStore(slug, "window");
+  const record = (i) => recordProgress(slug, { attemptId: attempt.id, message: `s${i}`, next: "n", files: [`f${i}`] });
+  for (let i = 0; i < CANONICAL_LIST_LIMIT; i += 1) record(i);
+  record(3);
+  record(CANONICAL_LIST_LIMIT);
+
+  const expectedSteps = ["s1", "s2", "s4", "s5", "s6", "s7", "s8", "s9", "s3", `s${CANONICAL_LIST_LIMIT}`];
+  const canonical = parseCurrentHandoff(readHandoff(slug));
+  assert.deepEqual(canonical.completedSteps, expectedSteps);
+  assert.deepEqual(canonical.changedFiles, expectedSteps.map((step) => step.replace("s", "f")));
+  const history = readFileSync(join(storeProjectDir(slug), "HANDOFF-history.md"), "utf8");
+  assert.deepEqual(historyEntries(history, "Completed"), ["s0"], "s0 ages out, not the re-recorded s3");
+
+  const scoped = parseCurrentHandoff(readFileSync(join(attempt.folder, "HANDOFF.md"), "utf8"));
+  assert.deepEqual(scoped.completedSteps, ["s0", ...expectedSteps], "attempt handoffs reorder the same way but keep everything");
+});
+
+test("crash-recovery replay restores a missing file even when its step is already known", () => {
+  const canonical = "# DIRF Handoff\n\n## Completed\n\n- Ran tests\n\n## Changed files\n\n- a.js\n- b.js\n";
+  const replayed = parseCurrentHandoff(addChangedFiles(canonical, ["lost.js"]));
+  assert.deepEqual(replayed.completedSteps, ["Ran tests"]);
+  assert.deepEqual(replayed.changedFiles, ["a.js", "b.js", "lost.js"]);
+  assert.equal(addChangedFiles(canonical, []), canonical);
 });
 
 test("a re-recorded entry counts as newest, so its own checkpoint never trims it", (t) => {

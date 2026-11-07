@@ -16,7 +16,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSyn
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { resolveGoverningArtifact, validateArtifactGraph, validatePlanDelta } from "./artifacts.js";
-import { compactProgressLists, historyEntries, mergeProgressHistory, parseCurrentHandoff, updateProgressSection } from "./handoff-update.js";
+import { addChangedFiles, compactProgressLists, historyEntries, mergeProgressHistory, parseCurrentHandoff, updateProgressSection } from "./handoff-update.js";
 import { parseSummaryCursor, SUMMARY_PAGE_SIZE, validateRequirementMappingUpdate } from "./summary-validation.js";
 // The review-json built-in check enforces the real review artifact schema —
 // the one the pr-review playbook's declared validation (`dirf review ready
@@ -2895,8 +2895,11 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
       const knownFiles = present("changedFiles", "Changed files");
       const files = recordedAttemptContext.changedFiles.filter((file) => !knownFiles.has(file));
       for (const message of recordedAttemptContext.completedSteps.filter((step) => !knownSteps.has(step))) {
-        canonicalProgressBase = updateProgressSection(canonicalProgressBase, { message, files });
+        canonicalProgressBase = updateProgressSection(canonicalProgressBase, { message });
       }
+      // Files are replayed on their own: a missing file must not depend on
+      // its step also being missing.
+      canonicalProgressBase = addChangedFiles(canonicalProgressBase, files);
     }
     const compacted = canonicalAccepted
       ? compactProgressLists(updateProgressSection(canonicalProgressBase, update), historyPath)
