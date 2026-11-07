@@ -287,6 +287,29 @@ test("re-recording an entry inside the window moves it to the end of both handof
   assert.deepEqual(scoped.completedSteps, ["s0", ...expectedSteps], "attempt handoffs reorder the same way but keep everything");
 });
 
+test("record-progress replays an attempt's unprojected file even when its step is known", (t) => {
+  const previousHome = process.env.DIRF_HOME;
+  process.env.DIRF_HOME = mkdtempSync(join(tmpdir(), "dirf-fileonly-home-"));
+  const root = mkdtempSync(join(tmpdir(), "dirf-fileonly-repo-"));
+  removeAfter(t, process.env.DIRF_HOME, root);
+  t.after(() => { if (previousHome === undefined) delete process.env.DIRF_HOME; else process.env.DIRF_HOME = previousHome; });
+  execFileSync("git", ["init", "-q"], { cwd: root, timeout: TIMEOUT });
+  const { slug } = registerProject(root);
+  const attempt = createAttemptInStore(slug, "fileonly");
+  recordProgress(slug, { attemptId: attempt.id, message: "Ran tests", next: "n", files: ["a.js"] });
+
+  // The attempt saved a newer checkpoint (same step, extra file) that never
+  // reached the canonical handoff.
+  const attemptPath = join(attempt.folder, "HANDOFF.md");
+  const scoped = readFileSync(attemptPath, "utf8")
+    .replace("- a.js", "- a.js\n- lost.js")
+    .replace(/## Update number\n\n\d+/, "## Update number\n\n99");
+  writeFileSync(attemptPath, scoped);
+  recordProgress(slug, { attemptId: attempt.id, message: "Next step", next: "n", files: ["b.js"] });
+
+  assert.deepEqual(parseCurrentHandoff(readHandoff(slug)).changedFiles, ["a.js", "lost.js", "b.js"]);
+});
+
 test("crash-recovery replay restores a missing file even when its step is already known", () => {
   const canonical = "# DIRF Handoff\n\n## Completed\n\n- Ran tests\n\n## Changed files\n\n- a.js\n- b.js\n";
   const replayed = parseCurrentHandoff(addChangedFiles(canonical, ["lost.js"]));
