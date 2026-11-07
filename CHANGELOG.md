@@ -7,7 +7,33 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+## [0.32.0] - 2026-11-07
+
 ### Added
+- **Weight- and provider-aware model assignment** — `skill_flow` steps accept
+  an `effort` weight (`light`, `standard`, `heavy`; default `standard`), and
+  host model-catalog entries accept an optional `provider` (`anthropic`,
+  `openai`, `z.ai`, …). `heavy` steps match the strongest declared cost tier
+  first, falling back down the tiers when uncovered; every other effort keeps
+  the lowest sufficient tier. Advice stays advisory-only: DIRF never
+  discovers providers, invokes a model, or queries pricing.
+- `--providers LIST` on `build`, `plan`, `create`, and `flow` restricts the
+  advisory picks to the declared provider set (requires `--models FILE`).
+  Capabilities the set cannot cover fall back outside it, and the advice
+  rationale says so.
+- `scripts/bootstrap-laptop.js`, a zero-dependency script that points a
+  laptop's `DIRF_HOME` at a shared network store, registers the DIRF MCP
+  server in Claude Code, and records the fleet orchestrator token.
+  `docs/integration.md` documents the shared-store-across-laptops contract.
+- `dirf status --json` reports attempt counts, the latest-created and
+  most-recently-updated attempts, branch, changed paths and upstream
+  divergence.
+- Read-only `dirf state summary`, opt-in `resume --summary --json` and the MCP
+  `dirf_read_summary` tool give bounded current-state views. Requirement
+  updates to evidence are validated and persisted through the progress lock.
+- Offline experiments: `experiments/erosion-deltas` measures per-file churn
+  across recent commits, and a JEV shadow gate advisor gives advice only and
+  never changes attempt state or gate enforcement.
 - **ASD-STE100 checker.** `dirf ste check <file-or-dir>` checks prose against
   the STE writing rules that a program can test: sentence length, paragraph
   length, passive voice, and one instruction in each step. An optional
@@ -30,6 +56,18 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   failing action is never retried without changed input), and carry the
   open-question ledger (answered / partially answered / unresolved) through
   handoffs so successors never inherit unfinished work marked complete.
+- Model-advice recommendation labels show the provider when the catalog
+  declares one. `validate.js` checks the `effort` and `provider` fields.
+- Typecheck now covers `experiments/`.
+
+### Fixed
+- Explicit skill requests activate through concrete bindings. Ordinary task
+  words and name suffixes no longer invoke unrelated skills, and multiline
+  skill descriptions are preserved.
+- A task's pre-merge next step is cleared once its reviewed commit has landed
+  on the default branch.
+- Concurrent CLI attempt commands no longer race on the registry `last_seen`
+  write before taking the project lock.
 
 ## [0.31.2] - 2026-10-06
 
