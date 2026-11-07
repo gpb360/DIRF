@@ -56,8 +56,9 @@ A reviewer who inherits the drafting conversation inherits its bias. Give
 verifier and reviewer agents only the artifact under review plus the live
 source — not the thread that produced the artifact.
 
-- In `agent_contracts`, state what the reviewer reads, not what it remembers:
-  the accepted artifact, the touched files, and the verify output.
+- In the reviewer's `agent_contracts` `verification` string, name what it
+  reads, not what it remembers: the accepted artifact, the touched files, and
+  the verify output.
 - Conflicting-lens reviewers sharpen findings, but resolve their roles from
   installed host agents. Never hardcode reviewer personas a host may not have.
 - Keep this boundary for audit phases only. Drafting and fixing agents still

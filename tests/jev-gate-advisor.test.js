@@ -23,7 +23,20 @@ test("builds a constrained JEV-shaped request", () => {
     "reversible",
   ]);
   assert.equal(request.questions.deletes_files.type, "noul");
-  assert.doesNotThrow(() => JSON.stringify(request));
+  assert.deepEqual(request.state, { command: "rm -rf build", directory: "repo" });
+});
+
+test("threshold boundaries are inclusive at each floor", () => {
+  const { reviewFloor, automationFloor, deletionFloor } = THRESHOLDS;
+  assert.equal(adviseGate(response("reversible", automationFloor, 0)).tier, "accept");
+  assert.equal(adviseGate(response("read_only", automationFloor - 0.01, 0)).tier, "confirm");
+  assert.equal(adviseGate(response("irreversible", reviewFloor, 0)).tier, "deny");
+  assert.equal(adviseGate(response("read_only", 0.95, deletionFloor)).tier, "confirm");
+  assert.equal(adviseGate(response("read_only", 0.95, deletionFloor - 0.01)).tier, "accept");
+});
+
+test("an unrecognized label asks the user and says why", () => {
+  assert.deepEqual(adviseGate(response("unknown", 0.99, 0)), { tier: "confirm", reason: "unrecognized label" });
 });
 
 test("high-confidence safe label with no deletion is advised acceptable", () => {
@@ -34,8 +47,9 @@ test("high-confidence safe label with no deletion is advised acceptable", () => 
 });
 
 test("ambiguous destructive command asks the user instead of trusting the label", () => {
-  // Mirror of the article's shadow test: `rm -rf` labeled irreversible at 0.56
-  // with confidence 0.33 — too unsure to act on, so it must confirm.
+  // Mirror of the article's shadow test: `rm -rf` labeled irreversible at
+  // confidence 0.33 with deletion signal 0.56 — too unsure to act on, so it
+  // must confirm.
   assert.equal(adviseGate(response("irreversible", 0.33, 0.56)).tier, "confirm");
 });
 

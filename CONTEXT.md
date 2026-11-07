@@ -102,11 +102,11 @@ The exact, hash-identified set of selected and redacted items proposed for the n
 _Avoid_: Draft folder, live Attempt view
 
 **Publication Preflight**:
-Deterministic, fail-closed validation of a Publication Candidate for secrets, credentials, and private data. Any finding blocks Publication Approval and publication without an override.
+Deterministic, fail-closed validation of a Publication Candidate for secrets, credentials, and private data. Any finding blocks Publication Approval and publication; no override exists. The publisher revalidates the approved digest before upload.
 _Avoid_: Best-effort scan, publication warning
 
 **Publication Artifact**:
-The normalized Markdown and metadata-only provenance manifest produced locally from one explicitly authorized source through DIRF's document ingestion contract. Original source bytes remain local and are never part of an Evidence Publication.
+The normalized Markdown and metadata-only provenance manifest produced locally from one explicitly authorized source through DIRF's document ingestion contract. Original source bytes remain local and are never part of an Evidence Publication. It is not a governing Artifact.
 _Avoid_: Source document, uploaded original, document copy
 
 **Project Rollup**:

@@ -14,9 +14,12 @@
 /**
  * Confidence thresholds, named so a reader can audit and change them in one
  * place. Below the review floor nothing is automatable; at or above the
- * automation floor a safe label may be advised as acceptable.
+ * automation floor a safe label may be advised as acceptable. At or above the
+ * deletion floor a deletion signal blocks automation.
  */
-export const THRESHOLDS = Object.freeze({ reviewFloor: 0.5, automationFloor: 0.9 });
+export const THRESHOLDS = Object.freeze({ reviewFloor: 0.5, automationFloor: 0.9, deletionFloor: 0.5 });
+
+const SAFE_LABELS = new Set(["read_only", "reversible"]);
 
 /**
  * Builds the request body for a pre-gate command-safety evaluation.
@@ -66,16 +69,15 @@ export function adviseGate(response) {
   if (action.confidence < THRESHOLDS.reviewFloor) {
     return { tier: "confirm", reason: "label confidence below the review floor" };
   }
+  const deletes = deletes_files.noul >= THRESHOLDS.deletionFloor;
   if (action.choice === "irreversible") {
-    return deletes_files.noul >= THRESHOLDS.reviewFloor
-      ? { tier: "deny", reason: "irreversible and deletes files" }
-      : { tier: "deny", reason: "irreversible" };
+    return { tier: "deny", reason: deletes ? "irreversible and deletes files" : "irreversible" };
   }
-  const safeLabel =
-    action.choice === "read_only" || action.choice === "reversible";
+  if (!SAFE_LABELS.has(action.choice)) {
+    return { tier: "confirm", reason: "unrecognized label" };
+  }
   if (
-    safeLabel &&
-    deletes_files.noul < THRESHOLDS.reviewFloor &&
+    !deletes &&
     action.confidence >= THRESHOLDS.automationFloor
   ) {
     return {
