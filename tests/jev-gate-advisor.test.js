@@ -35,6 +35,14 @@ test("threshold boundaries are inclusive at each floor", () => {
   assert.equal(adviseGate(response("read_only", 0.95, deletionFloor - 0.01)).tier, "accept");
 });
 
+test("malformed scores fail closed to confirm", () => {
+  const malformed = { tier: "confirm", reason: "malformed response" };
+  assert.deepEqual(adviseGate({ answers: { action: { choice: "read_only", confidence: 0.95 }, deletes_files: {} } }), malformed);
+  assert.deepEqual(adviseGate(response("read_only", 0.95, NaN)), malformed);
+  assert.deepEqual(adviseGate(response("read_only", "0.95", 0)), malformed);
+  assert.deepEqual(adviseGate({}), malformed);
+});
+
 test("an unrecognized label asks the user and says why", () => {
   assert.deepEqual(adviseGate(response("unknown", 0.99, 0)), { tier: "confirm", reason: "unrecognized label" });
 });
@@ -54,8 +62,8 @@ test("ambiguous destructive command asks the user instead of trusting the label"
 });
 
 test("confident irreversible commands are advised denied", () => {
-  assert.equal(adviseGate(response("irreversible", 0.8, 0.9)).tier, "deny");
-  assert.equal(adviseGate(response("irreversible", 0.8, 0.1)).tier, "deny");
+  assert.deepEqual(adviseGate(response("irreversible", 0.8, 0.9)), { tier: "deny", reason: "irreversible and deletes files" });
+  assert.deepEqual(adviseGate(response("irreversible", 0.8, 0.1)), { tier: "deny", reason: "irreversible" });
 });
 
 test("labels below the review floor are never actionable", () => {

@@ -65,7 +65,11 @@ export function buildGateRequest({ command, directory = "the repository" }) {
  * refusing. Advisory output only — the gate record stays user-owned.
  */
 export function adviseGate(response) {
-  const { action, deletes_files } = response.answers;
+  const { action, deletes_files } = response?.answers ?? {};
+  // Fail closed: a missing or non-numeric score must never read as "safe".
+  if (!Number.isFinite(action?.confidence) || !Number.isFinite(deletes_files?.noul)) {
+    return { tier: "confirm", reason: "malformed response" };
+  }
   if (action.confidence < THRESHOLDS.reviewFloor) {
     return { tier: "confirm", reason: "label confidence below the review floor" };
   }
