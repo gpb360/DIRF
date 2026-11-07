@@ -35,7 +35,11 @@ export function parseNumstat(text) {
   return commits;
 }
 
-/** Percentage change; Infinity when growing from zero, as the source reports `inf`. */
+/**
+ * Percentage change; Infinity when growing from zero, as the source reports `inf`.
+ * @param {number} prev
+ * @param {number} curr
+ */
 function percentChange(prev, curr) {
   if (prev === 0) return curr === 0 ? 0 : Infinity;
   return ((curr - prev) / prev) * 100;
@@ -76,7 +80,10 @@ export function computeDeltas(commits, baseline) {
   }).sort((a, b) => b.churn_ratio - a.churn_ratio || a.file.localeCompare(b.file));
 }
 
-/** Counts lines the way numstat does: a final line without a newline still counts. */
+/**
+ * Counts lines the way numstat does: a final line without a newline still counts.
+ * @param {string} content
+ */
 function countLines(content) {
   if (!content) return 0;
   return content.split("\n").length - (content.endsWith("\n") ? 1 : 0);
@@ -107,10 +114,11 @@ export function erosionReport({ repo = process.cwd(), path = "src", commits = 20
   return { path, commits: window.length, base: hasParent ? `${oldest}^` : null, files: computeDeltas(window, baseline) };
 }
 
-const fmt = (value, digits = 1) => (value === Infinity ? "inf" : value.toFixed(digits));
+const fmt = (/** @type {number} */ value, digits = 1) => (value === Infinity ? "inf" : value.toFixed(digits));
 
+/** @param {string[]} argv */
 function main(argv) {
-  const flag = (name) => {
+  const flag = (/** @type {string} */ name) => {
     const index = argv.indexOf(name);
     return index === -1 ? undefined : argv[index + 1];
   };
