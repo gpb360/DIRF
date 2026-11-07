@@ -56,6 +56,12 @@ test("compaction keeps the newest entries and returns the rest for history", () 
   assert.match(kept.markdown, /## Changed files\n\nSee PR notes\.\n- step 2\n/);
   assert.match(kept.markdown, /## History\n\nMy own notes\.\n/);
 
+  // The "Completed steps" alias is trimmed too, and placeholders are not entries.
+  const alias = `# DIRF Handoff\n\n## Completed steps\n\n- _(none yet)_\n${items.join("\n")}\n`;
+  const aliased = compactProgressLists(alias, "/h");
+  assert.deepEqual(aliased.archived, { Completed: ["- step 0", "- step 1"] });
+  assert.match(aliased.markdown, /## Completed steps\n\n- _\(none yet\)_\n- step 2\n/);
+
   const within = `# DIRF Handoff\n\n## Completed\n\n${items.slice(2).join("\n")}\n`;
   assert.deepEqual(compactProgressLists(within, "/x"), { markdown: within, archived: {} });
 });
@@ -219,4 +225,40 @@ test("MCP write and progress tools return the budget warning field", async (t) =
   assert.match(big.warning, new RegExp(`^Canonical handoff is ${BIG_BYTES} bytes`));
   assert.equal(progress.accepted, true);
   assert.match(progress.warning, /^Canonical handoff is \d+ bytes/);
+});
+
+test("history is written before the canonical handoff, so a crash between them loses nothing", (t) => {
+  const previousHome = process.env.DIRF_HOME;
+  process.env.DIRF_HOME = mkdtempSync(join(tmpdir(), "dirf-order-home-"));
+  const root = mkdtempSync(join(tmpdir(), "dirf-order-repo-"));
+  removeAfter(t, process.env.DIRF_HOME, root);
+  t.after(() => { if (previousHome === undefined) delete process.env.DIRF_HOME; else process.env.DIRF_HOME = previousHome; });
+  execFileSync("git", ["init", "-q"], { cwd: root, timeout: TIMEOUT });
+  const { slug } = registerProject(root);
+  const checkpoint = (i) => ({ message: `c${i}`, next: "n" });
+  for (let i = 0; i <= CANONICAL_LIST_LIMIT; i += 1) recordProgress(slug, checkpoint(i));
+
+  // Die just before the history file lands: if the canonical handoff were
+  // written first, its trimmed entry would now exist in neither file.
+  const historyPath = join(storeProjectDir(slug), "HANDOFF-history.md");
+  const stateUrl = pathToFileURL(join(process.cwd(), "src", "state.js")).href;
+  const crashed = spawnSync(process.execPath, ["--input-type=module", "-e", `
+    import fs from "node:fs"; import { syncBuiltinESMExports } from "node:module";
+    const rename = fs.renameSync;
+    fs.renameSync = (from, to) => { if (to === ${JSON.stringify(historyPath)}) process.exit(73); rename(from, to); };
+    syncBuiltinESMExports();
+    const { recordProgress } = await import(${JSON.stringify(stateUrl)});
+    recordProgress(${JSON.stringify(slug)}, ${JSON.stringify(checkpoint(CANONICAL_LIST_LIMIT + 1))});
+  `], { encoding: "utf8", timeout: TIMEOUT, env: process.env });
+  assert.equal(crashed.status, 73, crashed.stderr);
+  const now = Date.now;
+  Date.now = () => now() + 3_600_000;
+  try { recordProgress(slug, checkpoint(CANONICAL_LIST_LIMIT + 2)); } finally { Date.now = now; }
+
+  // Without a bound attempt the crashed checkpoint has no journal, so it was
+  // never committed; every committed one survives once, in order.
+  const history = historyEntries(readFileSync(historyPath, "utf8"), "Completed");
+  const canonical = parseCurrentHandoff(readHandoff(slug)).completedSteps;
+  const committed = [...Array.from({ length: CANONICAL_LIST_LIMIT + 1 }, (_, i) => `c${i}`), `c${CANONICAL_LIST_LIMIT + 2}`];
+  assert.deepEqual([...history, ...canonical], committed);
 });

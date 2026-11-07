@@ -43,11 +43,17 @@ function renderSections({ preamble, sections }) {
   return `${lines.join("\n").replace(/\n+$/, "")}\n`;
 }
 
+const isPlaceholder = (line) => /^(?:-\s+)?_\([^)]+\)_$/.test(line);
+
 function meaningfulLines(section) {
   return section.content
     .map((line) => line.trim())
-    .filter((line) => line && !/^(?:-\s+)?_\([^)]+\)_$/.test(line));
+    .filter((line) => line && !isPlaceholder(line));
 }
+
+const bulletValues = (section) => section
+  ? meaningfulLines(section).filter((line) => line.startsWith("- ")).map((line) => line.slice(2).trim())
+  : [];
 
 export function updateProgressSection(handoffMarkdown, { message, timestamp, updateNumber, phase, next, files, workItem, reviewRevision, attemptId }) {
   const parsed = splitSections(handoffMarkdown);
@@ -115,9 +121,6 @@ export function parseCurrentHandoff(handoffMarkdown) {
   const reviewRevision = findSection(sections, ["Review revision"]);
   const updateNumber = findSection(sections, ["Update number"]);
   const firstValue = (section) => section ? meaningfulLines(section)[0] || null : null;
-  const bulletValues = (section) => section
-    ? meaningfulLines(section).filter((line) => line.startsWith("- ")).map((line) => line.slice(2).trim())
-    : [];
 
   return {
     objective: firstValue(objective),
@@ -144,16 +147,16 @@ const HISTORY_HEADING = "Trimmed history"; // DIRF-owned; rewritten on each trim
 
 const isListEntry = (line) => {
   const trimmed = line.trim();
-  return trimmed.startsWith("- ") && !/^-\s+_\([^)]+\)_$/.test(trimmed);
+  return trimmed.startsWith("- ") && !isPlaceholder(trimmed);
 };
 
-export function compactProgressLists(handoffMarkdown, historyPath, limit = CANONICAL_LIST_LIMIT) {
+export function compactProgressLists(handoffMarkdown, historyPath) {
   const parsed = splitSections(handoffMarkdown);
   const archived = {};
   for (const names of COMPACTED_LISTS) {
     const section = findSection(parsed.sections, names);
     if (!section) continue;
-    let excess = section.content.filter(isListEntry).length - limit;
+    let excess = section.content.filter(isListEntry).length - CANONICAL_LIST_LIMIT;
     if (excess <= 0) continue;
     // Remove only the oldest entries; any other line in the section stays.
     const moved = [];
@@ -187,6 +190,5 @@ export function mergeProgressHistory(historyMarkdown, archived) {
 }
 
 export function historyEntries(historyMarkdown, name) {
-  const section = findSection(splitSections(historyMarkdown || "").sections, [name]);
-  return section ? meaningfulLines(section).filter((line) => line.startsWith("- ")).map((line) => line.slice(2).trim()) : [];
+  return bulletValues(findSection(splitSections(historyMarkdown || "").sections, [name]));
 }
