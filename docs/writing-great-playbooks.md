@@ -59,8 +59,7 @@ source — not the thread that produced the artifact.
 - Make the reviewer's `agent_contracts` `verification` a checkable
   condition on its inputs, for example "every finding cites only the accepted
   artifact, the touched files, or the verify output".
-- Conflicting-lens reviewers sharpen findings, but resolve their roles from
-  installed host agents. Never hardcode reviewer personas a host may not have.
+- Conflicting-lens reviewers sharpen findings.
 - Keep this boundary for audit phases only. Drafting and fixing agents still
   need full context to act.
 

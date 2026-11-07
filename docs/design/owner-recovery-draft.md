@@ -1,14 +1,14 @@
 # Durable attempt continuity with less ceremony
 
-Task: 20260919T150624481Z-reconciliation-recovery.
 Status: partially implemented; two gaps remain open.
 
 One durable attempt per feature survives harnesses, models, and restarts, and
-other machines that share the store through `DIRF_HOME`. Its small
+other machines that share the store through `DIRF_HOME` (same clone path, one
+owner at a time; see
+[integration.md](../integration.md#shared-store-across-laptops)). Its small
 index links the specification, definition of done, capability selections,
-evidence, and exact next action. Existing authority checks stay intact. Glossary
-terms (Child Execution, Independent Attempt Boundary, Linked Worktree, Abandoned
-Attempt) are defined in [CONTEXT.md](../../CONTEXT.md).
+evidence, and exact next action. Existing authority checks stay intact. A
+*dependent attempt* records a parent attempt and an explicit base commit.
 
 ## Implemented on main
 

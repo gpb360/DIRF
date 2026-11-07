@@ -1,6 +1,5 @@
 // @ts-check
-// Offline shadow gate advisor — the single approved experiment from DIRF learn
-// attempt 20260918T180949421Z-learn-source (recommendation jev-recommendation-v1).
+// Offline shadow gate advisor — an approved DIRF learn experiment.
 //
 // Maps a JEV-shaped evaluation response — a Choice over command safety plus a
 // Noul for file deletion — onto DIRF's gate outcomes as ADVICE ONLY. It never
@@ -20,6 +19,9 @@
 export const THRESHOLDS = Object.freeze({ reviewFloor: 0.5, automationFloor: 0.9, deletionFloor: 0.5 });
 
 const SAFE_LABELS = new Set(["read_only", "reversible"]);
+
+/** @param {unknown} n */
+const isScore = (n) => typeof n === "number" && n >= 0 && n <= 1;
 
 /**
  * Builds the request body for a pre-gate command-safety evaluation.
@@ -66,8 +68,8 @@ export function buildGateRequest({ command, directory = "the repository" }) {
  */
 export function adviseGate(response) {
   const { action, deletes_files } = response?.answers ?? {};
-  // Fail closed: a missing or non-numeric score must never read as "safe".
-  if (!Number.isFinite(action?.confidence) || !Number.isFinite(deletes_files?.noul)) {
+  // Fail closed: a missing or out-of-range score must never read as "safe".
+  if (!isScore(action?.confidence) || !isScore(deletes_files?.noul)) {
     return { tier: "confirm", reason: "malformed response" };
   }
   if (action.confidence < THRESHOLDS.reviewFloor) {

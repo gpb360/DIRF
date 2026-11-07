@@ -40,6 +40,8 @@ test("malformed scores fail closed to confirm", () => {
   assert.deepEqual(adviseGate({ answers: { action: { choice: "read_only", confidence: 0.95 }, deletes_files: {} } }), malformed);
   assert.deepEqual(adviseGate(response("read_only", 0.95, NaN)), malformed);
   assert.deepEqual(adviseGate(response("read_only", "0.95", 0)), malformed);
+  assert.deepEqual(adviseGate(response("read_only", 1.5, 0)), malformed);
+  assert.deepEqual(adviseGate(response("read_only", 0.95, -0.1)), malformed);
   assert.deepEqual(adviseGate({}), malformed);
 });
 
