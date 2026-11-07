@@ -191,6 +191,12 @@ test("text after several comments on one line is prose", () => {
   assert.deepEqual(proseBlocks("<!-- a --> <!-- b\nhidden\n--> Short text.").map((block) => [block.text, block.line]), [["Short text.", 3]]);
 });
 
+test("many unclosed comment openers stay fast", () => {
+  const started = Date.now();
+  checkSte(`Text ${"<!-- ".repeat(64000)}end.`);
+  assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
+});
+
 test("a long run of backticks stays fast", () => {
   const started = Date.now();
   proseBlocks(`${"`".repeat(128000)} x \``);

@@ -71,7 +71,8 @@ Use this policy in every generated workflow prompt.
 - Run `dirf ste check FILE` on changed prose files. The check tests sentence
   length, paragraph length, passive voice, and one instruction per step. It does
   not test the dictionary. Add `--words FILE` when the project supplies an
-  approved-word list. Read each finding before you change the text.
+  approved-word list. The check is a heuristic and reads only a subset of
+  Markdown. Read each finding before you change the text.
 - Write user-facing updates in simple, ordinary English. Keep internal workflow
   terms such as exact-head, fixed-point, remediation, gate, convergence, and
   evidence ledger out of the update unless the user asks for technical detail.

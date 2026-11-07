@@ -8,6 +8,11 @@
 //
 // The checks are heuristics. A finding is a prompt for a writer to look again,
 // not proof of a rule violation.
+//
+// Scope: this is not a full Markdown parser. It reads the Markdown subset
+// listed in skills/ste100/README.md ("What the checker reads"). Constructs
+// outside that subset can give wrong or missing findings. The checker must
+// stay linear in its input size for every input.
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
 
@@ -62,19 +67,39 @@ const LINK_PART = String.raw`(?:[^()\s\u0001]|\([^()\s\u0001]*\))+`;
 const LINK_DESTINATION = String.raw`\([\s\u0001]*(?:(?:<[^<>]*>|${LINK_PART}(?:\s*\u0001${LINK_PART})*)[\s\u0001]*)?(?:(?:"[^"]*"|'[^']*'|\([^()]*\))[\s\u0001]*)?\)`;
 
 /**
+ * Remove inline HTML comments and keep their line marks. One forward scan:
+ * when a comment does not close, no later comment can close either, so the
+ * rest stays text. A regex here took quadratic time on many unclosed "<!--".
+ * @param {string} text
+ */
+function stripComments(text) {
+  let out = "";
+  let position = 0;
+  for (;;) {
+    const open = text.indexOf("<!--", position);
+    if (open === -1) break;
+    const close = text.indexOf("-->", open + 4);
+    if (close === -1) break;
+    out += `${text.slice(position, open)} ${marksOf(text.slice(open, close + 3))}`;
+    position = close + 3;
+  }
+  return out + text.slice(position);
+}
+
+/**
  * Replace inline Markdown with the words a reader sees. Code and URLs count as one word.
  * @param {string} text
  */
 function plainInline(text) {
-  return text
+  const withoutCode = text
     // A label stops at the next "[" and a destination stops at a space that
     // is not a line wrap. Each scan then ends at the next bracket or space,
     // so unclosed brackets stay fast with no length limit.
     .replace(/\[\^[^[\]\s]+\](?!\()/g, (note) => marksOf(note))
     .replace(new RegExp(`!\\[[^[\\]]*\\]${LINK_DESTINATION}`, "g"), (image) => ` ${marksOf(image)}`)
     .replace(new RegExp(`\\[([^[\\]]*)\\]${LINK_DESTINATION}`, "g"), (link, label) => `${label}${marksOf(link.slice(label.length + 2))}`)
-    .replace(/`[^`]*`/g, (code) => CODE_TOKEN + marksOf(code))
-    .replace(/<!--[\s\S]*?-->/g, (comment) => ` ${marksOf(comment)}`)
+    .replace(/`[^`]*`/g, (code) => CODE_TOKEN + marksOf(code));
+  return stripComments(withoutCode)
     .replace(/<(?:https?:|mailto:)[^<>\s]*>/g, (link) => CODE_TOKEN + marksOf(link))
     // Only a real tag is markup. A bare "<", as in "count < 5", is text.
     .replace(/<\/?[A-Za-z][\w:-]*(?:\s[^<>]*)?\/?>/g, (tag) => ` ${marksOf(tag)}`)

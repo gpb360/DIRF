@@ -37,6 +37,26 @@ The checker tests rules 1 to 4, 6, and 10. It uses heuristics, so read each
 finding before you change the text. Do not change a correct technical term to
 make the checker pass.
 
+## What the checker reads
+
+The checker is a heuristic. It is not a full Markdown parser. It reads this
+subset of Markdown:
+
+- Prose: paragraphs, bullet lists, numbered lists, and block quotes.
+- Skipped as not prose: headings, tables, front matter, and HTML comments.
+  Also skipped: code fences that use backticks or tildes, also at the start
+  of a list item.
+- Inline: code spans, links and images with inline destinations, autolinks,
+  HTML tags, footnote references, and HTML entities.
+
+The checker does not read other Markdown correctly. For example, it does not
+read indented code blocks, Setext headings, reference-style links, footnote
+definitions, or labels that contain brackets. It skips `.mdx`, `.rst`, and
+`.adoc` files. Sentence
+splits can also be wrong after an abbreviation such as "etc.", after a
+typographic quote, or before a lowercase word. In these cases a finding can
+be wrong or missing.
+
 Do not rewrite code, commands, logs, quotations, machine-readable data, or
 verbatim source. Do not invent evidence.
 
