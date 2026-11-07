@@ -133,3 +133,46 @@ export function parseCurrentHandoff(handoffMarkdown) {
     updateNumber: Number.parseInt(firstValue(updateNumber) || "", 10) || null,
   };
 }
+
+// The canonical handoff is read first by every session, so record-progress
+// keeps only the newest entries of its growing lists. Trimmed entries are
+// returned for the append-only history file; nothing is discarded.
+export const CANONICAL_LIST_LIMIT = 10;
+const COMPACTED_LISTS = [["Completed", "Completed steps"], ["Changed files"]];
+
+export function compactProgressLists(handoffMarkdown, historyPath, limit = CANONICAL_LIST_LIMIT) {
+  const parsed = splitSections(handoffMarkdown);
+  const archived = {};
+  for (const names of COMPACTED_LISTS) {
+    const section = findSection(parsed.sections, names);
+    if (!section) continue;
+    const items = meaningfulLines(section).filter((line) => line.startsWith("- "));
+    if (items.length <= limit) continue;
+    archived[names[0]] = items.slice(0, items.length - limit);
+    section.content = sectionContent(items.slice(-limit));
+  }
+  if (!Object.keys(archived).length) return { markdown: handoffMarkdown, archived };
+  ensureSection(parsed.sections, "History").content = sectionContent([
+    `Older entries are kept in full, oldest first: ${historyPath}`,
+  ]);
+  return { markdown: renderSections(parsed), archived };
+}
+
+// Appends archived entries to the history file, skipping any it already holds
+// so a replayed checkpoint cannot duplicate them.
+export function mergeProgressHistory(historyMarkdown, archived) {
+  const parsed = splitSections(historyMarkdown || "# DIRF handoff history\n\nEntries trimmed from the canonical HANDOFF.md, oldest first.\n");
+  for (const [name, entries] of Object.entries(archived)) {
+    const section = ensureSection(parsed.sections, name);
+    const items = meaningfulLines(section).filter((line) => line.startsWith("- "));
+    const seen = new Set(items);
+    for (const entry of entries) if (!seen.has(entry)) { items.push(entry); seen.add(entry); }
+    section.content = sectionContent(items);
+  }
+  return renderSections(parsed);
+}
+
+export function historyEntries(historyMarkdown, name) {
+  const section = findSection(splitSections(historyMarkdown || "").sections, [name]);
+  return section ? meaningfulLines(section).filter((line) => line.startsWith("- ")).map((line) => line.slice(2).trim()) : [];
+}

@@ -16,7 +16,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSyn
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { resolveGoverningArtifact, validateArtifactGraph, validatePlanDelta } from "./artifacts.js";
-import { parseCurrentHandoff, updateProgressSection } from "./handoff-update.js";
+import { compactProgressLists, historyEntries, mergeProgressHistory, parseCurrentHandoff, updateProgressSection } from "./handoff-update.js";
 import { parseSummaryCursor, SUMMARY_PAGE_SIZE, validateRequirementMappingUpdate } from "./summary-validation.js";
 // The review-json built-in check enforces the real review artifact schema —
 // the one the pr-review playbook's declared validation (`dirf review ready
@@ -2514,14 +2514,16 @@ function readProjectHandoffFile(slug) {
 // The canonical handoff is what a new session reads first, so it must stay
 // small: longer injected context lowers adherence. Over budget is a warning,
 // never an error — detail belongs in attempt handoffs and artifacts, linked.
-export const HANDOFF_BUDGET = Object.freeze({ lines: 120, bytes: 8192 });
+export const HANDOFF_BUDGET_BYTES = 8192;
 
 export function handoffBudgetWarning(markdown) {
-  const text = String(markdown ?? "");
-  const lines = text ? text.split("\n").length - (text.endsWith("\n") ? 1 : 0) : 0;
-  const bytes = Buffer.byteLength(text, "utf8");
-  if (lines <= HANDOFF_BUDGET.lines && bytes <= HANDOFF_BUDGET.bytes) return null;
-  return `Canonical handoff is ${lines} lines / ${bytes} bytes (budget ${HANDOFF_BUDGET.lines} lines / ${HANDOFF_BUDGET.bytes} bytes). Move detail into the attempt handoff or an artifact, leave a link, and rewrite it with "dirf state write-handoff --file FILE".`;
+  const bytes = Buffer.byteLength(String(markdown ?? ""), "utf8");
+  if (bytes <= HANDOFF_BUDGET_BYTES) return null;
+  return `Canonical handoff is ${bytes} bytes (budget ${HANDOFF_BUDGET_BYTES}). Move detail into the attempt handoff or an artifact, leave a link, and rewrite the canonical handoff.`;
+}
+
+function handoffHistoryPath(slug) {
+  return join(storeProjectDir(slug), "HANDOFF-history.md");
 }
 
 export function writeHandoff(slug, markdown) {
@@ -2880,18 +2882,24 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
     // on the next accepted write, without replacing project-specific sections.
     let canonicalProgressBase = canonicalBase;
     const canonicalContext = parseCurrentHandoff(canonicalBase);
+    const historyPath = handoffHistoryPath(slug);
+    const history = canonicalAccepted && existsSync(historyPath) ? readFileSync(historyPath, "utf8") : null;
     if (canonicalAccepted && attemptDecision?.accepted
       && canonicalContext.attemptId === attempt.id
       && recordedAttemptContext.updateNumber > (canonicalContext.updateNumber || 0)) {
-      for (const message of recordedAttemptContext.completedSteps) {
+      // Entries already trimmed into the history are not missing; replaying
+      // them would push newer entries out of the canonical window.
+      const archived = new Set(historyEntries(history, "Completed"));
+      for (const message of recordedAttemptContext.completedSteps.filter((step) => !archived.has(step))) {
         canonicalProgressBase = updateProgressSection(canonicalProgressBase, {
           message, files: recordedAttemptContext.changedFiles,
         });
       }
     }
-    const updatedHandoff = canonicalAccepted
-      ? updateProgressSection(canonicalProgressBase, update)
-      : canonicalBase;
+    const compacted = canonicalAccepted
+      ? compactProgressLists(updateProgressSection(canonicalProgressBase, update), historyPath)
+      : { markdown: canonicalBase, archived: {} };
+    const updatedHandoff = compacted.markdown;
     const updatedAttemptHandoff = attemptDecision?.accepted
       ? updateProgressSection(attemptBase, update)
       : attemptHandoff;
@@ -2900,6 +2908,9 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
     if (attemptDecision?.accepted) {
       atomicWrite(join(storeAttemptDir(slug, attempt.id), "HANDOFF.md"), updatedAttemptHandoff);
     }
+    // History first: a crash between the two writes leaves entries in both
+    // files, never in neither.
+    if (Object.keys(compacted.archived).length) atomicWrite(historyPath, mergeProgressHistory(history, compacted.archived));
     const canonicalWarning = canonicalAccepted ? writeHandoff(slug, updatedHandoff).warning : null;
     // No bound attempt means no lifecycle plan; the canonical write above stands.
     const lifecycle = applyProgressLifecyclePlanLocked(slug, attempt?.id, lifecyclePlan, lifecycleTime);
