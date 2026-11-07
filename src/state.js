@@ -2900,7 +2900,8 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
       atomicWrite(join(storeAttemptDir(slug, attempt.id), "HANDOFF.md"), updatedAttemptHandoff);
     }
     if (canonicalAccepted) writeHandoff(slug, updatedHandoff);
-    const lifecycle = applyProgressLifecyclePlanLocked(slug, attempt.id, lifecyclePlan, lifecycleTime);
+    // No bound attempt means no lifecycle plan; the canonical write above stands.
+    const lifecycle = applyProgressLifecyclePlanLocked(slug, attempt?.id, lifecyclePlan, lifecycleTime);
     if (attemptDecision?.accepted) rmSync(pendingProgressPath(slug));
     return {
       handoff: updatedHandoff,
