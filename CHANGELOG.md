@@ -7,6 +7,12 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+### Changed
+- **Leaner host `dirf` skill startup** — session start now ends at
+  `dirf state active`; `state which`, handoffs, and `resume` are reserved for
+  diagnosis, recovery, or claiming a named planned attempt. The skill text
+  passes `dirf ste check`.
+
 ## [0.32.0] - 2026-11-07
 
 ### Added
