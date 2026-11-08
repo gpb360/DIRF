@@ -964,13 +964,21 @@ function unacceptedPlanCandidates(attempt) {
   return artifacts.filter(artifact => artifact.type === "plan" && !artifact.accepted_at && !superseded.has(artifact.id));
 }
 
+// A blocker seen across this many accepted syncs without resolution is
+// re-emitted with an escalation hint. Computed on read from the sync counter
+// the block/reopen lifecycle maintains; no summary ever writes state.
+const BLOCKER_ESCALATION_SYNCS = 3;
+
 function blockedWorkReferences(slug, attempts) {
   return attempts.filter(attempt => attempt.status === "blocked").map(attempt => {
     const reason = String(attempt.blocker || "Attempt is blocked. Read its details.");
+    const syncs = Number.isInteger(attempt.blocked_syncs) && attempt.blocked_syncs > 0 ? attempt.blocked_syncs : 0;
     return { kind: "blocker", attempt_id: attempt.id,
       phase: attemptWorkflow(slug, attempt).phases.includes(attempt.current_phase) ? attempt.current_phase : null,
       requirement_id: null, summary: reason.length > 240 ? `${reason.slice(0, 220)}… Read details.` : reason,
-      detail_ref: { attempt_id: attempt.id, path: "attempt.json" } };
+      detail_ref: { attempt_id: attempt.id, path: "attempt.json" },
+      ...(syncs >= BLOCKER_ESCALATION_SYNCS ? { escalated: true,
+        escalation_hint: `Blocked across ${syncs} accepted syncs without resolution. Record a gate decision with a comment, or abandon with a reason.` } : {}) };
   });
 }
 
@@ -1848,7 +1856,7 @@ function updateAttemptLifecycleLocked(slug, idOrName, action, options = {}, now 
     if (!blocker) throw new Error("blocker reason is required");
     if (!new Set(["planned", "in_progress"]).has(attempt.status)) throw new Error("Only planned or in-progress attempts can be blocked");
     const wait = options.wait === "input" || options.wait === "blocker" ? options.wait : null;
-    attempt = { ...attempt, status: "blocked", blocker, ...(wait ? { wait } : {}) };
+    attempt = { ...attempt, status: "blocked", blocker, blocked_syncs: 0, ...(wait ? { wait } : {}) };
   } else if (action === "gate") {
     if (attempt.status !== "in_progress") throw new Error("Only an in-progress attempt can record a gate decision");
     const phase = String(options.phase || "").trim();
@@ -1878,6 +1886,7 @@ function updateAttemptLifecycleLocked(slug, idOrName, action, options = {}, now 
       current_phase: attempt.current_phase || phases[0] || null,
       blocker: null,
       wait: null,
+      blocked_syncs: 0,
       completed_at: null,
       abandoned_at: null,
       abandonment_reason: null,
@@ -2330,6 +2339,12 @@ function progressLifecyclePlanLocked(slug, idOrName, phase) {
     }
     return { action: "start" };
   }
+  if (attempt.status === "blocked") {
+    // An accepted checkpoint on a blocked attempt is one more session that
+    // saw the same blocker and did not resolve it. Count it so the summary
+    // can escalate instead of re-emitting the blocker forever.
+    return { countBlockedSync: true };
+  }
   if (attempt.status === "in_progress" && phase && phases.includes(phase)) {
     // Deterministic adjacency: a checkpoint may name the current phase or the
     // immediate next one — never a later phase. Multi-hop jumps would let a
@@ -2355,6 +2370,11 @@ function progressLifecyclePlanLocked(slug, idOrName, phase) {
 function applyProgressLifecyclePlanLocked(slug, idOrName, plan, now = new Date()) {
   if (!plan) return null;
   if (plan.action) return updateAttemptLifecycleLocked(slug, idOrName, plan.action, {}, now);
+  if (plan.countBlockedSync) {
+    const attempt = getAttempt(slug, idOrName);
+    const syncs = Number.isInteger(attempt.blocked_syncs) ? attempt.blocked_syncs : 0;
+    return writeAttempt(slug, { ...attempt, blocked_syncs: syncs + 1, updated_at: now.toISOString() });
+  }
   return plan.unchanged;
 }
 

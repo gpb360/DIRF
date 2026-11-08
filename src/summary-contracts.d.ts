@@ -61,6 +61,9 @@ export interface UnresolvedWorkSummary {
   requirement_id: string | null;
   summary: string;
   detail_ref: DetailReference;
+  /** Present only once a blocker survives three accepted syncs without resolution. */
+  escalated?: true;
+  escalation_hint?: string;
 }
 
 export interface SummaryPage<T> {
