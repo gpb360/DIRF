@@ -329,6 +329,31 @@ test("invalid plan bytes degrade verification while preserving blocked work and 
   assert.deepEqual(snapshot(f.home), before);
 });
 
+test("blocker escalation appears on the third accepted sync and resets on reopen", t => {
+  const f = fixture(t, { git: true }); f.progress(f.update());
+  updateAttemptLifecycle(f.slug, f.attempt.id, "block", { reason: "Waiting on deploy credentials" });
+  const first = attemptSummary(f.slug, f.attempt.id);
+  assert.ok(first.unresolved_work.items.every(x => x.escalated === undefined));
+  assert.equal(recordProgress(f.slug, { attemptId: f.attempt.id, phase: "build", message: "Credentials still missing", next: "Retry deploy" }).recorded, true);
+  const second = attemptSummary(f.slug, f.attempt.id);
+  assert.ok(second.unresolved_work.items.every(x => x.escalated === undefined));
+  assert.equal(recordProgress(f.slug, { attemptId: f.attempt.id, phase: "build", message: "Retry failed again", next: "Retry deploy" }).recorded, true);
+  assert.equal(recordProgress(f.slug, { attemptId: f.attempt.id, phase: "build", message: "Third retry failed", next: "Escalate the blocker" }).recorded, true);
+  const before = snapshot(f.home);
+  const third = attemptSummary(f.slug, f.attempt.id);
+  const blocker = third.unresolved_work.items.find(x => x.attempt_id === f.attempt.id && x.kind === "blocker");
+  assert.equal(blocker.escalated, true);
+  assert.match(blocker.escalation_hint, /3 accepted syncs/);
+  assert.match(blocker.escalation_hint, /gate decision|abandon/);
+  assert.deepEqual(snapshot(f.home), before);
+  updateAttemptLifecycle(f.slug, f.attempt.id, "reopen");
+  const cleared = attemptSummary(f.slug, f.attempt.id);
+  assert.ok(!cleared.unresolved_work.items.some(x => x.attempt_id === f.attempt.id && x.kind === "blocker"));
+  updateAttemptLifecycle(f.slug, f.attempt.id, "block", { reason: "Reblocked on credentials" });
+  const fresh = attemptSummary(f.slug, f.attempt.id);
+  assert.ok(fresh.unresolved_work.items.filter(x => x.kind === "blocker").every(x => x.escalated === undefined));
+});
+
 test("accepted replacement plans resolve superseded unaccepted proposals without hiding independent candidates", t => {
   const f = fixture(t); f.progress(undefined);
   f.addArtifact("proposal-old", "# Old proposal\n", false, "plan");
