@@ -3,9 +3,9 @@
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { validateReview, priorityCounts, deriveVerdict } from "./review-report.mjs";
-import { MAX_LOOP_ROUNDS } from "../../../src/limits.js";
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
+export const MAX_LOOP_ROUNDS = 5;
 
 function load(file) {
   return JSON.parse(readFileSync(file, "utf8"));
@@ -87,6 +87,8 @@ export function ledgerAction(review) {
       : "continue_review",
     target: targetOf(review),
     expected_head_sha: review.target.head_sha,
+    round,
+    max_rounds: maxRounds,
     findings: [],
     priority_counts: counts,
     guardrails: { live_readiness_required: true, merge_is_not_authorized: true },
@@ -110,10 +112,12 @@ export function verifyUpdatedReview(request, updatedReview) {
     || !Number.isInteger(original.pr_number) || original.pr_number < 1
     || !SHA_PATTERN.test(original.base_sha || "") || !SHA_PATTERN.test(original.head_sha || "")
     || !SHA_PATTERN.test(request.expected_head_sha || "")
-    || !Number.isInteger(request.round) || request.round < 1
-    || !Number.isInteger(request.max_rounds) || request.max_rounds < 1
     || original.head_sha.toLowerCase() !== request.expected_head_sha.toLowerCase()) {
     throw new Error("Invalid remediation request: the target and expected head must identify the same original PR commit.");
+  }
+  if (!Number.isInteger(request.round) || request.round < 1
+    || !Number.isInteger(request.max_rounds) || request.max_rounds < 1) {
+    throw new Error("Invalid remediation request: it has no round data. Run dirf review trigger on the original review to create it again.");
   }
   const updated = updatedReview.target;
   if (updated.repository !== original.repository) throw new Error("The fix changed the review repository.");

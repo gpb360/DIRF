@@ -53,8 +53,12 @@ again and publish a fresh ledger before another fix or merge decision.
 The loop has a limit of five rounds. If the user or task states a different
 limit, set `target.max_rounds` on the first review. Each updated review must set
 `target.round` to the `next_review.round` value of the fix request, or
-`verify-update` fails. If findings remain at the limit, the ledger returns
-`reconsider_approach`.
+`verify-update` fails. A re-review without a fix, or a fresh review after a base
+change, keeps the `round` value that the last ledger action reported. If findings
+remain at the limit, the ledger returns `reconsider_approach`.
+
+The ledger applies the limit to findings only. A failed check returns `continue_review`, so follow
+the Loop Limit in the workflow policy.
 
 The `reconsider_approach` action contains no fix request. Stop the automatic
 fixes and give the findings to a person. The person decides to change the

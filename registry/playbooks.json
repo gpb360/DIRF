@@ -179,7 +179,7 @@
       },
       "output": "a plain-language status and a detailed review report; merge approval is requested only after the current commit has no remaining issues and every required check passes",
       "validation": "dirf review ready review.json",
-      "recovery": "if the PR is unavailable, ask for its URL or branch; if an issue remains or a check is incomplete, say what remains and continue the fix, test, and review loop until the round limit; if dirf review trigger returns reconsider_approach, stop and give the findings to a person"
+      "recovery": "if the PR is unavailable, ask for its URL or branch; if an issue remains or a check is incomplete, say what remains and continue the fix, test, and review loop; if dirf review trigger returns reconsider_approach, stop and give the findings to a person"
     },
     "questions": [
       "What branch, commit range, diff, or PR should be reviewed?",
@@ -210,7 +210,7 @@
         },
         {
           "stage": "review",
-          "reason": "Review the updated PR and repeat until no confirmed issue remains.",
+          "reason": "Review the updated PR and repeat until no confirmed issue remains or dirf review trigger returns reconsider_approach.",
           "capability": "code review"
         }
       ]

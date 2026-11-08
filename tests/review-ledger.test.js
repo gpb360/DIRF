@@ -93,6 +93,41 @@ test("a stated limit replaces the default and a fixer cannot change it", () => {
   assert.throws(() => verifyUpdatedReview(request, updated({})), /round limit/i);
 });
 
+test("every ledger action reports the round so a re-review can keep it", () => {
+  const incremental = { ...review().target, round: 4, mode: "incremental", previous_head_sha: SHA_C };
+  for (const result of [
+    ledgerAction(review({ target: incremental })),
+    ledgerAction(review({ target: { ...review().target, round: 4 } })),
+    ledgerAction(withFinding(4)),
+  ]) {
+    assert.equal(result.round, 4);
+    assert.equal(result.max_rounds, 5);
+  }
+  assert.equal(ledgerAction(review({ target: incremental })).action, "continue_review");
+});
+
+test("a limit of one stops at the first review with no fix", () => {
+  const result = ledgerAction(withFinding(1, { max_rounds: 1 }));
+  assert.equal(result.action, "reconsider_approach");
+  assert.equal(result.next_review, undefined);
+});
+
+test("a saved request without round data names the recovery step", () => {
+  const { round: _round, ...noRound } = ledgerAction(withFinding(1));
+  const { max_rounds: _max, ...noLimit } = ledgerAction(withFinding(1));
+  const updated = review({ target: { ...review().target, head_sha: SHA_C, round: 2 } });
+  for (const request of [noRound, noLimit]) {
+    assert.throws(() => verifyUpdatedReview(request, updated), /dirf review trigger/);
+  }
+});
+
+test("the ledger stays inside its skill folder", () => {
+  const source = readFileSync(new URL("../skills/code-review/scripts/review-ledger.mjs", import.meta.url), "utf8");
+  const imports = [...source.matchAll(/^import .* from "(.+)";$/gm)].map((match) => match[1]);
+  assert.ok(imports.length > 0);
+  assert.deepEqual(imports.filter((path) => path.startsWith("..")), []);
+});
+
 test("agent instructions state the same loop limit as the code", () => {
   const policy = readFileSync(new URL("../policies/workflow-policy.md", import.meta.url), "utf8");
   assert.match(policy, new RegExp(`loop after ${MAX_LOOP_ROUNDS} rounds`));
