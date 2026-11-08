@@ -33,7 +33,7 @@ Verification is complete when each published comment has a reproducible failure 
 
 ## 5. Fix, test, and review again
 
-If the validated artifact contains any P0-P3 finding, fix every finding, run the narrowest checks that prove the corrected behavior, refresh the exact head, and start a new full or justified incremental review. Do not mark the workflow done because comments were resolved or a build is green.
+Apply the round limit in this step. Below the limit, if the validated artifact contains any P0-P3 finding, fix every finding, run the narrowest checks that prove the corrected behavior, refresh the exact head, and start a new full or justified incremental review. Do not mark the workflow done because comments were resolved or a build is green.
 
 The review ledger is the trigger for this handoff. Run `dirf review trigger
 review.json` after validation. When it returns `fix_and_update_same_pr`, pass the
@@ -49,6 +49,18 @@ authorizes a merge or a new PR.
 `verify-update` is not the end of the loop. On success it emits
 `trigger_review_ledger` and the new exact head; the harness must run the review
 again and publish a fresh ledger before another fix or merge decision.
+
+The loop has a limit of five rounds. If the user or task states a different
+limit, set `target.max_rounds` on the first review. Each updated review must set
+`target.round` to the `next_review.round` value of the fix request, or
+`verify-update` fails. If findings remain at the limit, the ledger returns
+`reconsider_approach`.
+
+The `reconsider_approach` action contains no fix request. Stop the automatic
+fixes and give the findings to a person. The person decides to change the
+approach, continue, or close the PR. A review after that decision starts at
+round 1. The limit does not waive findings. `dirf review ready` continues to
+fail while a finding remains.
 
 The loop is complete only when the current review has no findings and the
 corrected behavior works under the applicable checks.

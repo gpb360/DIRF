@@ -3,6 +3,7 @@
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { validateReview, priorityCounts, deriveVerdict } from "./review-report.mjs";
+import { MAX_LOOP_ROUNDS } from "../../../src/limits.js";
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 
@@ -34,12 +35,33 @@ export function ledgerAction(review) {
     id, priority, axis, title, file, line, body, evidence,
   }));
 
+  const round = review.target.round ?? 1;
+  // An agent fixer and an agent reviewer can keep each other busy indefinitely.
+  // Findings that survive the limit go to a person instead of a fixer.
+  const maxRounds = review.target.max_rounds ?? MAX_LOOP_ROUNDS;
+
+  if (findings.length > 0 && round >= maxRounds) {
+    return {
+      schema_version: 1,
+      action: "reconsider_approach",
+      target: targetOf(review),
+      expected_head_sha: review.target.head_sha,
+      round,
+      max_rounds: maxRounds,
+      findings,
+      priority_counts: counts,
+      guardrails: { human_decision_required: true, merge_is_not_authorized: true },
+    };
+  }
+
   if (findings.length > 0) {
     return {
       schema_version: 1,
       action: "fix_and_update_same_pr",
       target: targetOf(review),
       expected_head_sha: review.target.head_sha,
+      round,
+      max_rounds: maxRounds,
       findings,
       priority_counts: counts,
       guardrails: {
@@ -52,6 +74,8 @@ export function ledgerAction(review) {
       next_review: {
         mode: "full",
         previous_head_sha: review.target.head_sha,
+        round: round + 1,
+        max_rounds: maxRounds,
       },
     };
   }
@@ -86,6 +110,8 @@ export function verifyUpdatedReview(request, updatedReview) {
     || !Number.isInteger(original.pr_number) || original.pr_number < 1
     || !SHA_PATTERN.test(original.base_sha || "") || !SHA_PATTERN.test(original.head_sha || "")
     || !SHA_PATTERN.test(request.expected_head_sha || "")
+    || !Number.isInteger(request.round) || request.round < 1
+    || !Number.isInteger(request.max_rounds) || request.max_rounds < 1
     || original.head_sha.toLowerCase() !== request.expected_head_sha.toLowerCase()) {
     throw new Error("Invalid remediation request: the target and expected head must identify the same original PR commit.");
   }
@@ -97,6 +123,12 @@ export function verifyUpdatedReview(request, updatedReview) {
     throw new Error("The fixer did not advance the pull-request head.");
   }
   if (!SHA_PATTERN.test(updated.head_sha)) throw new Error("The updated review head is not a valid Git SHA.");
+  if (updated.round !== request.round + 1) {
+    throw new Error(`The updated review must set target.round to ${request.round + 1}.`);
+  }
+  if ((updated.max_rounds ?? MAX_LOOP_ROUNDS) !== request.max_rounds) {
+    throw new Error(`The fix changed the round limit; expected target.max_rounds ${request.max_rounds}.`);
+  }
   return {
     verified: true,
     verification_scope: "artifact_targets_only",

@@ -50,6 +50,12 @@ Use this policy in every generated workflow prompt.
 - After every final push, refresh the exact PR head; collect all review comments, unresolved threads, and checks; reconcile every P0, P1, P2, and P3 finding; fix and verify each finding; then rerun the relevant checks and review the new head.
 - Re-fetch that exact head's reviews, unresolved threads, checks, mergeability, and diff. Report "ready to merge" only when no unresolved review findings remain and all required gates pass.
 - Dismiss a finding only when evidence shows it is invalid or a duplicate. A retained P0, P1, P2, or P3 finding cannot be waived for completion; fix and verify it, then review the new head. Otherwise report "not ready" and state the exact remaining action.
+- Follow the Loop Limit. When `dirf review trigger` returns `reconsider_approach`, stop the fixes and give the findings to a person.
+
+## Loop Limit
+- Stop any repeated fix, retry, or review loop after 5 rounds. Use a different limit only when the user or task states it.
+- At the limit, report what remains and ask a person for the next step.
+- The limit does not waive a finding, a failed check, or a gate. The work stays incomplete until a person decides.
 
 ## Communication
 - Use ASD-STE100 Issue 9 for human technical output. Apply its writing rules
