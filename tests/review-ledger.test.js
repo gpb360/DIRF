@@ -121,11 +121,11 @@ test("a saved request without round data names the recovery step", () => {
   }
 });
 
-test("the ledger stays inside its skill folder", () => {
-  const source = readFileSync(new URL("../skills/code-review/scripts/review-ledger.mjs", import.meta.url), "utf8");
-  const imports = [...source.matchAll(/^import .* from "(.+)";$/gm)].map((match) => match[1]);
-  assert.ok(imports.length > 0);
-  assert.deepEqual(imports.filter((path) => path.startsWith("..")), []);
+test("the review scripts stay inside their skill folder", () => {
+  for (const script of ["review-ledger.mjs", "review-report.mjs"]) {
+    const source = readFileSync(new URL(`../skills/code-review/scripts/${script}`, import.meta.url), "utf8");
+    assert.deepEqual(source.match(/(?:from|import)\s*\(?\s*["']\.\.\/[^"']*/g), null, script);
+  }
 });
 
 test("agent instructions state the same loop limit as the code", () => {
