@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileHash } from "../src/paths.js";
+import { fileHash, isMaterializedCopy } from "../src/paths.js";
 import { materializeSkills, removeMaterializedSkills } from "../src/skill-materialize.js";
 import { discover } from "../src/skills.js";
 import { refreshSkillBindings } from "../src/skill-bindings.js";
@@ -256,6 +256,46 @@ test("refreshing a binding keeps the real source instead of a disposable copy", 
   const saved = { ...bound, provider: "project", relative_entry: ".claude/skills/main-only/SKILL.md" };
   const plan = { skill_flow: { steps: [{ skill: "main-only", provider: "project" }] } };
   assert.deepEqual(refreshSkillBindings(plan, [saved], worktree), [saved]);
+});
+
+test("a worktree without the skill keeps the record of a source that still exists", () => {
+  const { root, main } = repo();
+  const worktree = join(root, "wt");
+  git(main, "worktree", "add", "-q", worktree, "-b", "wt");
+  const bound = source(root, "main-only-two");
+  const saved = { ...bound, provider: "project", relative_entry: ".claude/skills/main-only-two/SKILL.md" };
+  const plan = { skill_flow: { steps: [{ skill: "main-only-two", provider: "project" }] } };
+
+  materializeSkills({ worktree, host: "claude", bindings: [saved] });
+  removeMaterializedSkills({ worktree, host: "claude" });
+  const [refreshed] = refreshSkillBindings(plan, [saved], worktree, { discoverSkills: () => ({}) });
+  assert.deepEqual(refreshed, saved, "cleanup followed by resume keeps the record");
+  assert.deepEqual(materializeSkills({ worktree, host: "claude", bindings: [refreshed] }).copied, ["main-only-two"]);
+
+  rmSync(bound.entry);
+  const [gone] = refreshSkillBindings(plan, [saved], join(root, "elsewhere"), { discoverSkills: () => ({}) });
+  assert.equal(gone.status, "missing", "a source that is really gone is still reported");
+});
+
+test("a Git failure never makes a tracked skill look like a copy", () => {
+  const { root, main } = repo();
+  materializeSkills({ worktree: main, host: "claude", bindings: [source(root, "zz-index")] });
+  const copy = join(main, ".claude", "skills", "zz-index");
+  assert.equal(isMaterializedCopy(copy), true);
+  git(main, "add", "-f", ".claude/skills/zz-index");
+  writeFileSync(join(main, ".git", "index"), "not an index");
+  assert.equal(isMaterializedCopy(copy), false);
+  assert.deepEqual(removeMaterializedSkills({ worktree: main, host: "claude" }).removed, []);
+  assert.ok(existsSync(copy));
+});
+
+test("copies work in a folder that is not a Git checkout", () => {
+  const root = mkdtempSync(join(tmpdir(), "dirf-materialize-plain-"));
+  const plain = join(root, "plain");
+  mkdirSync(plain);
+  assert.deepEqual(materializeSkills({ worktree: plain, host: "claude", bindings: [source(root, "zz-plain")] }).copied, ["zz-plain"]);
+  assert.equal(isMaterializedCopy(join(plain, ".claude", "skills", "zz-plain")), true);
+  assert.deepEqual(removeMaterializedSkills({ worktree: plain, host: "claude" }).removed, ["zz-plain"]);
 });
 
 test("a tracked skill is real even with a marker in it", () => {

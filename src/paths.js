@@ -35,9 +35,13 @@ export function isMaterializedCopy(dir) {
   }
   if (skill !== basename(dir)) return false;
   try {
-    return execFileSync("git", ["-C", dir, "ls-files", "--", "."], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() === "";
-  } catch {
-    return true;
+    return execFileSync("git", ["-C", dir, "ls-files", "--", "."], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, LC_ALL: "C" },
+    }).trim() === "";
+  } catch (error) {
+    // Only a folder outside any repository can be called untracked. Any other
+    // Git failure leaves the answer unknown, so the folder is treated as real.
+    return /not a git repository/i.test(String(error.stderr));
   }
 }
 
