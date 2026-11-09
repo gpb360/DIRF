@@ -33,7 +33,7 @@ import { installationDiagnostics } from "./doctor.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, resolveProjectReference, listProjects, registerProject, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, projectHandoffContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, attemptNextAction, projectWorkSnapshot, observeAttempt, bindExecutionAuthority, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings, workflowGates, attemptAudit, runBuiltinCheck, attemptSummary, deriveSlug, checkoutSummary } from "./state.js";
+import { resolveProject, resolveProjectReference, listProjects, registerProject, linkCheckout, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, projectHandoffContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, attemptNextAction, projectWorkSnapshot, observeAttempt, bindExecutionAuthority, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings, workflowGates, attemptAudit, runBuiltinCheck, attemptSummary, deriveSlug, checkoutSummary } from "./state.js";
 import { ARTIFACT_TYPES, explainGoverningArtifact } from "./artifacts.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 import {
@@ -1202,6 +1202,14 @@ function cmdStateRegister(args) {
   console.log(`  ${storeProjectDir(slug)}`);
 }
 
+function cmdStateLink(args) {
+  if (!args.slug) { console.error("dirf state link requires --slug SLUG"); process.exit(2); }
+  const target = projectRoot(args.path || args._[0] || ".");
+  const { slug, isNew } = linkCheckout(args.slug, target);
+  console.log(isNew ? `Linked: ${target} -> ${slug}` : `Already linked: ${slug}`);
+  console.log(`  ${storeProjectDir(slug)}`);
+}
+
 function cmdStateReadHandoff(args) {
   const slug = resolveStateSlug(args);
   const state = projectHandoffContextState(slug);
@@ -2044,6 +2052,7 @@ Usage:
   dirf state which [--path DIR]                       what project am I in? (slug + store path)
   dirf state list                                      list all registered projects
   dirf state register [--path DIR]                    register a project explicitly
+  dirf state link --slug S [--path DIR]               join this machine's checkout to a shared-store project
   dirf state read-handoff [--path DIR|--slug S]       print the canonical handoff
   dirf state write-handoff --file FILE|- [...]        write the canonical handoff
   dirf state list-attempts [--path DIR|--slug S]      list attempts for a project
@@ -2317,6 +2326,7 @@ async function main() {
     if (sub === "which") cmdStateWhich(subArgs);
     else if (sub === "list") cmdStateList(subArgs);
     else if (sub === "register") cmdStateRegister(subArgs);
+    else if (sub === "link") cmdStateLink(subArgs);
     else if (sub === "read-handoff") cmdStateReadHandoff(subArgs);
     else if (sub === "write-handoff") cmdStateWriteHandoff(subArgs);
     else if (sub === "list-attempts") cmdStateListAttempts(subArgs);
