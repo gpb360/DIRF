@@ -51,6 +51,12 @@ Create `review.json` with this shape:
 }
 ```
 
+`target.round` is optional and counts the review rounds for this PR. Omit it for
+the first review or set it to 1. Only a fix advances the round. A re-review
+without a fix keeps the round. `target.max_rounds` is optional and replaces the
+default limit of five rounds. The last round has no fix, so `max_rounds: N` allows
+N-1 fixes. See step 5 of `workflow.md`.
+
 ## Finding requirements
 
 Every published finding must contain:

@@ -359,7 +359,7 @@ summary and have reconciled its existing owner and content.
 | `dirf review validate <review.json>` | validate a review artifact |
 | `dirf review render <review.json>` | render a review artifact as Markdown |
 | `dirf review ready <review.json>` | fail closed unless the exact PR is merge-ready |
-| `dirf review trigger <review.json>` | emit a fix, continued review, or live-readiness check action |
+| `dirf review trigger <review.json>` | emit a fix, continued review, reconsider-approach, or live-readiness check action |
 | `dirf review verify-update <request.json> <updated-review.json>` | compare artifact targets and emit a re-review trigger; the harness must verify the live PR head |
 | `dirf ste check <file-or-dir>... [--words FILE] [--json]` | check prose against the ASD-STE100 writing rules |
 | `dirf ste rules` | list the STE rules that the checker tests |

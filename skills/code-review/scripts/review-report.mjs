@@ -80,6 +80,12 @@ export function validateReview(review) {
     if (strict && review.target.mode === "incremental" && !SHA_PATTERN.test(review.target.previous_head_sha || "")) {
       errors.push("target.previous_head_sha must be a 40-character Git SHA in incremental mode");
     }
+    if (review.target.round !== undefined && (!Number.isInteger(review.target.round) || review.target.round < 1)) {
+      errors.push("target.round must be a positive integer");
+    }
+    if (review.target.max_rounds !== undefined && (!Number.isInteger(review.target.max_rounds) || review.target.max_rounds < 1)) {
+      errors.push("target.max_rounds must be a positive integer");
+    }
   }
 
   if (!Array.isArray(review.walkthrough) || review.walkthrough.length === 0) {

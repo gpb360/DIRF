@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { ledgerAction, verifyUpdatedReview } from "../skills/code-review/scripts/review-ledger.mjs";
+import { MAX_LOOP_ROUNDS } from "../src/limits.js";
 
 const SHA_A = "a".repeat(40);
 const SHA_B = "b".repeat(40);
@@ -44,6 +46,111 @@ test("a finding creates one same-PR code-fix trigger with exact-head guards", ()
   assert.equal(result.guardrails.head_must_advance, true);
   assert.equal(result.guardrails.merge_is_not_authorized, true);
   assert.equal(result.next_review.previous_head_sha, SHA_B);
+  assert.equal(result.round, 1);
+  assert.equal(result.next_review.round, 2);
+});
+
+function withFinding(round, extra = {}) {
+  return {
+    ...review({ target: { ...review().target, ...(round === undefined ? {} : { round }), ...extra } }),
+    findings: [finding()],
+    axes: { ...review().axes, correctness: { status: "finding", evidence: "P2-001" } },
+  };
+}
+
+test("findings stop going to a fixer at the round limit", () => {
+  assert.equal(MAX_LOOP_ROUNDS, 5);
+  assert.equal(ledgerAction(withFinding(4)).action, "fix_and_update_same_pr");
+  for (const round of [5, 6]) {
+    const result = ledgerAction(withFinding(round));
+    assert.equal(result.action, "reconsider_approach");
+    assert.equal(result.round, round);
+    assert.equal(result.max_rounds, 5);
+    assert.deepEqual(result.findings.map(({ id }) => id), ["P2-001"]);
+    assert.equal(result.guardrails.human_decision_required, true);
+    assert.equal(result.guardrails.merge_is_not_authorized, true);
+    assert.equal(result.next_review, undefined);
+    assert.throws(() => verifyUpdatedReview(result, review()), /Invalid remediation request/i);
+  }
+});
+
+test("a clean review at the round limit still reaches readiness", () => {
+  const result = ledgerAction(review({ target: { ...review().target, round: 5 } }));
+  assert.equal(result.action, "verify_merge_readiness");
+});
+
+test("a stated limit replaces the default and a fixer cannot change it", () => {
+  assert.equal(ledgerAction(withFinding(2, { max_rounds: 2 })).action, "reconsider_approach");
+  assert.equal(ledgerAction(withFinding(5, { max_rounds: 8 })).action, "fix_and_update_same_pr");
+  for (const max_rounds of [0, 1.5, "8", null]) {
+    assert.throws(() => ledgerAction(withFinding(1, { max_rounds })), /target\.max_rounds/);
+  }
+  const updated = (extra) => review({ target: { ...review().target, head_sha: SHA_C, round: 2, ...extra } });
+  const request = ledgerAction(withFinding(1, { max_rounds: 8 }));
+  assert.equal(request.next_review.max_rounds, 8);
+  assert.equal(verifyUpdatedReview(request, updated({ max_rounds: 8 })).verified, true);
+  assert.throws(() => verifyUpdatedReview(request, updated({ max_rounds: 20 })), /round limit/i);
+  assert.throws(() => verifyUpdatedReview(request, updated({})), /round limit/i);
+});
+
+test("every ledger action reports the round so a re-review can keep it", () => {
+  const incremental = { ...review().target, round: 4, mode: "incremental", previous_head_sha: SHA_C };
+  for (const result of [
+    ledgerAction(review({ target: incremental })),
+    ledgerAction(review({ target: { ...review().target, round: 4 } })),
+    ledgerAction(withFinding(4)),
+  ]) {
+    assert.equal(result.round, 4);
+    assert.equal(result.max_rounds, 5);
+  }
+  assert.equal(ledgerAction(review({ target: incremental })).action, "continue_review");
+});
+
+test("a limit of one stops at the first review with no fix", () => {
+  const result = ledgerAction(withFinding(1, { max_rounds: 1 }));
+  assert.equal(result.action, "reconsider_approach");
+  assert.equal(result.next_review, undefined);
+});
+
+test("a saved request without round data names the recovery step", () => {
+  const { round: _round, ...noRound } = ledgerAction(withFinding(1));
+  const { max_rounds: _max, ...noLimit } = ledgerAction(withFinding(1));
+  const updated = review({ target: { ...review().target, head_sha: SHA_C, round: 2 } });
+  for (const request of [noRound, noLimit]) {
+    assert.throws(() => verifyUpdatedReview(request, updated), /dirf review trigger/);
+  }
+});
+
+test("the review scripts stay inside their skill folder", () => {
+  for (const script of ["review-ledger.mjs", "review-report.mjs"]) {
+    const source = readFileSync(new URL(`../skills/code-review/scripts/${script}`, import.meta.url), "utf8");
+    assert.deepEqual(source.match(/(?:from|import)\s*\(?\s*["']\.\.\/[^"']*/g), null, script);
+  }
+});
+
+test("agent instructions state the same loop limit as the code", () => {
+  const policy = readFileSync(new URL("../policies/workflow-policy.md", import.meta.url), "utf8");
+  assert.match(policy, new RegExp(`loop after ${MAX_LOOP_ROUNDS} rounds`));
+  assert.match(policy, /reconsider_approach/);
+  const playbook = readFileSync(new URL("../playbooks/pr-review/README.md", import.meta.url), "utf8");
+  assert.match(playbook, /reconsider_approach/);
+});
+
+test("target.round must be a positive integer", () => {
+  for (const round of [0, -1, 1.5, "2", null]) {
+    assert.throws(() => ledgerAction(withFinding(round)), /target\.round/);
+  }
+});
+
+test("a fixer cannot reset or skip the review round", () => {
+  const request = ledgerAction(withFinding(2));
+  const updated = (round) => review({ target: { ...review().target, head_sha: SHA_C, ...(round === undefined ? {} : { round }) } });
+  assert.equal(verifyUpdatedReview(request, updated(3)).review_target.round, 3);
+  for (const round of [undefined, 1, 2, 4]) {
+    assert.throws(() => verifyUpdatedReview(request, updated(round)), /target\.round to 3/);
+  }
+  const { round: _omitted, ...withoutRound } = request;
+  assert.throws(() => verifyUpdatedReview(withoutRound, updated(3)), /Invalid remediation request/i);
 });
 
 test("a clean ledger requires live readiness before merge approval", () => {
@@ -77,7 +184,7 @@ test("updated review must keep PR identity and advance the head", () => {
     findings: [finding()],
     axes: { ...review().axes, correctness: { status: "finding", evidence: "P2-001" } },
   });
-  assert.deepEqual(verifyUpdatedReview(request, review({ target: { ...review().target, head_sha: SHA_C } })), {
+  assert.deepEqual(verifyUpdatedReview(request, review({ target: { ...review().target, head_sha: SHA_C, round: 2 } })), {
     verified: true,
     verification_scope: "artifact_targets_only",
     live_head_verification_required: true,
@@ -89,6 +196,7 @@ test("updated review must keep PR identity and advance the head", () => {
     review_target: {
       ...review().target,
       head_sha: SHA_C,
+      round: 2,
       mode: "full",
       previous_head_sha: SHA_B,
     },
