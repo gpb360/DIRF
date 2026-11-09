@@ -33,7 +33,7 @@ import { installationDiagnostics } from "./doctor.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { recordReviewRound, resetReviewRounds, assertReviewRoundRecorded, resolveProject, resolveProjectReference, listProjects, registerProject, linkCheckout, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, projectHandoffContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, attemptNextAction, projectWorkSnapshot, observeAttempt, bindExecutionAuthority, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings, workflowGates, attemptAudit, runBuiltinCheck, attemptSummary, deriveSlug, checkoutSummary } from "./state.js";
+import { resolveReviewProject, recordReviewRound, resetReviewRounds, assertReviewRoundRecorded, resolveProject, resolveProjectReference, listProjects, registerProject, linkCheckout, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, projectHandoffContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, attemptNextAction, projectWorkSnapshot, observeAttempt, bindExecutionAuthority, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings, workflowGates, attemptAudit, runBuiltinCheck, attemptSummary, deriveSlug, checkoutSummary } from "./state.js";
 import { ARTIFACT_TYPES, explainGoverningArtifact } from "./artifacts.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 import {
@@ -2237,9 +2237,7 @@ function cmdReview(args) {
   const reviewPath = args.path ? resolve(args.path) : process.cwd();
   if (subcommand === "trigger") {
     const review = JSON.parse(readFileSync(resolve(files[0]), "utf8"));
-    // resolveProject runs legacy migration, which registering first would skip.
-    const slug = (resolveProject(reviewPath) || registerProject(reviewPath)).slug;
-    console.log(JSON.stringify(recordReviewRound(slug, review), null, 2));
+    console.log(JSON.stringify(recordReviewRound(resolveReviewProject(reviewPath, review), review), null, 2));
     return;
   }
   if (subcommand === "reset-rounds") {

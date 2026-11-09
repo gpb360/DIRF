@@ -399,13 +399,45 @@ function readReviewRounds(slug, prNumber) {
   } catch {
     ledger = null;
   }
-  if (!Array.isArray(ledger?.entries)) throw new Error(`The review rounds file is damaged: ${path}. Repair or delete it.`);
+  const validEntries = Array.isArray(ledger?.entries)
+    && ledger.entries.every((entry) => entry && typeof entry === "object" && (entry.reset === true || Number.isInteger(entry.round)));
+  if (!validEntries || (ledger.max_rounds !== undefined && !Number.isInteger(ledger.max_rounds))) {
+    throw new Error(`The review rounds file is damaged: ${path}. Repair or delete it.`);
+  }
   return ledger;
 }
 
 // Entries since the last reset. A reset starts a new count.
 function currentReviewSegment(ledger) {
   return ledger.entries.slice(ledger.entries.findLastIndex((entry) => entry.reset === true) + 1);
+}
+
+// Review rounds belong to the repository under review. A checkout of anything
+// else must not start its own count, and a first run from a worktree or
+// subfolder must register the main checkout, where legacy state lives.
+export function resolveReviewProject(targetPath, review) {
+  ledgerAction(review); // Validates before registration or migration can happen.
+  const gitOutput = (...args) => {
+    try {
+      return execFileSync("git", ["-C", targetPath, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    } catch {
+      return null;
+    }
+  };
+  const commonDirOutput = gitOutput("rev-parse", "--git-common-dir");
+  if (!commonDirOutput) throw new Error("dirf review trigger must run inside a Git checkout of the reviewed repository.");
+  const origin = gitOutput("remote", "get-url", "origin");
+  if (!origin || normalizeRepository(origin) !== normalizeRepository(review.target.repository)) {
+    throw new Error(`This checkout's origin does not match the reviewed repository (${review.target.repository}).`);
+  }
+  const commonDir = resolve(targetPath, commonDirOutput);
+  if (basename(commonDir) !== ".git") {
+    const project = resolveProject(targetPath);
+    if (!project) throw new Error("Run dirf setup first. DIRF cannot find a main checkout for this repository.");
+    return project.slug;
+  }
+  const mainCheckout = dirname(commonDir);
+  return (resolveProject(mainCheckout) || registerProject(mainCheckout)).slug;
 }
 
 // The store owns the review round for each PR. A review file cannot set it.
@@ -416,7 +448,7 @@ export function recordReviewRound(slug, review, now = new Date()) {
     const ledger = readReviewRounds(slug, prNumber) || { schema_version: 1, pr_number: prNumber, entries: [] };
     const repository = normalizeRepository(review.target.repository);
     if (ledger.repository && ledger.repository !== repository) {
-      throw new Error(`PR #${prNumber} in this project belongs to ${ledger.repository}, a different repository from this review.`);
+      throw new Error(`PR #${prNumber} in this project belongs to ${ledger.repository}, a different repository from this review. If the repository moved, run dirf review reset-rounds.`);
     }
     ledger.repository = repository;
     const segment = currentReviewSegment(ledger);
@@ -432,8 +464,11 @@ export function recordReviewRound(slug, review, now = new Date()) {
     if (!seen && approachPending && !review.target.approach_change) {
       throw new Error("The ledger required a new approach. Describe it in target.approach_change on this review.");
     }
-    const round = seen ? seen.round : fresh ? 1 : Math.max(...segment.map((entry) => entry.round)) + 1;
-    const action = ledgerAction(review, { round, max_rounds: ledger.max_rounds });
+    const highest = fresh ? 0 : Math.max(...segment.map((entry) => entry.round));
+    const round = seen ? seen.round : highest + 1;
+    // A re-review of an older commit keeps that commit's round, but the budget
+    // is what the PR has already spent, so it cannot reopen the fix loop.
+    const action = ledgerAction(review, { round: Math.max(round, highest), max_rounds: ledger.max_rounds });
     ledger.entries.push({
       head_sha: headSha,
       round,
@@ -453,13 +488,15 @@ export function resetReviewRounds(slug, prNumber, reason, now = new Date()) {
     const ledger = readReviewRounds(slug, prNumber);
     if (!ledger) throw new Error(`DIRF has no review rounds for PR #${prNumber}.`);
     ledger.entries.push({ reset: true, reason: reason.trim(), at: now.toISOString() });
+    delete ledger.repository;
     atomicWrite(reviewRoundsPath(slug, prNumber), JSON.stringify(ledger, null, 2) + "\n");
     return ledger;
   });
 }
 
 export function assertReviewRoundRecorded(slug, review) {
-  const ledger = readReviewRounds(slug, review.target.pr_number);
+  const stored = readReviewRounds(slug, review.target.pr_number);
+  const ledger = stored?.repository && stored.repository !== normalizeRepository(review.target.repository) ? null : stored;
   const segment = ledger ? currentReviewSegment(ledger) : [];
   const stopped = segment.find((entry) => entry.action === "stop_for_person");
   if (stopped) {
