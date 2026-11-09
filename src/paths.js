@@ -1,7 +1,8 @@
 // Shared repository paths and file helpers.
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -20,6 +21,25 @@ export function loadJson(path) {
 
 // Marks a skill folder as a disposable copy made by dirf skills materialize.
 export const MATERIALIZED_MARKER = ".dirf-materialized.json";
+
+// True only for an untouched DIRF copy: a readable marker naming this folder,
+// with nothing in it tracked by Git. A tracked skill is real, whatever files it holds.
+export function isMaterializedCopy(dir) {
+  const markerPath = join(dir, MATERIALIZED_MARKER);
+  if (!existsSync(markerPath)) return false;
+  let skill;
+  try {
+    skill = JSON.parse(readFileSync(markerPath, "utf8")).skill;
+  } catch {
+    return false;
+  }
+  if (skill !== basename(dir)) return false;
+  try {
+    return execFileSync("git", ["-C", dir, "ls-files", "--", "."], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() === "";
+  } catch {
+    return true;
+  }
+}
 
 export function fileHash(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex").slice(0, 16);

@@ -1,6 +1,6 @@
 import { existsSync, statSync } from "node:fs";
-import { isAbsolute, join, relative } from "node:path";
-import { fileHash } from "./paths.js";
+import { dirname, isAbsolute, join, relative } from "node:path";
+import { fileHash, isMaterializedCopy } from "./paths.js";
 import { SKILL_STATUS, bundledSkills, discover, enrichDiscovered, inspectSkillReadiness, skillIsIncomplete } from "./skills.js";
 
 const ENTRY_FILES = ["SKILL.md", "skill.json", "README.md"];
@@ -51,6 +51,8 @@ export function refreshSkillBindings(plan, previous, projectRoot, options = {}) 
     const sameSkill = saved?.skill === step.skill && saved.provider === provider;
     if (sameSkill && saved.relative_entry) {
       const localEntry = join(projectRoot, saved.relative_entry);
+      // A disposable copy must not replace the shared record of the real source.
+      if (existsSync(localEntry) && isMaterializedCopy(dirname(localEntry))) return saved;
       if (existsSync(localEntry)) return binding(step, localEntry, projectRoot);
     }
     if (sameSkill && !saved.relative_entry && saved.entry && isAbsolute(saved.entry) && existsSync(saved.entry)) {

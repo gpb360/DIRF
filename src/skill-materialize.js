@@ -4,9 +4,9 @@
 // only while it still matches that hash.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { fileHash, MATERIALIZED_MARKER } from "./paths.js";
+import { fileHash, isMaterializedCopy, MATERIALIZED_MARKER } from "./paths.js";
 
 export const HOST_SKILL_DIRS = { claude: ".claude/skills", codex: ".codex/skills", agents: ".agents/skills" };
 
@@ -22,7 +22,7 @@ function hostDir(host) {
 }
 
 // Hosts look for skills at the top of the checkout, so a subfolder is never the target.
-function checkoutRoot(path) {
+export function checkoutRoot(path) {
   try {
     return resolve(execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: path, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
   } catch {
@@ -50,10 +50,12 @@ function treeHash(dir) {
   const walk = (current, prefix) => {
     const entries = readdirSync(current, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1));
     for (const entry of entries) {
-      if (!prefix && (entry.name === MATERIALIZED_MARKER || entry.name === GITIGNORE)) continue;
+      if (!prefix && entry.name === MATERIALIZED_MARKER) continue;
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) walk(join(current, entry.name), relative);
-      else hash.update(relative).update("\0").update(entry.isFile() ? readFileSync(join(current, entry.name)) : "not-a-file").update("\0");
+      if (entry.isDirectory()) {
+        hash.update(`${relative}/`).update("\0");
+        walk(join(current, entry.name), relative);
+      } else hash.update(relative).update("\0").update(entry.isFile() ? readFileSync(join(current, entry.name)) : "not-a-file").update("\0");
     }
   };
   walk(dir, "");
@@ -63,7 +65,7 @@ function treeHash(dir) {
 function skipReason(binding, entry, dest) {
   if (!SAFE_NAME.test(binding.skill || "")) return "the skill name is not a safe folder name";
   if (binding.status !== "installed" || !entry) return `the skill is ${binding.status || "missing"}`;
-  if (existsSync(dest)) return existsSync(join(dest, MATERIALIZED_MARKER)) ? "already copied" : "a skill with this name is already there";
+  if (existsSync(dest)) return isMaterializedCopy(dest) ? "already copied" : "a skill with this name is already there";
   if (!existsSync(entry)) return "the source file is gone";
   if (lstatSync(entry).isSymbolicLink()) return "the source entry file is a link";
   if (basename(entry) === "skill.json") return "the source entry is skill.json, which hosts do not read";
@@ -96,14 +98,14 @@ function copySkill(binding, entry, skillsRoot, dest) {
       mkdirSync(staging, { recursive: true });
       copyFileSync(entry, join(staging, "SKILL.md"));
     }
+    // Ignoring from inside the copy needs no shared Git state and changes no user file.
+    writeFileSync(join(staging, GITIGNORE), "*\n");
     writeFileSync(join(staging, MATERIALIZED_MARKER), `${JSON.stringify({
       schema_version: 1,
       skill: binding.skill,
       provider: binding.provider || null,
       hash: treeHash(staging),
     }, null, 2)}\n`);
-    // Ignoring from inside the copy needs no shared Git state and changes no user file.
-    writeFileSync(join(staging, GITIGNORE), "*\n");
     renameSync(staging, dest);
   } finally {
     rmSync(staging, { recursive: true, force: true });
@@ -154,18 +156,27 @@ export function removeMaterializedSkills({ worktree, host }) {
     const dir = join(skillsRoot, entry.name);
     const markerPath = join(dir, MATERIALIZED_MARKER);
     if (!existsSync(markerPath)) continue;
-    let hash = null;
     try {
-      hash = JSON.parse(readFileSync(markerPath, "utf8")).hash;
+      // A renamed, tracked, or damaged folder cannot prove that DIRF made it.
+      const hash = isMaterializedCopy(dir) ? JSON.parse(readFileSync(markerPath, "utf8")).hash : null;
+      if (!hash || hash !== treeHash(dir)) {
+        kept.push({ skill: entry.name, reason: "the folder is not an unchanged DIRF copy" });
+        continue;
+      }
+      rmSync(dir, { recursive: true, force: true });
+      removed.push(entry.name);
+    } catch (error) {
+      kept.push({ skill: entry.name, reason: `the removal failed: ${error.message}` });
+    }
+  }
+  // An empty host folder would look like that host is in use. A folder with other content stays.
+  if (removed.length) {
+    try {
+      rmdirSync(skillsRoot);
+      rmdirSync(dirname(skillsRoot));
     } catch {
-      // A damaged marker cannot prove that DIRF made this folder.
+      // The folder still holds something that is not ours.
     }
-    if (!hash || hash !== treeHash(dir)) {
-      kept.push({ skill: entry.name, reason: "the copy changed after DIRF made it" });
-      continue;
-    }
-    rmSync(dir, { recursive: true, force: true });
-    removed.push(entry.name);
   }
   return { host, directory: relativeRoot, removed, kept };
 }

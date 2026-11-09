@@ -1,12 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileHash } from "../src/paths.js";
 import { materializeSkills, removeMaterializedSkills } from "../src/skill-materialize.js";
 import { discover } from "../src/skills.js";
+import { refreshSkillBindings } from "../src/skill-bindings.js";
 
 const CLI = join(process.cwd(), "src", "cli.js");
 
@@ -18,8 +19,8 @@ function git(cwd, ...args) {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
-function repo() {
-  const root = mkdtempSync(join(tmpdir(), "dirf-materialize-"));
+function repo(prefix = "dirf-materialize-") {
+  const root = mkdtempSync(join(tmpdir(), prefix));
   const main = join(root, "main");
   mkdirSync(main);
   git(main, "init", "-q");
@@ -240,6 +241,60 @@ test("a skill stored in the repository is taken from this checkout", () => {
   assert.match(readFileSync(join(main, ".claude", "skills", "in-repo", "SKILL.md"), "utf8"), /local version/);
 });
 
+test("skill discovery ignores copies when the path sends it to the recursive scan", () => {
+  const { root, main } = repo("dirf-cache-");
+  materializeSkills({ worktree: main, host: "claude", bindings: [source(root, "zz-cached-copy")] });
+  assert.equal(discover(main)["zz-cached-copy"], undefined);
+});
+
+test("refreshing a binding keeps the real source instead of a disposable copy", () => {
+  const { root, main } = repo();
+  const worktree = join(root, "wt");
+  git(main, "worktree", "add", "-q", worktree, "-b", "wt");
+  const bound = source(root, "main-only");
+  materializeSkills({ worktree, host: "claude", bindings: [bound] });
+  const saved = { ...bound, provider: "project", relative_entry: ".claude/skills/main-only/SKILL.md" };
+  const plan = { skill_flow: { steps: [{ skill: "main-only", provider: "project" }] } };
+  assert.deepEqual(refreshSkillBindings(plan, [saved], worktree), [saved]);
+});
+
+test("a tracked skill is real even with a marker in it", () => {
+  const { root, main } = repo();
+  materializeSkills({ worktree: main, host: "claude", bindings: [source(root, "zz-tracked")] });
+  git(main, "add", "-f", ".claude/skills/zz-tracked");
+  git(main, "commit", "-q", "-m", "track it");
+  assert.ok(discover(main)["zz-tracked"], "discovery sees it");
+  const again = materializeSkills({ worktree: main, host: "claude", bindings: [source(root, "zz-tracked")] });
+  assert.match(again.skipped[0].reason, /already there/);
+  const cleaned = removeMaterializedSkills({ worktree: main, host: "claude" });
+  assert.deepEqual(cleaned.removed, []);
+  assert.equal(git(main, "status", "--porcelain"), "", "no tracked file was deleted");
+});
+
+test("cleanup keeps a renamed copy and notices any change", () => {
+  const { root, main } = repo();
+  const skills = join(main, ".claude", "skills");
+  materializeSkills({ worktree: main, host: "claude", bindings: [source(root, "ren"), source(root, "ign"), source(root, "emp")] });
+  renameSync(join(skills, "ren"), join(skills, "my-fork"));
+  writeFileSync(join(skills, "ign", ".gitignore"), "*.log\n");
+  mkdirSync(join(skills, "emp", "added"));
+  const result = removeMaterializedSkills({ worktree: main, host: "claude" });
+  assert.deepEqual(result.removed, []);
+  assert.deepEqual(result.kept.map(({ skill }) => skill).sort(), ["emp", "ign", "my-fork"]);
+});
+
+test("cleanup removes host folders it emptied and keeps others", () => {
+  const { root, main } = repo();
+  materializeSkills({ worktree: main, host: "codex", bindings: [source(root, "only")] });
+  removeMaterializedSkills({ worktree: main, host: "codex" });
+  assert.ok(!existsSync(join(main, ".codex")));
+  mkdirSync(join(main, ".claude"));
+  writeFileSync(join(main, ".claude", "settings.json"), "{}\n");
+  materializeSkills({ worktree: main, host: "claude", bindings: [source(root, "only2")] });
+  removeMaterializedSkills({ worktree: main, host: "claude" });
+  assert.ok(existsSync(join(main, ".claude", "settings.json")));
+});
+
 test("skill discovery ignores materialized copies", () => {
   const { root, main } = repo();
   materializeSkills({ worktree: main, host: "claude", bindings: [source(root, "zz-copied-skill")] });
@@ -271,6 +326,15 @@ test("dirf skills materialize copies an attempt's skills and a named DIRF defaul
   assert.ok(output.skipped.some(({ skill }) => skill === "not-a-real-skill"));
   assert.match(readFileSync(join(main, ".claude", "skills", "ste100", "SKILL.md"), "utf8"), /name: ste100/);
   assert.doesNotMatch(git(main, "status", "--porcelain", "--untracked-files=all"), /.claude/);
+
+  mkdirSync(join(main, "pkg"));
+  mkdirSync(join(main, "skills", "only-project"), { recursive: true });
+  writeFileSync(join(main, "skills", "only-project", "README.md"), "---\nname: only-project\ndescription: Project skill\n---\nBody\n");
+  const fromSubfolder = spawnSync(process.execPath, [CLI, "skills", "materialize", "--attempt", attempt, "--host", "claude", "--include", "only-project", "--json"], {
+    cwd: join(main, "pkg"), encoding: "utf8", env, timeout: 60_000,
+  });
+  assert.equal(fromSubfolder.status, 0, fromSubfolder.stderr);
+  assert.ok(JSON.parse(fromSubfolder.stdout).copied.includes("only-project"), fromSubfolder.stdout);
 
   const clean = cli("skills", "clean", "--host", "claude");
   assert.equal(clean.status, 0, clean.stderr);

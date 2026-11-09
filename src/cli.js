@@ -46,7 +46,7 @@ import {
 } from "./governance.js";
 import { DEFAULT_ISSUE_POLICY } from "./issue-governance.js";
 import { buildModelAdvice, normalizeModelCatalog } from "./model-advice.js";
-import { materializeSkills, removeMaterializedSkills } from "./skill-materialize.js";
+import { checkoutRoot as skillCheckoutRoot, materializeSkills, removeMaterializedSkills } from "./skill-materialize.js";
 import { binding as skillBinding } from "./skill-bindings.js";
 import { run as runReviewReport } from "../skills/code-review/scripts/review-report.mjs";
 import { run as runReviewLedger } from "../skills/code-review/scripts/review-ledger.mjs";
@@ -1096,7 +1096,7 @@ function cmdFolderRender(target) {
 function cmdSkillsMaterialize(args) {
   if (!args.host) throw new Error("skills materialize requires --host claude|codex|agents");
   if (!args.attempt) throw new Error("skills materialize requires --attempt ID");
-  const worktree = args.path ? resolve(args.path) : process.cwd();
+  const worktree = skillCheckoutRoot(args.path ? resolve(args.path) : process.cwd());
   const project = resolveProject(worktree);
   if (!project) throw new Error("This checkout has no DIRF project.");
   const bindings = readAttemptSkillBindings(project.slug, args.attempt);
