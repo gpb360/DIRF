@@ -22,7 +22,8 @@ import { parseSummaryCursor, SUMMARY_PAGE_SIZE, validateRequirementMappingUpdate
 // the one the pr-review playbook's declared validation (`dirf review ready
 // review.json`) already enforces through this module. Verdicts are derived
 // from findings/verification/confidence, never stored.
-import { deriveVerdict } from "../skills/code-review/scripts/review-report.mjs";
+import { deriveVerdict, normalizeRepository } from "../skills/code-review/scripts/review-report.mjs";
+import { ledgerAction, MAX_LOOP_ROUNDS } from "../skills/code-review/scripts/review-ledger.mjs";
 
 const GIT_TIMEOUT = 30_000;
 const LIVE_OBSERVATION_TTL_MS = 5 * 60_000;
@@ -383,6 +384,123 @@ function writeAttempt(slug, attempt) {
   delete stored.tracked;
   atomicWrite(attemptMetadataPath(slug, stored.id), JSON.stringify(stored, null, 2) + "\n");
   return getAttempt(slug, stored.id);
+}
+
+function reviewRoundsPath(slug, prNumber) {
+  return join(storeProjectDir(slug), "reviews", `pr-${prNumber}.json`);
+}
+
+function readReviewRounds(slug, prNumber) {
+  const path = reviewRoundsPath(slug, prNumber);
+  if (!existsSync(path)) return null;
+  let ledger;
+  try {
+    ledger = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    ledger = null;
+  }
+  const validEntries = Array.isArray(ledger?.entries)
+    && ledger.entries.every((entry) => entry && typeof entry === "object" && (entry.reset === true || Number.isInteger(entry.round)));
+  if (!validEntries || (ledger.max_rounds !== undefined && !Number.isInteger(ledger.max_rounds))) {
+    throw new Error(`The review rounds file is damaged: ${path}. Repair or delete it.`);
+  }
+  return ledger;
+}
+
+// Entries since the last reset. A reset starts a new count.
+function currentReviewSegment(ledger) {
+  return ledger.entries.slice(ledger.entries.findLastIndex((entry) => entry.reset === true) + 1);
+}
+
+// Review rounds belong to one registered project and the repository under
+// review. A review never registers a project: the first registration decides
+// the main checkout and blocks a later dirf state link, so it must be deliberate.
+export function resolveReviewProject(targetPath, review) {
+  ledgerAction(review); // Validates before anything else can happen.
+  const gitOutput = (...args) => {
+    try {
+      return execFileSync("git", ["-C", targetPath, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    } catch {
+      return null;
+    }
+  };
+  if (!gitOutput("rev-parse", "--git-common-dir")) throw new Error("dirf review trigger must run inside a Git checkout of the reviewed repository.");
+  const origin = gitOutput("remote", "get-url", "origin");
+  if (!origin || normalizeRepository(origin) !== normalizeRepository(review.target.repository)) {
+    throw new Error(`This checkout's origin does not match the reviewed repository (${review.target.repository}). Fork checkouts are not supported yet.`);
+  }
+  // Migration registers the project too, so a review must not trigger it.
+  const project = resolveProject(targetPath, { migrate: false });
+  if (!project) throw new Error("This checkout has no DIRF project. Run dirf state register from the main checkout, or dirf state link for a shared store. If it holds legacy .dirf state, run dirf state which from the main checkout instead.");
+  return project.slug;
+}
+
+// The store owns the review round for each PR. A review file cannot set it.
+export function recordReviewRound(slug, review, now = new Date()) {
+  ledgerAction(review); // Validates before anything is written.
+  return withProgressLock(slug, () => {
+    const prNumber = review.target.pr_number;
+    const ledger = readReviewRounds(slug, prNumber) || { schema_version: 1, pr_number: prNumber, entries: [] };
+    const repository = normalizeRepository(review.target.repository);
+    if (ledger.repository && ledger.repository !== repository) {
+      throw new Error(`PR #${prNumber} in this project belongs to ${ledger.repository}, a different repository from this review. If the repository moved, run dirf review reset-rounds.`);
+    }
+    ledger.repository = repository;
+    const segment = currentReviewSegment(ledger);
+    const fresh = segment.length === 0;
+    if (fresh) ledger.max_rounds = review.target.max_rounds ?? ledger.max_rounds ?? MAX_LOOP_ROUNDS;
+    else if (review.target.max_rounds !== undefined && review.target.max_rounds !== ledger.max_rounds) {
+      throw new Error(`The round limit for PR #${prNumber} is ${ledger.max_rounds}. Run dirf review reset-rounds to change it.`);
+    }
+    const headSha = review.target.head_sha.toLowerCase();
+    // A commit keeps its round for good. Only a commit not seen before advances the count.
+    const seen = segment.findLast((entry) => entry.head_sha === headSha);
+    const approachPending = segment.at(-1)?.approach_pending === true;
+    if (!seen && approachPending && !review.target.approach_change) {
+      throw new Error("The ledger required a new approach. Describe it in target.approach_change on this review.");
+    }
+    const highest = fresh ? 0 : Math.max(...segment.map((entry) => entry.round));
+    const round = seen ? seen.round : highest + 1;
+    // A re-review of an older commit keeps that commit's round, but the budget
+    // is what the PR has already spent, so it cannot reopen the fix loop.
+    const action = ledgerAction(review, { round: Math.max(round, highest), max_rounds: ledger.max_rounds });
+    ledger.entries.push({
+      head_sha: headSha,
+      round,
+      action: action.action,
+      approach_pending: action.action === "reconsider_approach" || (Boolean(seen) && approachPending),
+      at: now.toISOString(),
+    });
+    atomicWrite(reviewRoundsPath(slug, prNumber), JSON.stringify(ledger, null, 2) + "\n");
+    return action;
+  });
+}
+
+export function resetReviewRounds(slug, prNumber, reason, now = new Date()) {
+  if (!Number.isInteger(prNumber) || prNumber < 1) throw new Error("reset-rounds requires a pull-request number");
+  if (typeof reason !== "string" || !reason.trim()) throw new Error("reset-rounds requires --reason");
+  return withProgressLock(slug, () => {
+    const ledger = readReviewRounds(slug, prNumber);
+    if (!ledger) throw new Error(`DIRF has no review rounds for PR #${prNumber}.`);
+    ledger.entries.push({ reset: true, reason: reason.trim(), at: now.toISOString() });
+    delete ledger.repository;
+    atomicWrite(reviewRoundsPath(slug, prNumber), JSON.stringify(ledger, null, 2) + "\n");
+    return ledger;
+  });
+}
+
+export function assertReviewRoundRecorded(slug, review) {
+  const stored = readReviewRounds(slug, review.target.pr_number);
+  const ledger = stored?.repository && stored.repository !== normalizeRepository(review.target.repository) ? null : stored;
+  const segment = ledger ? currentReviewSegment(ledger) : [];
+  const stopped = segment.find((entry) => entry.action === "stop_for_person");
+  if (stopped) {
+    throw new Error(`The review rounds stopped for a person at round ${stopped.round}. After that decision, run dirf review reset-rounds and dirf review trigger.`);
+  }
+  const last = segment.at(-1);
+  if (!last || last.head_sha !== review.target.head_sha.toLowerCase() || last.action !== "verify_merge_readiness") {
+    throw new Error("DIRF has no clean ledger entry for this commit. Run dirf review trigger on this review first.");
+  }
 }
 
 function assertArtifactGraph(artifacts) {

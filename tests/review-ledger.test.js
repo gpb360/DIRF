@@ -61,11 +61,13 @@ function withFinding(round, extra = {}) {
 test("findings stop going to a fixer at the round limit", () => {
   assert.equal(MAX_LOOP_ROUNDS, 5);
   assert.equal(ledgerAction(withFinding(4)).action, "fix_and_update_same_pr");
+  assert.equal(ledgerAction(withFinding(4)).remaining, 1);
   for (const round of [5, 6]) {
     const result = ledgerAction(withFinding(round));
-    assert.equal(result.action, "reconsider_approach");
+    assert.equal(result.action, "stop_for_person");
     assert.equal(result.round, round);
     assert.equal(result.max_rounds, 5);
+    assert.equal(result.remaining, 0);
     assert.deepEqual(result.findings.map(({ id }) => id), ["P2-001"]);
     assert.equal(result.guardrails.human_decision_required, true);
     assert.equal(result.guardrails.merge_is_not_authorized, true);
@@ -74,23 +76,54 @@ test("findings stop going to a fixer at the round limit", () => {
   }
 });
 
+test("findings at round 3 force a new approach and keep the fix request", () => {
+  const request = ledgerAction(withFinding(3));
+  assert.equal(request.action, "reconsider_approach");
+  assert.equal(request.approach_change_required, true);
+  assert.equal(request.remaining, 2);
+  assert.equal(request.next_review.round, 4);
+  assert.equal(ledgerAction(withFinding(4)).approach_change_required, undefined);
+  const updated = (extra) => review({ target: { ...review().target, head_sha: SHA_C, ...extra } });
+  assert.throws(() => verifyUpdatedReview(request, updated({})), /approach_change/);
+  assert.equal(verifyUpdatedReview(request, updated({ approach_change: "Move the check to the store" })).verified, true);
+});
+
+test("the rethink follows a stated limit and needs room to run", () => {
+  assert.equal(ledgerAction(withFinding(6, { max_rounds: 8 })).action, "reconsider_approach");
+  assert.equal(ledgerAction(withFinding(3, { max_rounds: 8 })).action, "fix_and_update_same_pr");
+  assert.equal(ledgerAction(withFinding(1, { max_rounds: 3 })).action, "reconsider_approach");
+  assert.equal(ledgerAction(withFinding(1, { max_rounds: 2 })).action, "fix_and_update_same_pr");
+  assert.equal(ledgerAction(withFinding(2, { max_rounds: 2 })).action, "stop_for_person");
+});
+
+test("failed checks stop at the limit, pending checks and clean increments do not", () => {
+  const atLimit = { ...review().target, round: 5 };
+  const completion = (required_checks) => ({ review_complete: true, required_checks, unresolved_threads: 0 });
+  assert.equal(ledgerAction(review({ target: atLimit, completion: completion("failed") })).action, "stop_for_person");
+  assert.equal(ledgerAction(review({ target: atLimit, verification: [{ command: "t", status: "failed", result: "r" }] })).action, "stop_for_person");
+  assert.equal(ledgerAction(review({ target: atLimit, completion: completion("pending") })).action, "continue_review");
+  const incremental = { ...atLimit, mode: "incremental", previous_head_sha: SHA_C };
+  assert.equal(ledgerAction(review({ target: incremental })).action, "continue_review");
+  assert.equal(ledgerAction(review({ target: { ...review().target, round: 4 }, completion: completion("failed") })).action, "continue_review");
+});
+
+test("a store count overrides the numbers in the review file", () => {
+  const result = ledgerAction(withFinding(1, { max_rounds: 50 }), { round: 5, max_rounds: 5 });
+  assert.equal(result.action, "stop_for_person");
+  assert.equal(result.round, 5);
+  assert.equal(result.max_rounds, 5);
+});
+
 test("a clean review at the round limit still reaches readiness", () => {
   const result = ledgerAction(review({ target: { ...review().target, round: 5 } }));
   assert.equal(result.action, "verify_merge_readiness");
 });
 
-test("a stated limit replaces the default and a fixer cannot change it", () => {
-  assert.equal(ledgerAction(withFinding(2, { max_rounds: 2 })).action, "reconsider_approach");
+test("a stated limit replaces the default", () => {
   assert.equal(ledgerAction(withFinding(5, { max_rounds: 8 })).action, "fix_and_update_same_pr");
   for (const max_rounds of [0, 1.5, "8", null]) {
     assert.throws(() => ledgerAction(withFinding(1, { max_rounds })), /target\.max_rounds/);
   }
-  const updated = (extra) => review({ target: { ...review().target, head_sha: SHA_C, round: 2, ...extra } });
-  const request = ledgerAction(withFinding(1, { max_rounds: 8 }));
-  assert.equal(request.next_review.max_rounds, 8);
-  assert.equal(verifyUpdatedReview(request, updated({ max_rounds: 8 })).verified, true);
-  assert.throws(() => verifyUpdatedReview(request, updated({ max_rounds: 20 })), /round limit/i);
-  assert.throws(() => verifyUpdatedReview(request, updated({})), /round limit/i);
 });
 
 test("every ledger action reports the round so a re-review can keep it", () => {
@@ -108,17 +141,8 @@ test("every ledger action reports the round so a re-review can keep it", () => {
 
 test("a limit of one stops at the first review with no fix", () => {
   const result = ledgerAction(withFinding(1, { max_rounds: 1 }));
-  assert.equal(result.action, "reconsider_approach");
+  assert.equal(result.action, "stop_for_person");
   assert.equal(result.next_review, undefined);
-});
-
-test("a saved request without round data names the recovery step", () => {
-  const { round: _round, ...noRound } = ledgerAction(withFinding(1));
-  const { max_rounds: _max, ...noLimit } = ledgerAction(withFinding(1));
-  const updated = review({ target: { ...review().target, head_sha: SHA_C, round: 2 } });
-  for (const request of [noRound, noLimit]) {
-    assert.throws(() => verifyUpdatedReview(request, updated), /dirf review trigger/);
-  }
 });
 
 test("the review scripts stay inside their skill folder", () => {
@@ -132,8 +156,9 @@ test("agent instructions state the same loop limit as the code", () => {
   const policy = readFileSync(new URL("../policies/workflow-policy.md", import.meta.url), "utf8");
   assert.match(policy, new RegExp(`loop after ${MAX_LOOP_ROUNDS} rounds`));
   assert.match(policy, /reconsider_approach/);
+  assert.match(policy, /stop_for_person/);
   const playbook = readFileSync(new URL("../playbooks/pr-review/README.md", import.meta.url), "utf8");
-  assert.match(playbook, /reconsider_approach/);
+  assert.match(playbook, /stop_for_person/);
 });
 
 test("target.round must be a positive integer", () => {
@@ -142,15 +167,10 @@ test("target.round must be a positive integer", () => {
   }
 });
 
-test("a fixer cannot reset or skip the review round", () => {
-  const request = ledgerAction(withFinding(2));
-  const updated = (round) => review({ target: { ...review().target, head_sha: SHA_C, ...(round === undefined ? {} : { round }) } });
-  assert.equal(verifyUpdatedReview(request, updated(3)).review_target.round, 3);
-  for (const round of [undefined, 1, 2, 4]) {
-    assert.throws(() => verifyUpdatedReview(request, updated(round)), /target\.round to 3/);
+test("target.approach_change must be text", () => {
+  for (const approach_change of ["", 3, null]) {
+    assert.throws(() => ledgerAction(withFinding(1, { approach_change })), /target\.approach_change/);
   }
-  const { round: _omitted, ...withoutRound } = request;
-  assert.throws(() => verifyUpdatedReview(withoutRound, updated(3)), /Invalid remediation request/i);
 });
 
 test("a clean ledger requires live readiness before merge approval", () => {

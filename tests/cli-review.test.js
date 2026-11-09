@@ -1,19 +1,22 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const CLI = join(process.cwd(), "src", "cli.js");
+const HOME = mkdtempSync(join(tmpdir(), "dirf-review-home-"));
 
 function git(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
 function run(cwd, args) {
-  return spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: "utf8", timeout: 30_000 });
+  return spawnSync(process.execPath, [CLI, ...args], {
+    cwd, encoding: "utf8", timeout: 30_000, env: { ...process.env, DIRF_HOME: HOME },
+  });
 }
 
 function reviewFor(repository, base, head, prNumber = 1) {
@@ -58,6 +61,31 @@ test("dirf review ready checks the local range and live pull-request commit", ()
 
   const reviewPath = join(root, "review.json");
   writeFileSync(reviewPath, JSON.stringify(reviewFor(pathToFileURL(origin).href, base, head)));
+  const unrecorded = run(work, ["review", "ready", reviewPath]);
+  assert.notEqual(unrecorded.status, 0);
+  assert.match(unrecorded.stderr, /dirf review trigger/);
+  assert.equal(run(work, ["state", "register"]).status, 0);
+  const otherPath = join(root, "other.json");
+  const repository = pathToFileURL(origin).href;
+  const blocked = (body, message) => {
+    writeFileSync(otherPath, JSON.stringify(body));
+    assert.equal(run(work, ["review", "trigger", otherPath]).status, 0);
+    const refused = run(work, ["review", "ready", reviewPath]);
+    assert.notEqual(refused.status, 0, message);
+    assert.match(refused.stderr, /dirf review trigger/, message);
+  };
+  blocked({
+    ...reviewFor(repository, base, head),
+    axes: { ...reviewFor(repository, base, head).axes, correctness: { status: "finding", evidence: "P2-001" } },
+    findings: [{
+      id: "P2-001", priority: "P2", confidence: 92, axis: "correctness", title: "Keep the count",
+      file: "change.txt", line: 1, body: "The count restarts after a review.", evidence: ["A fixture shows it"],
+    }],
+  }, "latest entry for this commit is not clean");
+  blocked(reviewFor(repository, base, "e".repeat(40)), "latest clean entry is for another commit");
+  const recorded = run(work, ["review", "trigger", reviewPath]);
+  assert.equal(recorded.status, 0, recorded.stderr);
+  assert.equal(JSON.parse(recorded.stdout).action, "verify_merge_readiness");
   const ready = run(work, ["review", "ready", reviewPath]);
   assert.equal(ready.status, 0, ready.stderr);
   assert.match(ready.stdout, /Ready: no review issues remain/);
@@ -77,6 +105,307 @@ test("dirf review ready checks the local range and live pull-request commit", ()
   const wrongPr = run(work, ["review", "ready", reviewPath]);
   assert.notEqual(wrongPr.status, 0);
   assert.match(wrongPr.stderr, /could not read the live pull-request/i);
+});
+
+test("the store owns the review countdown for each pull request", () => {
+  const work = mkdtempSync(join(tmpdir(), "dirf-rounds-"));
+  git(work, ["init", "-q"]);
+  git(work, ["remote", "add", "origin", "https://github.com/owner/repo.git"]);
+  assert.equal(run(work, ["state", "register"]).status, 0);
+  const base = "a".repeat(40);
+  const trigger = (char, target = {}) => {
+    const body = reviewFor("https://github.com/owner/repo.git", base, char.repeat(40), 9);
+    body.target = { ...body.target, ...target };
+    body.findings = [{
+      id: "P2-001", priority: "P2", confidence: 92, axis: "correctness", title: "Keep the count",
+      file: "change.txt", line: 1, body: "The count restarts after a review.", evidence: ["A fixture shows it"],
+    }];
+    body.axes.correctness = { status: "finding", evidence: "P2-001" };
+    const path = join(work, ".git", "review.json");
+    writeFileSync(path, JSON.stringify(body));
+    return run(work, ["review", "trigger", path]);
+  };
+  const step = (result) => {
+    assert.equal(result.status, 0, result.stderr);
+    const { action, round, remaining } = JSON.parse(result.stdout);
+    return { action, round, remaining };
+  };
+  const fix = "fix_and_update_same_pr";
+  assert.deepEqual(step(trigger("b")), { action: fix, round: 1, remaining: 4 });
+  assert.deepEqual(step(trigger("b")), { action: fix, round: 1, remaining: 4 }, "same commit keeps the round");
+  assert.deepEqual(step(trigger("B")), { action: fix, round: 1, remaining: 4 }, "SHA case does not matter");
+  assert.deepEqual(step(trigger("c", { round: 1 })), { action: fix, round: 2, remaining: 3 }, "file cannot reset");
+  const limitChange = trigger("d", { max_rounds: 50 });
+  assert.notEqual(limitChange.status, 0);
+  assert.match(limitChange.stderr, /round limit/i);
+  assert.deepEqual(step(trigger("d")), { action: "reconsider_approach", round: 3, remaining: 2 });
+  const noChange = trigger("e");
+  assert.notEqual(noChange.status, 0);
+  assert.match(noChange.stderr, /approach_change/);
+  assert.deepEqual(step(trigger("e", { approach_change: "Count in the store" })), { action: fix, round: 4, remaining: 1 });
+  assert.deepEqual(step(trigger("f")), { action: "stop_for_person", round: 5, remaining: 0 });
+  assert.deepEqual(step(trigger("0")), { action: "stop_for_person", round: 6, remaining: 0 });
+
+  const noReason = run(work, ["review", "reset-rounds", "9"]);
+  assert.notEqual(noReason.status, 0);
+  assert.match(noReason.stderr, /--reason/);
+  const reset = run(work, ["review", "reset-rounds", "9", "--reason", "Owner chose to continue"]);
+  assert.equal(reset.status, 0, reset.stderr);
+  assert.deepEqual(step(trigger("1")), { action: fix, round: 1, remaining: 4 });
+});
+
+function roundsRepo({ register = true } = {}) {
+  const work = mkdtempSync(join(tmpdir(), "dirf-rounds-"));
+  git(work, ["init", "-q"]);
+  git(work, ["remote", "add", "origin", "https://github.com/owner/repo.git"]);
+  git(work, ["-c", "user.email=dirf@example.invalid", "-c", "user.name=DIRF", "commit", "-q", "--allow-empty", "-m", "base"]);
+  if (register) assert.equal(run(work, ["state", "register"]).status, 0);
+  const send = (pr, char, { clean = false, target = {}, cwd = work } = {}) => {
+    const body = reviewFor("https://github.com/owner/repo.git", "a".repeat(40), char.repeat(40), pr);
+    body.target = { ...body.target, ...target };
+    if (!clean) {
+      body.findings = [{
+        id: "P2-001", priority: "P2", confidence: 92, axis: "correctness", title: "Keep the count",
+        file: "change.txt", line: 1, body: "The count restarts after a review.", evidence: ["A fixture shows it"],
+      }];
+      body.axes.correctness = { status: "finding", evidence: "P2-001" };
+    }
+    const path = join(work, ".git", "review.json");
+    writeFileSync(path, JSON.stringify(body));
+    return run(cwd, ["review", "trigger", path]);
+  };
+  const out = (result) => {
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  return { work, send, out };
+}
+
+test("a re-review of the same commit cannot drop the required new approach", () => {
+  const { send, out } = roundsRepo();
+  out(send(1, "b"));
+  out(send(1, "c"));
+  assert.equal(out(send(1, "d")).action, "reconsider_approach");
+  assert.equal(out(send(1, "d", { clean: true })).round, 3);
+  const refused = send(1, "e");
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /approach_change/);
+  assert.equal(out(send(1, "e", { target: { approach_change: "Count in the store" } })).round, 4);
+  assert.equal(out(send(1, "f", { clean: true })).round, 5, "the rule ends once a new approach is recorded");
+});
+
+test("a re-review of an older commit keeps its round and blocks nothing", () => {
+  const { send, out } = roundsRepo();
+  out(send(1, "b"));
+  assert.equal(out(send(1, "c", { clean: true })).round, 2);
+  assert.equal(out(send(1, "b")).round, 2, "the output reports what the PR has spent");
+  const again = out(send(1, "c", { clean: true }));
+  assert.equal(again.round, 2);
+  assert.equal(again.action, "verify_merge_readiness");
+  assert.equal(out(send(1, "d")).round, 3);
+});
+
+test("each pull request and repository has its own count", () => {
+  const { send, out } = roundsRepo();
+  out(send(1, "b"));
+  out(send(1, "c"));
+  assert.equal(out(send(2, "b")).round, 1);
+  const other = send(1, "d", { target: { repository: "https://github.com/owner/other.git" } });
+  assert.notEqual(other.status, 0);
+  assert.match(other.stderr, /does not match/i);
+});
+
+test("a reset keeps a stated limit unless a review states another", () => {
+  const { work, send, out } = roundsRepo();
+  assert.equal(out(send(1, "b", { target: { max_rounds: 8 } })).max_rounds, 8);
+  assert.equal(run(work, ["review", "reset-rounds", "1", "--reason", "Owner chose to continue"]).status, 0);
+  assert.equal(out(send(1, "c")).max_rounds, 8);
+  assert.equal(run(work, ["review", "reset-rounds", "1", "--reason", "Owner changed the limit"]).status, 0);
+  assert.equal(out(send(1, "d", { target: { max_rounds: 3 } })).max_rounds, 3);
+});
+
+test("a stop stays in force until a person resets the rounds", () => {
+  const { work, send, out } = roundsRepo();
+  for (const char of ["b", "c"]) out(send(1, char));
+  out(send(1, "d"));
+  out(send(1, "e", { target: { approach_change: "Count in the store" } }));
+  assert.equal(out(send(1, "f")).action, "stop_for_person");
+  assert.equal(out(send(1, "0", { clean: true })).action, "verify_merge_readiness");
+  const script = join(work, ".git", "probe.mjs");
+  const stateUrl = pathToFileURL(join(process.cwd(), "src", "state.js")).href;
+  const review = reviewFor("https://github.com/owner/repo.git", "a".repeat(40), "0".repeat(40), 1);
+  writeFileSync(script, `import { assertReviewRoundRecorded as a, deriveSlug as d } from ${JSON.stringify(stateUrl)};
+a(d(process.cwd()), ${JSON.stringify(review)});`);
+  const probe = () => spawnSync(process.execPath, [script], { cwd: work, encoding: "utf8", env: { ...process.env, DIRF_HOME: HOME } });
+  const stopped = probe();
+  assert.notEqual(stopped.status, 0);
+  assert.match(stopped.stderr, /stopped for a person/);
+  assert.equal(run(work, ["review", "reset-rounds", "1", "--reason", "Owner accepted the result"]).status, 0);
+  assert.equal(out(send(1, "0", { clean: true })).round, 1);
+  const cleared = probe();
+  assert.equal(cleared.status, 0, cleared.stderr);
+});
+
+const normalizedPath = (path) => realpathSync(path).replaceAll("\\", "/").toLowerCase();
+
+function registeredProject(work) {
+  const { projects } = JSON.parse(readFileSync(join(HOME, "projects.json"), "utf8"));
+  return Object.values(projects).find((project) => {
+    try { return normalizedPath(project.main_path) === normalizedPath(work); } catch { return false; }
+  });
+}
+
+function subfolderAndWorktree(work) {
+  const sub = join(work, "sub", "deep");
+  mkdirSync(sub, { recursive: true });
+  const worktree = `${work}-wt`;
+  git(work, ["worktree", "add", "-q", worktree, "-b", "wt"]);
+  return { sub, worktree };
+}
+
+test("a review never registers a project, and every path shares one count", () => {
+  const { work, send, out } = roundsRepo({ register: false });
+  const { sub, worktree } = subfolderAndWorktree(work);
+  for (const cwd of [work, sub, worktree]) {
+    const refused = send(1, "b", { cwd });
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /dirf state register/);
+  }
+  assert.equal(registeredProject(work), undefined);
+  assert.equal(registeredProject(sub), undefined);
+  assert.equal(registeredProject(worktree), undefined);
+
+  assert.equal(run(work, ["state", "register"]).status, 0);
+  assert.equal(out(send(1, "b", { cwd: sub })).round, 1);
+  assert.equal(out(send(1, "b", { cwd: worktree })).round, 1);
+  assert.equal(out(send(1, "c")).round, 2);
+});
+
+function legacyRepo() {
+  const repo = roundsRepo({ register: false });
+  mkdirSync(join(repo.work, ".dirf"));
+  writeFileSync(join(repo.work, ".dirf", "config.json"), "{}\n");
+  writeFileSync(join(repo.work, ".dirf", "HANDOFF.md"), "# Legacy handoff\n");
+  return repo;
+}
+
+test("a review never migrates legacy state", () => {
+  const { work, send, out } = legacyRepo();
+  const cwd = join(work, "sub");
+  mkdirSync(cwd);
+  for (const place of [cwd, work]) {
+    const refused = send(1, "b", { cwd: place });
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /dirf state which/);
+  }
+  const reset = run(work, ["review", "reset-rounds", "1", "--reason", "Nothing yet"]);
+  assert.notEqual(reset.status, 0);
+  assert.equal(registeredProject(work), undefined);
+  assert.ok(existsSync(join(work, ".dirf", "HANDOFF.md")));
+
+  assert.equal(run(work, ["state", "which"]).status, 0);
+  assert.equal(out(send(1, "b")).round, 1);
+  assert.ok(existsSync(join(HOME, "projects", registeredProject(work).slug, "HANDOFF.md")));
+});
+
+test("an invalid review has no side effects", () => {
+  const { work, send } = legacyRepo();
+  const result = send(1, "b", { target: { mode: "sideways" } });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /target\.mode/);
+  assert.equal(registeredProject(work), undefined);
+  assert.ok(existsSync(join(work, ".dirf", "HANDOFF.md")));
+});
+
+test("readiness refuses a clean entry recorded for another repository", () => {
+  const { work, send, out } = roundsRepo();
+  out(send(1, "b", { clean: true }));
+  const stateUrl = pathToFileURL(join(process.cwd(), "src", "state.js")).href;
+  const probe = (repository) => {
+    const review = reviewFor(repository, "a".repeat(40), "b".repeat(40), 1);
+    const script = join(work, ".git", "probe.mjs");
+    writeFileSync(script, `import { assertReviewRoundRecorded as a, deriveSlug as d } from ${JSON.stringify(stateUrl)};
+a(d(process.cwd()), ${JSON.stringify(review)});`);
+    return spawnSync(process.execPath, [script], { cwd: work, encoding: "utf8", env: { ...process.env, DIRF_HOME: HOME } });
+  };
+  assert.equal(probe("https://github.com/owner/repo.git").status, 0);
+  const other = probe("https://github.com/owner/other.git");
+  assert.notEqual(other.status, 0);
+  assert.match(other.stderr, /dirf review trigger/);
+});
+
+test("a review of an older commit cannot reopen the loop after a stop", () => {
+  const { send, out } = roundsRepo();
+  out(send(1, "b"));
+  out(send(1, "c"));
+  out(send(1, "d"));
+  out(send(1, "e", { target: { approach_change: "Count in the store" } }));
+  assert.equal(out(send(1, "f")).action, "stop_for_person");
+  for (const char of ["b", "d"]) {
+    const result = out(send(1, char));
+    assert.equal(result.action, "stop_for_person");
+    assert.equal(result.remaining, 0);
+    assert.equal(result.next_review, undefined);
+  }
+});
+
+test("only a checkout of the reviewed repository can record a round", () => {
+  const { send, out } = roundsRepo();
+  assert.match(send(1, "b", { target: { repository: "https://github.com/someone/fork.git" } }).stderr, /does not match/i);
+  out(send(1, "b"));
+  const plain = mkdtempSync(join(tmpdir(), "dirf-plain-"));
+  const result = send(1, "c", { cwd: plain });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Git checkout/);
+  assert.equal(registeredProject(plain), undefined, "a refused directory is not registered");
+});
+
+test("a reset lets a moved repository continue", () => {
+  const { work, send, out } = roundsRepo();
+  out(send(1, "b"));
+  const moved = "https://github.com/owner/renamed.git";
+  git(work, ["remote", "set-url", "origin", moved]);
+  const refused = send(1, "c", { target: { repository: moved } });
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /reset-rounds/);
+  assert.equal(run(work, ["review", "reset-rounds", "1", "--reason", "Repository renamed"]).status, 0);
+  assert.equal(out(send(1, "c", { target: { repository: moved } })).round, 1);
+});
+
+test("damaged rounds entries fail with the file name", () => {
+  const { send, out } = roundsRepo();
+  out(send(78, "b"));
+  const projects = join(HOME, "projects");
+  const slug = readdirSync(projects).find((name) => {
+    try { return readdirSync(join(projects, name, "reviews")).includes("pr-78.json"); } catch { return false; }
+  });
+  for (const content of ['{"entries":[null]}', '{"entries":[{"head_sha":"x"}]}', '{"entries":[],"max_rounds":"lots"}']) {
+    writeFileSync(join(projects, slug, "reviews", "pr-78.json"), content);
+    const result = send(78, "c");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /damaged.*pr-78\.json/s);
+  }
+});
+
+test("a damaged rounds file names itself and stays closed", () => {
+  const { send, out } = roundsRepo();
+  out(send(77, "b"));
+  const projects = join(HOME, "projects");
+  const slug = readdirSync(projects).find((name) => {
+    try { return readdirSync(join(projects, name, "reviews")).includes("pr-77.json"); } catch { return false; }
+  });
+  writeFileSync(join(projects, slug, "reviews", "pr-77.json"), "{");
+  const result = send(77, "c");
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /damaged.*pr-77\.json/s);
+});
+
+test("reset-rounds needs an existing DIRF project", () => {
+  const work = mkdtempSync(join(tmpdir(), "dirf-rounds-"));
+  git(work, ["init", "-q"]);
+  const reset = run(work, ["review", "reset-rounds", "1", "--reason", "Nothing here"]);
+  assert.notEqual(reset.status, 0);
+  assert.match(reset.stderr, /no DIRF project/);
 });
 
 test("dirf review ready rejects historical reports before any live Git lookup", () => {

@@ -50,21 +50,32 @@ authorizes a merge or a new PR.
 `trigger_review_ledger` and the new exact head; the harness must run the review
 again and publish a fresh ledger before another fix or merge decision.
 
-The loop has a limit of five rounds. If the user or task states a different
-limit, set `target.max_rounds` on the first review. Each updated review must set
-`target.round` to the `next_review.round` value of the fix request, or
-`verify-update` fails. A re-review without a fix, or a fresh review after a base
-change, keeps the `round` value that the last ledger action reported. If findings
-remain at the limit, the ledger returns `reconsider_approach`.
+The loop has a budget of five reviews and four fixes. DIRF counts the rounds for
+each PR in its store. Do not write the count in `review.json`. Run
+`dirf review trigger` once for each review, inside a registered checkout whose
+`origin` is the reviewed repository. Fork checkouts are not supported yet. Only a commit not seen before advances
+the round.
+If the user or task states a different limit, set `target.max_rounds` on the first
+review.
 
-The ledger applies the limit to findings only. A failed check returns `continue_review`, so follow
-the Loop Limit in the workflow policy.
+If findings remain at round 3, the ledger returns `reconsider_approach`. Change
+the approach before the next fix. Describe the change in `target.approach_change`
+on the next review. DIRF rejects the next commit without that text. DIRF checks
+that the text exists. DIRF cannot check its quality.
 
-The `reconsider_approach` action contains no fix request. Stop the automatic
-fixes and give the findings to a person. The person decides to change the
-approach, continue, or close the PR. A review after that decision starts at
-round 1. The limit does not waive findings. `dirf review ready` continues to
-fail while a finding remains.
+With a different limit, this step occurs two rounds before the limit. A limit
+below 3 has no such step.
+
+If findings or failed checks remain at the limit, the ledger returns
+`stop_for_person`. This action contains no fix request. Stop the automatic fixes
+and give the result to a person. The person changes the approach, continues, or
+closes the PR.
+
+To continue after that decision, run
+`dirf review reset-rounds <pr> --reason "..."`. The limit does not waive findings.
+`dirf review ready` continues to fail while a finding remains. For an open PR,
+`dirf review ready` also requires a clean ledger entry for the exact commit. It
+fails after a stop until a person resets the rounds.
 
 The loop is complete only when the current review has no findings and the
 corrected behavior works under the applicable checks.
