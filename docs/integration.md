@@ -161,10 +161,11 @@ node scripts/bootstrap-laptop.js --store "\\\\server\\dirf-store" \
 
 The contract, in short:
 
-- Clone each shared project at the **same absolute path** on every laptop.
-  Slugs hash the absolute path (`identityKeyForPath`), so different paths
-  silently fork state. Passing a registered slug by name avoids this only
-  for reference-accepting tools.
+- Slugs hash the absolute path (`identityKeyForPath`), so different paths
+  fork state. Clone each shared project at the **same absolute path** on every
+  laptop, or run `dirf state link --slug <slug>` once in the checkout on each
+  machine whose path differs. Link is required between Windows and Linux. It
+  allows one checkout of a project per machine.
 - Use the **same** `DIRF_ORCHESTRATOR_TOKEN` everywhere. `execution-authority.json`
   stores its hash; a mismatching token is rejected (`bindExecutionAuthority`).
   Restrict the share's ACLs accordingly.

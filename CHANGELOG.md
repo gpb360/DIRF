@@ -7,6 +7,10 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+### Added
+- **`dirf state link`** — joins this machine's checkout to a project in a
+  shared store when its absolute path differs, such as Windows and Linux.
+
 ### Changed
 - **Leaner host `dirf` skill startup** — session start now ends at
   `dirf state active`; `state which`, handoffs, and `resume` are reserved for

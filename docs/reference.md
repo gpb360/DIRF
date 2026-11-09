@@ -212,6 +212,7 @@ dirf migrate [<name-or-id>]                          refresh legacy schema 2–5
 dirf state which [--path DIR]                        what project am I in? (slug + store path + handoff path)
 dirf state list                                      list all registered projects
 dirf state register [--path DIR]                     register a project explicitly
+dirf state link --slug S [--path DIR]                join this machine's checkout to a shared-store project
 dirf state read-handoff [--path DIR|--slug S]        print the canonical project handoff
 dirf state write-handoff --file FILE|- [...]         write the canonical project handoff
 dirf state list-attempts [--path DIR|--slug S]       list attempts for a project

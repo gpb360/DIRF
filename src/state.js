@@ -117,8 +117,48 @@ function safeBasename(name) {
 
 export function deriveSlug(targetPath) {
   const key = identityKeyForPath(targetPath);
+  const linked = Object.values(readRegistry().projects)
+    .find((project) => project.linked_checkouts?.some((checkout) => checkout.git_common_dir === key));
+  if (linked) return linked.slug;
   const hash = createHash("sha1").update(key).digest("hex").slice(0, 8);
   return `${safeBasename(slugBasename(targetPath))}-${hash}`;
+}
+
+function projectOwnsKey(project, key) {
+  return project.git_common_dir === key
+    || Boolean(project.linked_checkouts?.some((checkout) => checkout.git_common_dir === key));
+}
+
+function recordedMainPaths(project) {
+  return [project.main_path, ...(project.linked_checkouts || []).map((checkout) => checkout.main_path)];
+}
+
+// A shared store records one checkout per machine. Git commands need the one
+// that exists here; each other machine's path is absent on this one.
+function localMainPath(project) {
+  return recordedMainPaths(project).find((path) => path && existsSync(path)) || project.main_path;
+}
+
+// Join this machine's checkout to a project already in a shared store. Slugs
+// hash an absolute path, so Windows and Linux clones can never derive one slug.
+export function linkCheckout(slug, targetPath) {
+  const registry = readRegistry();
+  const project = registry.projects[slug];
+  if (!project) throw new Error(`Unknown DIRF project ${slug}`);
+  const key = identityKeyForPath(targetPath);
+  const owner = Object.values(registry.projects).find((candidate) => projectOwnsKey(candidate, key));
+  if (owner?.slug === slug) return { slug, isNew: false };
+  if (owner) throw new Error(`${targetPath} already belongs to DIRF project ${owner.slug}`);
+  const localCheckout = recordedMainPaths(project).find((path) => path && existsSync(path));
+  if (localCheckout) throw new Error(`Project ${slug} already has a checkout on this machine: ${localCheckout}`);
+  const common = gitCommonDir(targetPath);
+  project.linked_checkouts = [...(project.linked_checkouts || []), {
+    git_common_dir: key,
+    main_path: portable(common ? dirname(common) : resolve(targetPath)),
+    linked_at: nowIso(),
+  }];
+  writeRegistry(registry);
+  return { slug, isNew: true };
 }
 
 // Atomic write: temp file + rename, same volume. Prevents corruption under
@@ -1709,7 +1749,7 @@ function repositoryPathForAttempts(slug, attempts) {
   // Skip removed worktrees: Git commands there fail, which would turn every
   // revision comparison into "unknown".
   return attempts.find((attempt) => attempt.responsibility_path && existsSync(attempt.responsibility_path))?.responsibility_path
-    || project?.main_path
+    || (project && localMainPath(project))
     || process.cwd();
 }
 
@@ -2060,7 +2100,7 @@ function claimAttemptCheckoutLocked(slug, idOrName, worktreePath, now = new Date
   const project = getProject(slug);
   // Claim needs membership, not cleanup details from status/log in every
   // worktree. Git's registered worktree list preserves the same boundary.
-  const match = parseWorktreeList(git(project.main_path, ["worktree", "list", "--porcelain"]))
+  const match = parseWorktreeList(git(localMainPath(project),["worktree", "list", "--porcelain"]))
     .some((entry) => normalizeIdentityKey(entry.path) === key);
   if (!match) throw new Error("checkout must belong to the attempt's registered project");
   const owner = listAttempts(slug).find((candidate) =>
@@ -2190,7 +2230,7 @@ function observeAttemptLocked(slug, idOrName, options, now) {
   if (options.worktreePath) {
     const resolvedPath = resolve(String(options.worktreePath));
     const project = getProject(slug);
-    if (identityKeyForPath(resolvedPath) !== project.git_common_dir) {
+    if (!projectOwnsKey(project, identityKeyForPath(resolvedPath))) {
       throw new Error("execution worktree must belong to the attempt's registered project");
     }
     worktreePath = portable(resolvedPath);
@@ -2450,8 +2490,8 @@ export function inspectProjectWorktrees(slug, now = new Date()) {
   const settings = readSettings();
   const attempts = listAttempts(slug);
   const archives = readWorktreeArchive(slug).archived || [];
-  const mainKey = normalizeIdentityKey(project.main_path);
-  return parseWorktreeList(git(project.main_path, ["worktree", "list", "--porcelain"])).map((entry) => {
+  const mainKey = normalizeIdentityKey(localMainPath(project));
+  return parseWorktreeList(git(localMainPath(project),["worktree", "list", "--porcelain"])).map((entry) => {
     const path = resolve(entry.path);
     const key = normalizeIdentityKey(path);
     const attempt = attempts.find((item) => item.worktree_path && normalizeIdentityKey(item.worktree_path) === key) || null;
@@ -2512,8 +2552,8 @@ export function removeArchivedWorktree(slug, worktreePath, { approved = false } 
   if (item.is_main || item.dirty || item.conflicted) throw new Error("worktree is not safe to remove");
   if (item.head !== item.archived.head) throw new Error("worktree HEAD changed after archive");
   const project = getProject(slug);
-  git(project.main_path, ["worktree", "remove", item.path]);
-  git(project.main_path, ["worktree", "prune"]);
+  git(localMainPath(project),["worktree", "remove", item.path]);
+  git(localMainPath(project),["worktree", "prune"]);
   const state = readWorktreeArchive(slug);
   state.archived = (state.archived || []).filter((entry) => normalizeIdentityKey(entry.path) !== normalizeIdentityKey(item.path));
   writeWorktreeArchive(slug, state);
@@ -2793,7 +2833,7 @@ function progressAcceptance(slug, handoffBase, { workItem, reviewRevision }) {
     return { accepted: true, reason: null };
   }
   const project = getProject(slug);
-  const relation = revisionRelation(project?.main_path || process.cwd(), current.reviewRevision, reviewRevision);
+  const relation = revisionRelation((project && localMainPath(project)) || process.cwd(), current.reviewRevision, reviewRevision);
   if (relation === "current_newer") return { accepted: false, reason: "stale_review_revision" };
   if (relation === "conflict") return { accepted: false, reason: "conflicting_review_revision" };
   if (relation === "unknown") return { accepted: false, reason: "unverified_review_revision" };
@@ -3231,7 +3271,7 @@ export function portfolioSnapshot(now = new Date()) {
     return {
       slug: project.slug,
       name: project.name,
-      main_path: project.main_path,
+      main_path: localMainPath(project),
       created_at: project.created_at,
       last_seen: project.last_seen,
       status,
@@ -3363,7 +3403,7 @@ export function projectWorkSnapshot(slug, now = new Date()) {
     project: {
       slug: project.slug,
       name: project.name,
-      main_path: project.main_path,
+      main_path: localMainPath(project),
       handoff_path: projectHandoff !== null ? projectHandoffPath : null,
     },
     summary,
