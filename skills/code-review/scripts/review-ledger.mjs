@@ -6,6 +6,14 @@ import { validateReview, priorityCounts, deriveVerdict } from "./review-report.m
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 export const MAX_LOOP_ROUNDS = 5;
+// The forced rethink leaves two rounds to use the new approach.
+const RETHINK_BEFORE_LIMIT = 2;
+const FIX_ACTIONS = new Set(["fix_and_update_same_pr", "reconsider_approach"]);
+const MIN_ROUNDS_FOR_RETHINK = 3;
+
+function rethinkRound(maxRounds) {
+  return maxRounds >= MIN_ROUNDS_FOR_RETHINK ? maxRounds - RETHINK_BEFORE_LIMIT : null;
+}
 
 function load(file) {
   return JSON.parse(readFileSync(file, "utf8"));
@@ -25,7 +33,7 @@ function targetOf(review) {
  * This is deliberately a handoff, not an agent invocation: DIRF does not
  * trust a reviewer or fixer to mutate another PR without an exact-head check.
  */
-export function ledgerAction(review) {
+export function ledgerAction(review, count = {}) {
   validateReview(review);
   if (review.schema_version !== 2) {
     throw new Error("Review ledger triggers require schema version 2; historical reports are read-only.");
@@ -35,19 +43,25 @@ export function ledgerAction(review) {
     id, priority, axis, title, file, line, body, evidence,
   }));
 
-  const round = review.target.round ?? 1;
-  // An agent fixer and an agent reviewer can keep each other busy indefinitely.
-  // Findings that survive the limit go to a person instead of a fixer.
-  const maxRounds = review.target.max_rounds ?? MAX_LOOP_ROUNDS;
+  // The DIRF store supplies the count through dirf review trigger. The target
+  // fields are only the fallback for running this script directly.
+  const round = count.round ?? review.target.round ?? 1;
+  const maxRounds = count.max_rounds ?? review.target.max_rounds ?? MAX_LOOP_ROUNDS;
+  const remaining = Math.max(maxRounds - round, 0);
+  const failedCheck = review.verification.some(({ status }) => status === "failed")
+    || review.completion?.required_checks === "failed";
 
-  if (findings.length > 0 && round >= maxRounds) {
+  // An agent fixer and an agent reviewer can keep each other busy indefinitely.
+  // At the limit, the result goes to a person instead of a fixer.
+  if (round >= maxRounds && (findings.length > 0 || failedCheck)) {
     return {
       schema_version: 1,
-      action: "reconsider_approach",
+      action: "stop_for_person",
       target: targetOf(review),
       expected_head_sha: review.target.head_sha,
       round,
       max_rounds: maxRounds,
+      remaining,
       findings,
       priority_counts: counts,
       guardrails: { human_decision_required: true, merge_is_not_authorized: true },
@@ -55,13 +69,16 @@ export function ledgerAction(review) {
   }
 
   if (findings.length > 0) {
+    const rethink = round === rethinkRound(maxRounds);
     return {
       schema_version: 1,
-      action: "fix_and_update_same_pr",
+      action: rethink ? "reconsider_approach" : "fix_and_update_same_pr",
+      ...(rethink ? { approach_change_required: true } : {}),
       target: targetOf(review),
       expected_head_sha: review.target.head_sha,
       round,
       max_rounds: maxRounds,
+      remaining,
       findings,
       priority_counts: counts,
       guardrails: {
@@ -89,6 +106,7 @@ export function ledgerAction(review) {
     expected_head_sha: review.target.head_sha,
     round,
     max_rounds: maxRounds,
+    remaining,
     findings: [],
     priority_counts: counts,
     guardrails: { live_readiness_required: true, merge_is_not_authorized: true },
@@ -104,8 +122,8 @@ export function verifyUpdatedReview(request, updatedReview) {
   if (updatedReview.schema_version !== 2) {
     throw new Error("Updated review must use schema version 2.");
   }
-  if (!request || request.schema_version !== 1 || request.action !== "fix_and_update_same_pr") {
-    throw new Error("Invalid remediation request: expected a fix_and_update_same_pr request.");
+  if (!request || request.schema_version !== 1 || !FIX_ACTIONS.has(request.action)) {
+    throw new Error("Invalid remediation request: expected a fix_and_update_same_pr or reconsider_approach request.");
   }
   const original = request.target;
   if (!original || typeof original.repository !== "string" || !original.repository.trim()
@@ -115,10 +133,6 @@ export function verifyUpdatedReview(request, updatedReview) {
     || original.head_sha.toLowerCase() !== request.expected_head_sha.toLowerCase()) {
     throw new Error("Invalid remediation request: the target and expected head must identify the same original PR commit.");
   }
-  if (!Number.isInteger(request.round) || request.round < 1
-    || !Number.isInteger(request.max_rounds) || request.max_rounds < 1) {
-    throw new Error("Invalid remediation request: it has no round data. Run dirf review trigger on the original review to create it again.");
-  }
   const updated = updatedReview.target;
   if (updated.repository !== original.repository) throw new Error("The fix changed the review repository.");
   if (updated.pr_number !== original.pr_number) throw new Error("The fix changed the pull request number.");
@@ -127,11 +141,8 @@ export function verifyUpdatedReview(request, updatedReview) {
     throw new Error("The fixer did not advance the pull-request head.");
   }
   if (!SHA_PATTERN.test(updated.head_sha)) throw new Error("The updated review head is not a valid Git SHA.");
-  if (updated.round !== request.round + 1) {
-    throw new Error(`The updated review must set target.round to ${request.round + 1}.`);
-  }
-  if ((updated.max_rounds ?? MAX_LOOP_ROUNDS) !== request.max_rounds) {
-    throw new Error(`The fix changed the round limit; expected target.max_rounds ${request.max_rounds}.`);
+  if (request.approach_change_required && !updated.approach_change) {
+    throw new Error("The updated review must describe the new approach in target.approach_change.");
   }
   return {
     verified: true,

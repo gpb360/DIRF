@@ -51,11 +51,11 @@ Create `review.json` with this shape:
 }
 ```
 
-`target.round` is optional and counts the review rounds for this PR. Omit it for
-the first review or set it to 1. Only a fix advances the round. A re-review
-without a fix keeps the round. `target.max_rounds` is optional and replaces the
-default limit of five rounds. The last round has no fix, so `max_rounds: N` allows
-N-1 fixes. See step 5 of `workflow.md`.
+DIRF counts review rounds in its store, so `dirf review trigger` ignores
+`target.round`. `target.max_rounds` is optional and replaces the default limit of
+five rounds on the first review. The last round has no fix, so `max_rounds: N`
+allows N-1 fixes. The first review after `reconsider_approach` must include
+`target.approach_change`. See step 5 of `workflow.md`.
 
 ## Finding requirements
 
@@ -88,6 +88,7 @@ the detailed report. Normal user updates should use ordinary language.
 Before asking to merge, run `dirf review ready review.json`. Readiness requires
 the live GitHub PR commit, the repository and review base to match the checkout, zero
 findings, a completed review, every recorded verification and required check to
-have passed, and zero unresolved review conversations. Final merge readiness
+have passed, and zero unresolved review conversations. On an open PR, readiness
+also requires a clean round ledger entry for the exact commit. Final merge readiness
 requires a full review. Historical schema-v1 reports remain valid for reading
 and rendering, but cannot authorize a merge.

@@ -33,7 +33,7 @@ import { installationDiagnostics } from "./doctor.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveProject, resolveProjectReference, listProjects, registerProject, linkCheckout, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, projectHandoffContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, attemptNextAction, projectWorkSnapshot, observeAttempt, bindExecutionAuthority, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings, workflowGates, attemptAudit, runBuiltinCheck, attemptSummary, deriveSlug, checkoutSummary } from "./state.js";
+import { recordReviewRound, resetReviewRounds, assertReviewRoundRecorded, resolveProject, resolveProjectReference, listProjects, registerProject, linkCheckout, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, projectHandoffContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, attemptNextAction, projectWorkSnapshot, observeAttempt, bindExecutionAuthority, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings, workflowGates, attemptAudit, runBuiltinCheck, attemptSummary, deriveSlug, checkoutSummary } from "./state.js";
 import { ARTIFACT_TYPES, explainGoverningArtifact } from "./artifacts.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 import {
@@ -2045,7 +2045,8 @@ Usage:
                                                       show the ordered skill flow and optional diagnostic model advice
   dirf govern <digest|evaluate|append|verify> [...]    decide actions and maintain a hash-linked evidence ledger
   dirf review <validate|render|ready> review.json     validate, render, or prove a PR review is ready
-  dirf review trigger review.json                    emit a bounded same-PR fix request
+  dirf review trigger review.json                    record the review round and emit the next action
+  dirf review reset-rounds <pr> --reason "..."       restart the round count after a person decides
   dirf review verify-update request.json updated-review.json  compare the report targets
   dirf ste check <file-or-dir>... [--words FILE] [--json]  check prose against ASD-STE100 writing rules
   dirf ste rules                                       list the STE rules the checker tests
@@ -2229,10 +2230,26 @@ function cmdReview(args) {
     console.error("usage: dirf review <validate|render|ready> review.json");
     console.error("       dirf review trigger review.json");
     console.error("       dirf review verify-update request.json updated-review.json");
+    console.error('       dirf review reset-rounds <pr> --reason "..."');
     process.exitCode = 2;
     return;
   }
-  if (subcommand === "trigger" || subcommand === "verify-update") {
+  const reviewPath = args.path ? resolve(args.path) : process.cwd();
+  if (subcommand === "trigger") {
+    const review = JSON.parse(readFileSync(resolve(files[0]), "utf8"));
+    // resolveProject runs legacy migration, which registering first would skip.
+    const slug = (resolveProject(reviewPath) || registerProject(reviewPath)).slug;
+    console.log(JSON.stringify(recordReviewRound(slug, review), null, 2));
+    return;
+  }
+  if (subcommand === "reset-rounds") {
+    const project = resolveProject(reviewPath);
+    if (!project) throw new Error("This checkout has no DIRF project, so it has no review rounds.");
+    resetReviewRounds(project.slug, Number(files[0]), args.reason);
+    console.log(`Review rounds reset for PR #${files[0]}. The next review is round 1.`);
+    return;
+  }
+  if (subcommand === "verify-update") {
     console.log(JSON.stringify(runReviewLedger([subcommand, ...files]), null, 2));
     return;
   }
@@ -2241,7 +2258,9 @@ function cmdReview(args) {
     process.exitCode = 2;
     return;
   }
-  console.log(runReviewReport([subcommand, files[0]]));
+  console.log(runReviewReport([subcommand, files[0]], {
+    requireLedgerEntry: (review) => assertReviewRoundRecorded(deriveSlug(reviewPath), review),
+  }));
 }
 
 function plainName(task) {

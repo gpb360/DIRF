@@ -10,6 +10,12 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 ### Added
 - **`dirf state link`** — joins this machine's checkout to a project in a
   shared store when its absolute path differs, such as Windows and Linux.
+- **Review round countdown** — DIRF counts review rounds per PR in its store:
+  five reviews and four fixes by default. `dirf review trigger` returns
+  `reconsider_approach` at round 3, which now requires `target.approach_change`
+  on the next commit, and `stop_for_person` at the limit. `reconsider_approach`
+  no longer means stop. `dirf review ready` requires a clean ledger entry on an
+  open PR. `dirf review reset-rounds` restarts the count after a person decides.
 
 ### Changed
 - **Leaner host `dirf` skill startup** — session start now ends at

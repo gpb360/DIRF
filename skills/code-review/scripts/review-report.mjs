@@ -86,6 +86,9 @@ export function validateReview(review) {
     if (review.target.max_rounds !== undefined && (!Number.isInteger(review.target.max_rounds) || review.target.max_rounds < 1)) {
       errors.push("target.max_rounds must be a positive integer");
     }
+    if (review.target.approach_change !== undefined && !nonEmptyString(review.target.approach_change)) {
+      errors.push("target.approach_change must be a non-empty string");
+    }
   }
 
   if (!Array.isArray(review.walkthrough) || review.walkthrough.length === 0) {
@@ -217,7 +220,7 @@ export function deriveVerdict(review) {
   return "PASS";
 }
 
-function normalizeRepository(value) {
+export function normalizeRepository(value) {
   let normalized = String(value || "").trim().replaceAll("\\", "/").replace(/\.git$/i, "");
   const ssh = normalized.match(/^git@([^:]+):(.+)$/i);
   if (ssh) normalized = `${ssh[1]}/${ssh[2]}`;
@@ -824,6 +827,10 @@ export function run(argv, io = {}) {
     if (review.target.mode !== "full") throw new Error("Merge readiness requires a full review of the current pull request.");
     const context = currentGitContext(review, io);
     assertReviewReady(review, context);
+    if (context.pr_state === "open") {
+      if (io.requireLedgerEntry) io.requireLedgerEntry(review);
+      else process.stderr.write("The review round ledger was not checked. Use dirf review ready.\n");
+    }
     if (context.pr_state === "merged") {
       return `Verified: the review matches merged PR #${review.target.pr_number} at ${context.current_head.slice(0, 12)} with merge commit ${context.merge_commit.slice(0, 12)}.`;
     }
