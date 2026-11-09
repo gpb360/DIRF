@@ -249,6 +249,9 @@ dirf export obsidian [--out DIR]                     export the portfolio into a
 dirf export graphify [--out DIR] [--skip-render]     export the portfolio as a graphify graph (+ HTML render)
 
 # inspection + registries
+dirf skills materialize --attempt ID --host HOST [--path DIR] [--include a,b] [--json]
+                                                     copy an attempt's skills into a checkout for spawned agents
+dirf skills clean --host HOST [--path DIR]           remove only unchanged copied skills
 dirf skills scan [--path DIR]                        scan host, show installed skills + resolved refs
 dirf inspect [<path>]                                detect a project's optimization stack + suggest gaps
 dirf flow "<task>" [--path DIR] [--profile FILE] [--models FILE] [--providers LIST]     show the ordered skill flow and optional model advice
