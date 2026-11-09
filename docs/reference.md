@@ -235,6 +235,8 @@ dirf artifact accept <attempt> <artifact-id> [--json] explicitly accept a record
 dirf review validate <review.json>                      validate a review artifact
 dirf review render <review.json>                        render a review artifact as Markdown
 dirf review ready <review.json>                         fail closed unless the exact PR is merge-ready
+dirf review trigger <review.json>                       record the review round and emit the next action
+dirf review reset-rounds <pr> --reason "..."            restart the round count after a person decides
 
 # writing standard (ASD-STE100)
 dirf ste check <file-or-dir>... [--words FILE] [--json]  check prose against the STE writing rules (exit 1 on findings)
