@@ -64,6 +64,7 @@ test("dirf review ready checks the local range and live pull-request commit", ()
   const unrecorded = run(work, ["review", "ready", reviewPath]);
   assert.notEqual(unrecorded.status, 0);
   assert.match(unrecorded.stderr, /dirf review trigger/);
+  assert.equal(run(work, ["state", "register"]).status, 0);
   const otherPath = join(root, "other.json");
   const repository = pathToFileURL(origin).href;
   const blocked = (body, message) => {
@@ -110,6 +111,7 @@ test("the store owns the review countdown for each pull request", () => {
   const work = mkdtempSync(join(tmpdir(), "dirf-rounds-"));
   git(work, ["init", "-q"]);
   git(work, ["remote", "add", "origin", "https://github.com/owner/repo.git"]);
+  assert.equal(run(work, ["state", "register"]).status, 0);
   const base = "a".repeat(40);
   const trigger = (char, target = {}) => {
     const body = reviewFor("https://github.com/owner/repo.git", base, char.repeat(40), 9);
@@ -152,11 +154,12 @@ test("the store owns the review countdown for each pull request", () => {
   assert.deepEqual(step(trigger("1")), { action: fix, round: 1, remaining: 4 });
 });
 
-function roundsRepo() {
+function roundsRepo({ register = true } = {}) {
   const work = mkdtempSync(join(tmpdir(), "dirf-rounds-"));
   git(work, ["init", "-q"]);
   git(work, ["remote", "add", "origin", "https://github.com/owner/repo.git"]);
   git(work, ["-c", "user.email=dirf@example.invalid", "-c", "user.name=DIRF", "commit", "-q", "--allow-empty", "-m", "base"]);
+  if (register) assert.equal(run(work, ["state", "register"]).status, 0);
   const send = (pr, char, { clean = false, target = {}, cwd = work } = {}) => {
     const body = reviewFor("https://github.com/owner/repo.git", "a".repeat(40), char.repeat(40), pr);
     body.target = { ...body.target, ...target };
@@ -252,29 +255,75 @@ function registeredProject(work) {
   });
 }
 
-test("a first review from a subfolder or worktree registers the main checkout", () => {
-  for (const place of [
-    (work) => { const sub = join(work, "sub", "deep"); mkdirSync(sub, { recursive: true }); return sub; },
-    (work) => { const wt = `${work}-wt`; git(work, ["worktree", "add", "-q", wt, "-b", "wt"]); return wt; },
-  ]) {
-    const { work, send, out } = roundsRepo();
-    const cwd = place(work);
-    assert.equal(out(send(1, "b", { cwd })).round, 1);
-    assert.ok(registeredProject(work), "the main checkout is the registered path");
-    assert.equal(registeredProject(cwd), undefined, "the subfolder or worktree is not");
-    assert.equal(out(send(1, "b")).round, 1, "every path shares one count");
+function subfolderAndWorktree(work) {
+  const sub = join(work, "sub", "deep");
+  mkdirSync(sub, { recursive: true });
+  const worktree = `${work}-wt`;
+  git(work, ["worktree", "add", "-q", worktree, "-b", "wt"]);
+  return { sub, worktree };
+}
+
+test("a review never registers a project, and every path shares one count", () => {
+  const { work, send, out } = roundsRepo({ register: false });
+  const { sub, worktree } = subfolderAndWorktree(work);
+  for (const cwd of [work, sub, worktree]) {
+    const refused = send(1, "b", { cwd });
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /dirf state register/);
   }
+  assert.equal(registeredProject(work), undefined);
+  assert.equal(registeredProject(sub), undefined);
+  assert.equal(registeredProject(worktree), undefined);
+
+  assert.equal(run(work, ["state", "register"]).status, 0);
+  assert.equal(out(send(1, "b", { cwd: sub })).round, 1);
+  assert.equal(out(send(1, "b", { cwd: worktree })).round, 1);
+  assert.equal(out(send(1, "c")).round, 2);
 });
 
-test("a first review from a subfolder still migrates legacy state", () => {
-  const { work, send, out } = roundsRepo();
-  mkdirSync(join(work, ".dirf"));
-  writeFileSync(join(work, ".dirf", "config.json"), "{}\n");
-  writeFileSync(join(work, ".dirf", "HANDOFF.md"), "# Legacy handoff\n");
+function legacyRepo() {
+  const repo = roundsRepo({ register: false });
+  mkdirSync(join(repo.work, ".dirf"));
+  writeFileSync(join(repo.work, ".dirf", "config.json"), "{}\n");
+  writeFileSync(join(repo.work, ".dirf", "HANDOFF.md"), "# Legacy handoff\n");
+  return repo;
+}
+
+test("legacy state migrates only from the main checkout", () => {
+  const { work, send, out } = legacyRepo();
   const cwd = join(work, "sub");
   mkdirSync(cwd);
-  out(send(1, "b", { cwd }));
+  assert.notEqual(send(1, "b", { cwd }).status, 0);
+  assert.equal(registeredProject(work), undefined);
+  assert.ok(existsSync(join(work, ".dirf", "HANDOFF.md")));
+  assert.equal(out(send(1, "b")).round, 1);
   assert.ok(existsSync(join(HOME, "projects", registeredProject(work).slug, "HANDOFF.md")));
+});
+
+test("an invalid review has no side effects", () => {
+  const { work, send } = legacyRepo();
+  const result = send(1, "b", { target: { mode: "sideways" } });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /target\.mode/);
+  assert.equal(registeredProject(work), undefined);
+  assert.ok(existsSync(join(work, ".dirf", "HANDOFF.md")));
+});
+
+test("readiness refuses a clean entry recorded for another repository", () => {
+  const { work, send, out } = roundsRepo();
+  out(send(1, "b", { clean: true }));
+  const stateUrl = pathToFileURL(join(process.cwd(), "src", "state.js")).href;
+  const probe = (repository) => {
+    const review = reviewFor(repository, "a".repeat(40), "b".repeat(40), 1);
+    const script = join(work, ".git", "probe.mjs");
+    writeFileSync(script, `import { assertReviewRoundRecorded as a, deriveSlug as d } from ${JSON.stringify(stateUrl)};
+a(d(process.cwd()), ${JSON.stringify(review)});`);
+    return spawnSync(process.execPath, [script], { cwd: work, encoding: "utf8", env: { ...process.env, DIRF_HOME: HOME } });
+  };
+  assert.equal(probe("https://github.com/owner/repo.git").status, 0);
+  const other = probe("https://github.com/owner/other.git");
+  assert.notEqual(other.status, 0);
+  assert.match(other.stderr, /dirf review trigger/);
 });
 
 test("a review of an older commit cannot reopen the loop after a stop", () => {

@@ -52,8 +52,8 @@ again and publish a fresh ledger before another fix or merge decision.
 
 The loop has a budget of five reviews and four fixes. DIRF counts the rounds for
 each PR in its store. Do not write the count in `review.json`. Run
-`dirf review trigger` once for each review, inside a checkout of the reviewed
-repository. Only a commit not seen before advances
+`dirf review trigger` once for each review, inside a registered checkout whose
+`origin` is the reviewed repository. Fork checkouts are not supported yet. Only a commit not seen before advances
 the round.
 If the user or task states a different limit, set `target.max_rounds` on the first
 review.

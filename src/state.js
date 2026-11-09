@@ -412,11 +412,11 @@ function currentReviewSegment(ledger) {
   return ledger.entries.slice(ledger.entries.findLastIndex((entry) => entry.reset === true) + 1);
 }
 
-// Review rounds belong to the repository under review. A checkout of anything
-// else must not start its own count, and a first run from a worktree or
-// subfolder must register the main checkout, where legacy state lives.
+// Review rounds belong to one registered project and the repository under
+// review. A review never registers a project: the first registration decides
+// the main checkout and blocks a later dirf state link, so it must be deliberate.
 export function resolveReviewProject(targetPath, review) {
-  ledgerAction(review); // Validates before registration or migration can happen.
+  ledgerAction(review); // Validates before legacy migration can happen.
   const gitOutput = (...args) => {
     try {
       return execFileSync("git", ["-C", targetPath, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -424,20 +424,14 @@ export function resolveReviewProject(targetPath, review) {
       return null;
     }
   };
-  const commonDirOutput = gitOutput("rev-parse", "--git-common-dir");
-  if (!commonDirOutput) throw new Error("dirf review trigger must run inside a Git checkout of the reviewed repository.");
+  if (!gitOutput("rev-parse", "--git-common-dir")) throw new Error("dirf review trigger must run inside a Git checkout of the reviewed repository.");
   const origin = gitOutput("remote", "get-url", "origin");
   if (!origin || normalizeRepository(origin) !== normalizeRepository(review.target.repository)) {
-    throw new Error(`This checkout's origin does not match the reviewed repository (${review.target.repository}).`);
+    throw new Error(`This checkout's origin does not match the reviewed repository (${review.target.repository}). Fork checkouts are not supported yet.`);
   }
-  const commonDir = resolve(targetPath, commonDirOutput);
-  if (basename(commonDir) !== ".git") {
-    const project = resolveProject(targetPath);
-    if (!project) throw new Error("Run dirf setup first. DIRF cannot find a main checkout for this repository.");
-    return project.slug;
-  }
-  const mainCheckout = dirname(commonDir);
-  return (resolveProject(mainCheckout) || registerProject(mainCheckout)).slug;
+  const project = resolveProject(targetPath);
+  if (!project) throw new Error("This checkout has no DIRF project. Run dirf state register from the main checkout, or dirf state link for a shared store.");
+  return project.slug;
 }
 
 // The store owns the review round for each PR. A review file cannot set it.
