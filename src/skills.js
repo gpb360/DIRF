@@ -16,7 +16,7 @@
 import { readFileSync, readdirSync, statSync, realpathSync, existsSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
-import { loadJson, SKILLS, ROOT } from "./paths.js";
+import { loadJson, SKILLS, ROOT, MATERIALIZED_MARKER } from "./paths.js";
 import { loadUnit } from "./folders.js";
 
 // Home roots (resolved at call time). The zcode cache holds versioned plugin
@@ -371,6 +371,8 @@ function scanFlat(root, index) {
   for (const child of entries.sort()) {
     const dir = join(root, child);
     if (!isDir(dir)) continue;
+    // A materialized copy is disposable. Binding to it would break after cleanup.
+    if (existsSync(join(dir, MATERIALIZED_MARKER))) continue;
     for (const fname of SKILL_FILES) {
       const target = join(dir, fname);
       if (existsSync(target)) {

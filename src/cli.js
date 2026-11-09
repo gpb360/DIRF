@@ -46,6 +46,8 @@ import {
 } from "./governance.js";
 import { DEFAULT_ISSUE_POLICY } from "./issue-governance.js";
 import { buildModelAdvice, normalizeModelCatalog } from "./model-advice.js";
+import { materializeSkills, removeMaterializedSkills } from "./skill-materialize.js";
+import { binding as skillBinding } from "./skill-bindings.js";
 import { run as runReviewReport } from "../skills/code-review/scripts/review-report.mjs";
 import { run as runReviewLedger } from "../skills/code-review/scripts/review-ledger.mjs";
 import { bindingsFromPlan, refreshSkillBindings } from "./skill-bindings.js";
@@ -1091,6 +1093,37 @@ function cmdFolderRender(target) {
   console.log(`Folder rendered: ${output}`);
 }
 
+function cmdSkillsMaterialize(args) {
+  if (!args.host) throw new Error("skills materialize requires --host claude|codex|agents");
+  if (!args.attempt) throw new Error("skills materialize requires --attempt ID");
+  const worktree = args.path ? resolve(args.path) : process.cwd();
+  const project = resolveProject(worktree);
+  if (!project) throw new Error("This checkout has no DIRF project.");
+  const bindings = readAttemptSkillBindings(project.slug, args.attempt);
+  const bound = new Set(bindings.map(({ skill }) => skill));
+  const includes = String(args.include || "").split(",").map((name) => name.trim()).filter((name) => name && !bound.has(name));
+  if (includes.length) {
+    const installed = enrichDiscovered(discover(worktree));
+    const bundled = bundledSkills();
+    for (const skill of new Set(includes)) {
+      const hit = installed[skill] || bundled[skill];
+      bindings.push(hit ? skillBinding({ skill, provider: hit.provider }, hit.path, worktree) : { skill, status: "missing", entry: null });
+    }
+  }
+  const result = materializeSkills({ worktree, host: args.host, bindings });
+  if (args.json) { console.log(JSON.stringify(result, null, 2)); return; }
+  console.log(`Copied ${result.copied.length} skill(s) to ${result.directory}${result.copied.length ? `: ${result.copied.join(", ")}` : ""}`);
+  for (const { skill, reason } of result.skipped) console.log(`  skipped ${skill}: ${reason}`);
+  for (const { skill, warning } of result.warnings) console.log(`  warning ${skill}: ${warning}`);
+}
+
+function cmdSkillsClean(args) {
+  if (!args.host) throw new Error("skills clean requires --host claude|codex|agents");
+  const result = removeMaterializedSkills({ worktree: args.path ? resolve(args.path) : process.cwd(), host: args.host });
+  console.log(`Removed ${result.removed.length} copied skill(s) from ${result.directory}`);
+  for (const { skill, reason } of result.kept) console.log(`  kept ${skill}: ${reason}`);
+}
+
 function cmdSkillsScan(args) {
   const scanRoot = args.path ? (isAbsolute(args.path) ? args.path : resolve(process.cwd(), args.path)) : null;
   const idx = discover(scanRoot);
@@ -1937,6 +1970,8 @@ function parse(argv) {
     if (a === "--attempt") { out.attempt = rest[++i]; continue; }
     if (a === "--worker") { out.worker = rest[++i]; continue; }
     if (a === "--reason") { out.reason = rest[++i]; continue; }
+    if (a === "--host") { out.host = rest[++i]; continue; }
+    if (a === "--include") { out.include = rest[++i]; continue; }
     if (a === "--worktree") { out.worktree = rest[++i]; continue; }
     if (a === "--execution-status") { out.executionStatus = rest[++i]; continue; }
     if (a === "--observed-at") { out.observedAt = rest[++i]; continue; }
@@ -2034,6 +2069,9 @@ Usage:
   dirf migrate [<name>]                                remove runtime paths from saved snapshots
   dirf validate                                        validate registries
   dirf skills scan [--path DIR]                        show installed skills
+  dirf skills materialize --attempt ID --host HOST [--path DIR] [--include a,b] [--json]
+                                                      copy an attempt's skills into a checkout for spawned agents
+  dirf skills clean --host HOST [--path DIR]          remove only the copied skills
   dirf portfolio [--json]                             cross-project status view (active/stale/completed/...)
   dirf project <complete|reopen|archive|status> [...] explicit project status or reconciled --json view
   dirf export playbooks                                regenerate legacy playbooks JSON
@@ -2306,7 +2344,9 @@ async function main() {
   else if (cmd === "skills") {
     const sub = args._[0];
     if (sub === "scan") cmdSkillsScan(args);
-    else { console.log("usage: dirf skills scan [--path DIR]"); process.exit(2); }
+    else if (sub === "materialize") cmdSkillsMaterialize(args);
+    else if (sub === "clean") cmdSkillsClean(args);
+    else { console.log("usage: dirf skills <scan|materialize|clean> [--path DIR]"); process.exit(2); }
   }
   else if (cmd === "export" && args._[0] === "playbooks") cmdExportPlaybooks();
   else if (cmd === "export" && args._[0] === "obsidian") cmdExportObsidian(args);

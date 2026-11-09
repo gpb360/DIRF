@@ -373,6 +373,8 @@ summary and have reconciled its existing owner and content.
 | `dirf host setup [--settings FILE] [--skill-dir DIR] [--skip-hook] [--skip-skill] [--force]` | one-time host bootstrap: SessionStart hook + global dirf skill |
 | `dirf host hook-snippet` | print the SessionStart hook JSON only |
 | `dirf skills scan` | show installed skills + resolved refs on this host |
+| `dirf skills materialize --attempt <id> --host <claude\|codex\|agents> [--path DIR] [--include a,b]` | copy an attempt's skills into a checkout so spawned agents can use them; never overwrites a skill and hides the copies from Git |
+| `dirf skills clean --host <host> [--path DIR]` | remove only the skills that `materialize` copied |
 | `dirf validate` | validate registries + workflows |
 
 ### Plain language

@@ -21,6 +21,7 @@ Use this policy in every generated workflow prompt.
 - The harness binds the execution authority token during trusted setup before children run and keeps it out of child environments; identity variables and a self-written transfer reason do not grant registry authority or abandonment rights.
 - Every child assignment identifies the parent Attempt and requires the child to report its state, result, blocker, and handoff back to the orchestrator.
 - Child agents do not call DIRF state commands. The orchestrator submits their reports as one bounded execution snapshot.
+- Before you start an agent in a new worktree on a `claude`, `codex`, or `agents` host, run `dirf skills materialize --attempt ID --host HOST --path WORKTREE`. On another host, continue without copied skills.
 - A child is a separate Attempt only when it needs an independent lifecycle and handoff.
 
 ## Build Bias

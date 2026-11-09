@@ -10,6 +10,10 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 ### Added
 - **`dirf state link`** — joins this machine's checkout to a project in a
   shared store when its absolute path differs, such as Windows and Linux.
+- **`dirf skills materialize`** — copies the skills bound to an attempt, plus any
+  named with `--include`, into a checkout's host skill folder so spawned agents
+  can use them. It never overwrites a skill and keeps the checkout clean.
+  `dirf skills clean` removes only those copies.
 
 ### Changed
 - **Leaner host `dirf` skill startup** — session start now ends at

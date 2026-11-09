@@ -19,7 +19,7 @@ function entryFile(path) {
   return null;
 }
 
-function binding(step, path, projectRoot) {
+export function binding(step, path, projectRoot) {
   const entry = entryFile(path);
   const readiness = entry ? inspectSkillReadiness(entry) : {};
   const relativeEntry = entry && projectRoot

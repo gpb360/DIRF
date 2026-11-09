@@ -18,6 +18,9 @@ export function loadJson(path) {
   return JSON.parse(readFileSync(path, "utf-8"));
 }
 
+// Marks a skill folder as a disposable copy made by dirf skills materialize.
+export const MATERIALIZED_MARKER = ".dirf-materialized.json";
+
 export function fileHash(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex").slice(0, 16);
 }
