@@ -2241,7 +2241,7 @@ function cmdReview(args) {
     return;
   }
   if (subcommand === "reset-rounds") {
-    const project = resolveProject(reviewPath);
+    const project = resolveProject(reviewPath, { migrate: false });
     if (!project) throw new Error("This checkout has no DIRF project, so it has no review rounds.");
     resetReviewRounds(project.slug, Number(files[0]), args.reason);
     console.log(`Review rounds reset for PR #${files[0]}. The next review is round 1.`);

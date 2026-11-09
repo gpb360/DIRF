@@ -416,7 +416,7 @@ function currentReviewSegment(ledger) {
 // review. A review never registers a project: the first registration decides
 // the main checkout and blocks a later dirf state link, so it must be deliberate.
 export function resolveReviewProject(targetPath, review) {
-  ledgerAction(review); // Validates before legacy migration can happen.
+  ledgerAction(review); // Validates before anything else can happen.
   const gitOutput = (...args) => {
     try {
       return execFileSync("git", ["-C", targetPath, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -429,8 +429,9 @@ export function resolveReviewProject(targetPath, review) {
   if (!origin || normalizeRepository(origin) !== normalizeRepository(review.target.repository)) {
     throw new Error(`This checkout's origin does not match the reviewed repository (${review.target.repository}). Fork checkouts are not supported yet.`);
   }
-  const project = resolveProject(targetPath);
-  if (!project) throw new Error("This checkout has no DIRF project. Run dirf state register from the main checkout, or dirf state link for a shared store.");
+  // Migration registers the project too, so a review must not trigger it.
+  const project = resolveProject(targetPath, { migrate: false });
+  if (!project) throw new Error("This checkout has no DIRF project. Run dirf state register from the main checkout, or dirf state link for a shared store. If it holds legacy .dirf state, run dirf state which from the main checkout instead.");
   return project.slug;
 }
 

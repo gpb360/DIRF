@@ -289,13 +289,21 @@ function legacyRepo() {
   return repo;
 }
 
-test("legacy state migrates only from the main checkout", () => {
+test("a review never migrates legacy state", () => {
   const { work, send, out } = legacyRepo();
   const cwd = join(work, "sub");
   mkdirSync(cwd);
-  assert.notEqual(send(1, "b", { cwd }).status, 0);
+  for (const place of [cwd, work]) {
+    const refused = send(1, "b", { cwd: place });
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /dirf state which/);
+  }
+  const reset = run(work, ["review", "reset-rounds", "1", "--reason", "Nothing yet"]);
+  assert.notEqual(reset.status, 0);
   assert.equal(registeredProject(work), undefined);
   assert.ok(existsSync(join(work, ".dirf", "HANDOFF.md")));
+
+  assert.equal(run(work, ["state", "which"]).status, 0);
   assert.equal(out(send(1, "b")).round, 1);
   assert.ok(existsSync(join(HOME, "projects", registeredProject(work).slug, "HANDOFF.md")));
 });
