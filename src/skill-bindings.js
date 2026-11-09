@@ -54,9 +54,6 @@ export function refreshSkillBindings(plan, previous, projectRoot, options = {}) 
       // A disposable copy must not replace the shared record of the real source.
       if (existsSync(localEntry) && isMaterializedCopy(dirname(localEntry))) return saved;
       if (existsSync(localEntry)) return binding(step, localEntry, projectRoot);
-      // The skill lives only in the checkout that built the attempt. A worktree
-      // without it must not erase the shared record of a source that still exists.
-      if (saved.entry && isAbsolute(saved.entry) && existsSync(saved.entry)) return saved;
     }
     if (sameSkill && !saved.relative_entry && saved.entry && isAbsolute(saved.entry) && existsSync(saved.entry)) {
       return binding(step, saved.entry, projectRoot);
@@ -64,9 +61,13 @@ export function refreshSkillBindings(plan, previous, projectRoot, options = {}) 
     const current = provider === "dirf"
       ? (bundled ??= (options.bundledSkills || bundledSkills)())[step.skill]
       : (installed ??= (options.discoverSkills || (() => enrichDiscovered(discover(projectRoot))))())[step.skill];
-    return current && current.provider === provider
-      ? binding(step, current.path, projectRoot)
-      : binding(step, null, projectRoot);
+    if (current && current.provider === provider) return binding(step, current.path, projectRoot);
+    // Last resort: the skill lives only in the checkout that built the attempt.
+    // Check it again, so a worktree cannot erase a good record or keep a bad one.
+    if (sameSkill && saved.relative_entry && saved.entry && isAbsolute(saved.entry) && existsSync(saved.entry)) {
+      return { ...binding(step, saved.entry, projectRoot), relative_entry: saved.relative_entry };
+    }
+    return binding(step, null, projectRoot);
   });
   return bindings;
 }

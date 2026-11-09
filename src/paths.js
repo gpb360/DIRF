@@ -41,7 +41,12 @@ export function isMaterializedCopy(dir) {
   } catch (error) {
     // Only a folder outside any repository can be called untracked. Any other
     // Git failure leaves the answer unknown, so the folder is treated as real.
-    return /not a git repository/i.test(String(error.stderr));
+    if (!/not a git repository/i.test(String(error.stderr))) return false;
+    // A damaged repository reports the same error, but it still has a .git entry.
+    for (let current = dir, parent = dirname(dir); ; current = parent, parent = dirname(parent)) {
+      if (existsSync(join(current, ".git"))) return false;
+      if (parent === current) return true;
+    }
   }
 }
 

@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileHash, isMaterializedCopy, MATERIALIZED_MARKER } from "./paths.js";
+import { inspectSkillReadiness, skillIsIncomplete } from "./skills.js";
 
 export const HOST_SKILL_DIRS = { claude: ".claude/skills", codex: ".codex/skills", agents: ".agents/skills" };
 
@@ -71,6 +72,7 @@ function skipReason(binding, entry, dest) {
   if (basename(entry) === "skill.json") return "the source entry is skill.json, which hosts do not read";
   if (binding.fingerprint && fileHash(entry) !== binding.fingerprint) return "the source changed after the workflow was built";
   if (FOLDER_ENTRIES.has(basename(entry)) && existsSync(join(dirname(entry), ".git"))) return "the source folder is a whole repository";
+  if (skillIsIncomplete(inspectSkillReadiness(entry))) return "the skill is incomplete";
   return null;
 }
 

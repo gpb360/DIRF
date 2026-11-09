@@ -269,12 +269,59 @@ test("a worktree without the skill keeps the record of a source that still exist
   materializeSkills({ worktree, host: "claude", bindings: [saved] });
   removeMaterializedSkills({ worktree, host: "claude" });
   const [refreshed] = refreshSkillBindings(plan, [saved], worktree, { discoverSkills: () => ({}) });
-  assert.deepEqual(refreshed, saved, "cleanup followed by resume keeps the record");
+  assert.equal(refreshed.status, "installed", "cleanup followed by resume keeps the record");
+  assert.equal(refreshed.entry.replaceAll("\\", "/"), bound.entry.replaceAll("\\", "/"));
+  assert.equal(refreshed.relative_entry, saved.relative_entry);
   assert.deepEqual(materializeSkills({ worktree, host: "claude", bindings: [refreshed] }).copied, ["main-only-two"]);
 
   rmSync(bound.entry);
   const [gone] = refreshSkillBindings(plan, [saved], join(root, "elsewhere"), { discoverSkills: () => ({}) });
   assert.equal(gone.status, "missing", "a source that is really gone is still reported");
+});
+
+test("a skill this checkout can find beats another checkout's record", () => {
+  const { root, main } = repo();
+  const worktree = join(root, "wt");
+  git(main, "worktree", "add", "-q", worktree, "-b", "wt");
+  const bound = source(root, "moved");
+  const saved = { ...bound, provider: "project", relative_entry: "skills/moved/SKILL.md" };
+  const plan = { skill_flow: { steps: [{ skill: "moved", provider: "project" }] } };
+  const moved = join(worktree, "pkg", "skills", "moved");
+  mkdirSync(moved, { recursive: true });
+  writeFileSync(join(moved, "SKILL.md"), "---\nname: moved\ndescription: Moved\n---\nworktree version\n");
+  const [refreshed] = refreshSkillBindings(plan, [saved], worktree, { discoverSkills: () => ({ moved: { provider: "project", path: moved } }) });
+  assert.match(refreshed.entry.replaceAll("\\", "/"), /wt\/pkg\/skills\/moved\/SKILL\.md$/);
+});
+
+function incompleteSource(root, name) {
+  const dir = join(root, "source", name);
+  mkdirSync(dir, { recursive: true });
+  const entry = join(dir, "SKILL.md");
+  writeFileSync(entry, `---\nname: ${name}\ndescription: Test\nmetadata: {"required_files":["scripts/run.cjs"]}\n---\nBody\n`);
+  return { skill: name, provider: "project", status: "installed", entry, fingerprint: fileHash(entry) };
+}
+
+test("a skill that lost a required file is neither kept as ready nor copied", () => {
+  const { root, main } = repo();
+  const bound = incompleteSource(root, "lost-file");
+  const saved = { ...bound, relative_entry: "skills/lost-file/SKILL.md" };
+  const plan = { skill_flow: { steps: [{ skill: "lost-file", provider: "project" }] } };
+  const [refreshed] = refreshSkillBindings(plan, [saved], main, { discoverSkills: () => ({}) });
+  assert.equal(refreshed.status, "incomplete");
+  const result = materializeSkills({ worktree: main, host: "claude", bindings: [bound] });
+  assert.deepEqual(result.copied, []);
+  assert.equal(result.skipped[0].reason, "the skill is incomplete");
+});
+
+test("a damaged repository never makes a tracked skill look like a copy", () => {
+  const { root, main } = repo();
+  materializeSkills({ worktree: main, host: "claude", bindings: [source(root, "zz-head")] });
+  const copy = join(main, ".claude", "skills", "zz-head");
+  git(main, "add", "-f", ".claude/skills/zz-head");
+  writeFileSync(join(main, ".git", "HEAD"), "garbage\n");
+  assert.equal(isMaterializedCopy(copy), false);
+  assert.ok(!removeMaterializedSkills({ worktree: main, host: "claude" }).removed.includes("zz-head"));
+  assert.ok(existsSync(copy));
 });
 
 test("a Git failure never makes a tracked skill look like a copy", () => {
