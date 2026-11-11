@@ -47,6 +47,7 @@ to PR work; its repair loop runs only when implementation is within scope.
 - A clean review with blocked or insufficient verification is `CONDITIONAL`, never `PASS`.
 - Record low-confidence concerns as limitations or follow-up questions, not inline accusations.
 - Style preferences, speculative risks without a reachable failure path, and issues outside the changed behavior are not findings.
+- A defect that already exists at `base_sha` in code that the change touches gets `origin: "pre_existing"` and `base_evidence`. A pre-existing P2 or P3 finding is listed for follow-up and does not block. A pre-existing P0 or P1 finding blocks. Without base evidence, the finding is introduced.
 - A dismissed false positive is not a finding. Do not waive a retained finding to manufacture PASS. Fix it and review the new head again.
 
 Use incremental mode only for commits newer than the last reviewed head. Re-run full mode after a force-push, a base change, or a cross-cutting contract change. Also re-run it when you cannot trust the previous review artifact. Always re-run it before you ask for merge approval.

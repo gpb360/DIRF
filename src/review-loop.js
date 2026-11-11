@@ -6,7 +6,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import { validateReview } from "../skills/code-review/scripts/review-report.mjs";
+import { blockingFindings, validateReview } from "../skills/code-review/scripts/review-report.mjs";
 import { verifyUpdatedReview } from "../skills/code-review/scripts/review-ledger.mjs";
 
 const OUTPUT_TAIL_CHARS = 4000;
@@ -32,9 +32,10 @@ export function loopPassed(report) {
   return PASSING.has(report.outcome);
 }
 
-// A review is qualified when it has no P0, P1, P2, or P3 finding.
+// A review is qualified when it has no blocking P0, P1, P2, or P3 finding.
+// A pre-existing P2 or P3 finding does not block; a pre-existing P0 or P1 does.
 export function isQualified(review) {
-  return review.findings.length === 0;
+  return blockingFindings(review).length === 0;
 }
 
 // The recorded reviews of one commit qualify it when the ladder would stop
@@ -124,7 +125,7 @@ export function runReviewLadder(options, deps) {
     if (artifact.target.pr_number !== pr) throw new LoopStop("error", { error: `The review from step ${step} names PR #${artifact.target.pr_number}, not PR #${pr}.` });
     if (String(artifact.target.head_sha).toLowerCase() !== head) throw new LoopStop("error", { error: `The review from step ${step} names commit ${artifact.target.head_sha}, not the checkout commit ${head}.` });
     const action = deps.trigger(artifact);
-    const entry = { step, path, head, qualified: isQualified(artifact), findings: artifact.findings.length, action: action.action };
+    const entry = { step, path, head, qualified: isQualified(artifact), findings: blockingFindings(artifact).length, action: action.action };
     steps.push({ kind: "review", ...entry });
     reviews.push({ ...entry, review: artifact, request: action });
     if (action.action === "stop_for_person") throw new LoopStop("stop_for_person", { findings: action.findings });
@@ -157,7 +158,7 @@ export function runReviewLadder(options, deps) {
     const qualified = sameCommit.filter((item) => item.qualified);
     if (qualified.length >= 2) {
       const open = sameCommit.find((item) => !item.qualified);
-      return finish("qualified", { reported_findings: open.review.findings });
+      return finish("qualified", { reported_findings: blockingFindings(open.review) });
     }
 
     const request = sameCommit.find((item) => !item.qualified).request;
@@ -188,7 +189,7 @@ export function runReviewLadder(options, deps) {
       throw new LoopStop("error", { error: `The review of the fix does not match the original PR: ${error.message}` });
     }
     if (last.qualified) return finish("qualified_after_fix");
-    return finish("needs_new_examination", { reported_findings: last.review.findings });
+    return finish("needs_new_examination", { reported_findings: blockingFindings(last.review) });
   } catch (error) {
     if (error instanceof LoopStop) return finish(error.outcome, error.detail);
     return finish("error", { error: error.message });

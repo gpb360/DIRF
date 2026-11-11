@@ -33,7 +33,9 @@ the author of the commit and stop.
 
 A reviewer only reviews. A code-cleaner only changes code. Neither starts agents.
 A review is qualified when it meets the gate that the user or task states.
-Without a stated gate, it is qualified when it has no P0, P1, P2, or P3 finding.
+Without a stated gate, it is qualified when it has no blocking P0, P1, P2, or P3
+finding. A pre-existing P2 or P3 finding does not block. A pre-existing P0 or P1
+finding blocks.
 
 Keep the detailed grade, confidence, and priority data in `review.json` and its
 rendered report. Normal updates use ordinary language: how many issues remain,

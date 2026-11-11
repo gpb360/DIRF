@@ -20,6 +20,9 @@ const AXIS_STATUSES = new Set(["checked", "finding", "not_applicable"]);
 const PRIORITIES = ["P0", "P1", "P2", "P3"];
 const PRIORITY_ORDER = new Map(PRIORITIES.map((priority, index) => [priority, index]));
 const MODES = new Set(["full", "incremental"]);
+const ORIGINS = new Set(["introduced", "pre_existing"]);
+// A defect that already exists at the base still blocks at these priorities.
+const PRE_EXISTING_BLOCKING = new Set(["P0", "P1"]);
 const VERIFICATION_STATUSES = new Set(["passed", "pending", "failed"]);
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const CHECK_RUN_PAGE_SIZE = 100;
@@ -153,6 +156,12 @@ export function validateReview(review) {
       if (!Array.isArray(finding.evidence) || finding.evidence.length === 0 || finding.evidence.some((item) => !nonEmptyString(item))) {
         errors.push(`${at}.evidence must contain at least one concrete item`);
       }
+      if (finding.origin !== undefined && !ORIGINS.has(finding.origin)) {
+        errors.push(`${at}.origin must be introduced or pre_existing`);
+      }
+      if (finding.origin === "pre_existing" && !nonEmptyString(finding.base_evidence)) {
+        errors.push(`${at}.base_evidence must show that the defect exists at target.base_sha`);
+      }
     });
   }
 
@@ -202,11 +211,28 @@ export function validateReview(review) {
   return review;
 }
 
+// A pre-existing P2 or P3 finding is reported for follow-up. It does not drive
+// the fix loop, the round count, or merge readiness. Every other finding blocks.
+function blocks(finding) {
+  return finding.origin !== "pre_existing" || PRE_EXISTING_BLOCKING.has(finding.priority);
+}
+
+export function blockingFindings(review) {
+  validateReview(review);
+  return review.findings.filter(blocks);
+}
+
+export function followUpFindings(review) {
+  validateReview(review);
+  return review.findings.filter((finding) => !blocks(finding));
+}
+
 export function deriveVerdict(review) {
   validateReview(review);
-  if (review.findings.some(({ priority }) => priority === "P0" || priority === "P1")) return "FAIL";
+  const blocking = blockingFindings(review);
+  if (blocking.some(({ priority }) => priority === "P0" || priority === "P1")) return "FAIL";
   if (
-    review.findings.length > 0 ||
+    blocking.length > 0 ||
     review.limitations.length > 0 ||
     review.verification.some(({ status }) => status && status !== "passed") ||
     review.confidence.quality < 85 ||
@@ -298,7 +324,7 @@ export function priorityCounts(review) {
   validateReview(review);
   return Object.fromEntries(PRIORITIES.map((priority) => [
     priority,
-    review.findings.filter((finding) => finding.priority === priority).length,
+    blockingFindings(review).filter((finding) => finding.priority === priority).length,
   ]));
 }
 
@@ -364,7 +390,8 @@ export function renderReview(review) {
     "",
   ];
 
-  const findings = sortedFindings(review.findings);
+  const findings = sortedFindings(blockingFindings(review));
+  const followUps = sortedFindings(followUpFindings(review));
   if (findings.length === 0) {
     lines.push("No actionable findings met the 80% publication threshold.", "");
   } else {
@@ -380,6 +407,14 @@ export function renderReview(review) {
         "",
       );
     }
+  }
+
+  if (followUps.length > 0) {
+    lines.push("## Pre-existing findings for follow-up", "", "These defects exist at the base commit. They do not block this pull request.", "");
+    for (const finding of followUps) {
+      lines.push(`- [${finding.priority}] ${finding.title} — \`${finding.file}:${finding.line}\`. Base evidence: ${finding.base_evidence}`);
+    }
+    lines.push("");
   }
 
   lines.push("## Verification", "");

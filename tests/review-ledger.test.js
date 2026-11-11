@@ -233,3 +233,50 @@ test("updated review must keep PR identity and advance the head", () => {
     /pull request number/i,
   );
 });
+
+function preExisting(priority, extra = {}) {
+  return {
+    ...finding(), id: `${priority}-PRE`, priority, origin: "pre_existing",
+    base_evidence: `git show ${SHA_A}:src/review.js has the same defect at line 12`, ...extra,
+  };
+}
+
+function withFindings(findings) {
+  return { ...review(), findings, axes: { ...review().axes, correctness: { status: "finding", evidence: findings.map(({ id }) => id).join(", ") } } };
+}
+
+test("a pre-existing P3 finding alone creates no fix request and is listed for follow-up", () => {
+  const result = ledgerAction(withFindings([preExisting("P3")]));
+  assert.equal(result.action, "verify_merge_readiness");
+  assert.deepEqual(result.findings, []);
+  assert.deepEqual(result.follow_up_findings.map(({ id }) => id), ["P3-PRE"]);
+  assert.match(result.follow_up_findings[0].base_evidence, /git show/);
+  assert.deepEqual(result.priority_counts, { P0: 0, P1: 0, P2: 0, P3: 0 });
+});
+
+test("a mix of findings sends only the introduced finding to the fixer", () => {
+  const result = ledgerAction(withFindings([finding(), preExisting("P2")]));
+  assert.equal(result.action, "fix_and_update_same_pr");
+  assert.deepEqual(result.findings.map(({ id }) => id), ["P2-001"]);
+  assert.deepEqual(result.follow_up_findings.map(({ id }) => id), ["P2-PRE"]);
+});
+
+test("a pre-existing P0 or P1 finding still blocks", () => {
+  for (const priority of ["P0", "P1"]) {
+    const result = ledgerAction(withFindings([preExisting(priority)]));
+    assert.equal(result.action, "fix_and_update_same_pr");
+    assert.deepEqual(result.findings.map(({ id }) => id), [`${priority}-PRE`]);
+    assert.equal(result.follow_up_findings, undefined);
+  }
+});
+
+test("pre-existing P3 findings at the round limit do not stop for a person", () => {
+  const at = withFindings([preExisting("P3")]);
+  at.target = { ...at.target, round: MAX_LOOP_ROUNDS };
+  assert.equal(ledgerAction(at).action, "verify_merge_readiness");
+});
+
+test("a pre-existing finding without base evidence fails validation", () => {
+  assert.throws(() => ledgerAction(withFindings([preExisting("P3", { base_evidence: "" })])), /base_evidence/);
+  assert.throws(() => ledgerAction(withFindings([{ ...finding(), origin: "old" }])), /origin must be introduced or pre_existing/);
+});

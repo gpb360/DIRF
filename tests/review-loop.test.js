@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { ledgerAction } from "../skills/code-review/scripts/review-ledger.mjs";
-import { formatLoopReport, loopPassed, recordedCommitQualified, runReviewLadder, runShellCommand } from "../src/review-loop.js";
+import { formatLoopReport, isQualified, loopPassed, recordedCommitQualified, runReviewLadder, runShellCommand } from "../src/review-loop.js";
 
 const SHA_A = "a".repeat(40);
 const SHA_B = "b".repeat(40);
@@ -197,4 +197,16 @@ test("a fixer that replaces the reviewed commit stops before the review of the f
   assert.equal(report.outcome, "fixer_rewrote_history");
   assert.deepEqual(h.commands(), ["check", "review", "review", "review", "fix"]);
   assert.equal(loopPassed(report), false);
+});
+
+test("isQualified ignores a pre-existing P2 or P3 finding but not a pre-existing P1", () => {
+  const withOrigin = (priority) => {
+    const value = review(SHA_B, true);
+    value.findings[0] = { ...value.findings[0], priority, origin: "pre_existing", base_evidence: `The same code exists at ${SHA_A}` };
+    return value;
+  };
+  assert.equal(isQualified(withOrigin("P3")), true);
+  assert.equal(isQualified(withOrigin("P2")), true);
+  assert.equal(isQualified(withOrigin("P1")), false);
+  assert.equal(isQualified(review(SHA_B, true)), false);
 });
