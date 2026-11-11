@@ -51,7 +51,7 @@ Use this policy in every generated workflow prompt.
 - After every final push, refresh the exact PR head; collect all review comments, unresolved threads, and checks; reconcile every P0, P1, P2, and P3 finding; fix and verify each finding; then rerun the relevant checks and review the new head.
 - Re-fetch that exact head's reviews, unresolved threads, checks, mergeability, and diff. Report "ready to merge" only when no unresolved review findings remain and all required gates pass.
 - Dismiss a finding only when evidence shows it is invalid or a duplicate. A retained P0, P1, P2, or P3 finding cannot be waived for completion; fix and verify it, then review the new head. Otherwise report "not ready" and state the exact remaining action.
-- Follow the Review Ladder and the Loop Limit. Run `dirf review trigger` for each review. When it returns `reconsider_approach`, change the approach before the next fix. When it returns `stop_for_person`, stop the fixes and give the result to a person.
+- Follow the Review Ladder and the Loop Limit. Run `dirf review trigger` for each review. When it returns `reconsider_approach`, change the approach before the next fix. Start a new agent for that fix, as the `new_agent` field states. When it returns `stop_for_person`, stop the fixes and give the result to a person.
 
 ## Review Ladder
 - A PR review uses at most 5 agents: 4 reviewers and 1 code-cleaner. No step occurs twice.

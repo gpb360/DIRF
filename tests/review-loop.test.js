@@ -210,3 +210,22 @@ test("isQualified ignores a pre-existing P2 or P3 finding but not a pre-existing
   assert.equal(isQualified(withOrigin("P1")), false);
   assert.equal(isQualified(review(SHA_B, true)), false);
 });
+
+test("the fixer starts a new agent only when the ledger asks for a new approach", () => {
+  const plain = harness({ reviews: [true, true, true, false] });
+  runReviewLadder(plain.options, plain.deps);
+  assert.equal(plain.calls.find(({ command }) => command === "fix").env.DIRF_REVIEW_NEW_AGENT, "");
+
+  // Round 3 of the default limit forces the rethink.
+  const rethink = harness({
+    reviews: [true, true, true, false],
+    trigger: (artifact) => ledgerAction(artifact, { round: artifact.target.head_sha === SHA_C ? 4 : 3 }),
+  });
+  const report = runReviewLadder(rethink.options, rethink.deps);
+  const fix = rethink.calls.find(({ command }) => command === "fix");
+  assert.equal(fix.env.DIRF_REVIEW_NEW_AGENT, "1");
+  assert.equal(JSON.parse(readFileSync(fix.env.DIRF_REVIEW_REQUEST, "utf8")).new_agent.required, true);
+  // The review of the fix still has to describe the new approach.
+  assert.equal(report.outcome, "error");
+  assert.match(report.error, /approach_change/);
+});

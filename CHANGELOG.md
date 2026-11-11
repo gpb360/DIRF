@@ -13,6 +13,11 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   pre-existing P2 or P3 finding goes to `follow_up_findings`. It does not start
   a fix, use a review round, or block `dirf review ready`. A pre-existing P0 or
   P1 finding still blocks. `dirf review loop` uses the same rule.
+- **New agent for a new approach** — when `dirf review trigger` returns
+  `reconsider_approach`, the request has a `new_agent` field. A new agent makes
+  that fix with only the fix request and the earlier reviews as input, not the
+  session of the earlier fixer. `dirf review loop` sets `DIRF_REVIEW_NEW_AGENT=1`
+  for the fixer command in that case.
 
 ### Changed
 - **Mostly-STE style (experiment)** — focused output rules and the workflow

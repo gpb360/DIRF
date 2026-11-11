@@ -65,7 +65,9 @@ If the user or task states a different limit, set `target.max_rounds` on the fir
 review.
 
 If findings remain at round 3, the ledger returns `reconsider_approach`. Change
-the approach before the next fix. Describe the change in `target.approach_change`
+the approach before the next fix. Its `new_agent` field requires a new agent
+for that fix. Give the new agent the fix request and the earlier reviews only.
+Do not continue the session of the earlier fixer or reviewer. Describe the change in `target.approach_change`
 on the next review. DIRF rejects the next commit without that text. DIRF checks
 that the text exists. DIRF cannot check its quality.
 

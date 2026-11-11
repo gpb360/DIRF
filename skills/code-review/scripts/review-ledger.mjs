@@ -10,6 +10,13 @@ export const MAX_LOOP_ROUNDS = 5;
 const RETHINK_BEFORE_LIMIT = 2;
 const FIX_ACTIONS = new Set(["fix_and_update_same_pr", "reconsider_approach"]);
 const MIN_ROUNDS_FOR_RETHINK = 3;
+// The agent that stayed on a failed approach tends to keep it. A new agent
+// with only the written record of the failure gets the rethink fix.
+const NEW_AGENT = Object.freeze({
+  required: true,
+  input: "the fix request and the earlier reviews only; do not continue the session of the earlier fixer or reviewer",
+  task: "Find why the earlier fixes did not clear the findings. Choose a different approach or a smaller scope, and describe it in target.approach_change.",
+});
 
 function rethinkRound(maxRounds) {
   return maxRounds >= MIN_ROUNDS_FOR_RETHINK ? maxRounds - RETHINK_BEFORE_LIMIT : null;
@@ -78,7 +85,7 @@ export function ledgerAction(review, count = {}) {
     return {
       schema_version: 1,
       action: rethink ? "reconsider_approach" : "fix_and_update_same_pr",
-      ...(rethink ? { approach_change_required: true } : {}),
+      ...(rethink ? { approach_change_required: true, new_agent: NEW_AGENT } : {}),
       target: targetOf(review),
       expected_head_sha: review.target.head_sha,
       round,

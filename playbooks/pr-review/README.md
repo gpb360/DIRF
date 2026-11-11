@@ -50,8 +50,12 @@ writes review JSON to `DIRF_REVIEW_OUTPUT` for the commit in `DIRF_REVIEW_HEAD`.
 The fixer command reads the reviews in `DIRF_REVIEW_FINDINGS` and adds one
 commit on top of the reviewed commit. The fixer and the reviewer of the fix read
 the fix request in `DIRF_REVIEW_REQUEST`. When that request requires a new
-approach, the review of the fix describes it in `target.approach_change`. The
-command does not push or merge.
+approach, `DIRF_REVIEW_NEW_AGENT` is `1`. When `DIRF_REVIEW_NEW_AGENT` is `1`,
+the fixer command starts a new agent session and gives it only the fix request
+and the earlier reviews. DIRF cannot start that agent itself, so the fixer
+command must do it. The review of the fix describes the new approach in
+`target.approach_change`. The command does not
+push or merge.
 
 Run `dirf review trigger` for each review. The round count in the DIRF store is
 a second limit. When the command returns `stop_for_person`, stop and give the
