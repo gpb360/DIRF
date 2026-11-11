@@ -33,6 +33,12 @@ Verification is complete when each published comment has a reproducible failure 
 
 ## 5. Fix, test, and review again
 
+Follow the Review Ladder in the workflow policy. It permits four reviews and one
+fix for each PR: one review, two more reviews of the same commit, one fix, and
+one review of the fix. Then a person decides. A reviewer or a fixer does not
+start agents. The round ledger below is a second limit. It does not permit more
+agents than the ladder.
+
 Apply the round limit in this step. Below the limit, if the validated artifact contains any P0-P3 finding, fix every finding, run the narrowest checks that prove the corrected behavior, refresh the exact head, and start a new full or justified incremental review. Do not mark the workflow done because comments were resolved or a build is green.
 
 The review ledger is the trigger for this handoff. Run `dirf review trigger

@@ -32,7 +32,7 @@ to PR work; its repair loop runs only when implementation is within scope.
    - `dirf review render review.json`
    Completion: validation exits zero and the rendered verdict agrees with the findings and confidence gates.
 7. Before posting, confirm the PR head still equals `head_sha`. Search existing review markers for the same head. After a merge-commit merge, `ready` requires two proofs. GitHub CLI must confirm the exact merged head, base, and merge commit. Git must show the commit on the live base branch. Completion: you post no stale-head or duplicate review. You verify a merged PR without its removed temporary merge ref.
-8. When a P0, P1, P2, or P3 finding exists, fix it. Change the approach when `dirf review trigger` returns `reconsider_approach`. Stop the fixes when it returns `stop_for_person` (see step 5 of `workflow.md`). Verify the affected behavior. Do a fresh review of the updated PR. Record whether the review is complete, required checks passed, and review conversations remain. Completion: `dirf review ready review.json` exits successfully.
+8. When a P0, P1, P2, or P3 finding exists, follow the Review Ladder in the workflow policy: at most four reviews and one fix. Change the approach when `dirf review trigger` returns `reconsider_approach`. Stop the fixes when it returns `stop_for_person` (see step 5 of `workflow.md`). Verify the affected behavior. Do a fresh review of the updated PR. Record whether the review is complete, required checks passed, and review conversations remain. Completion: `dirf review ready review.json` exits successfully.
 
 ## Decision rules
 

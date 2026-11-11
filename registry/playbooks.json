@@ -106,7 +106,7 @@
     }
   },
   "pr-review": {
-    "description": "Review a pull request, fix every confirmed issue, and repeat until the current commit is clear and all required checks pass.",
+    "description": "Review a pull request with at most four reviewers and one code-cleaner. Stop for a person when the review does not qualify.",
     "keywords": [
       "pr",
       "pull request",
@@ -179,14 +179,14 @@
       },
       "output": "a plain-language status and a detailed review report; merge approval is requested only after the current commit has no remaining issues and every required check passes",
       "validation": "dirf review ready review.json",
-      "recovery": "if the PR is unavailable, ask for its URL or branch; if an issue remains or a check is incomplete, say what remains and continue the fix, test, and review loop; if dirf review trigger returns reconsider_approach, change the approach before the next fix; if it returns stop_for_person, stop and give the result to a person"
+      "recovery": "if the PR is unavailable, ask for its URL or branch; if an issue remains or a check is incomplete, say what remains and do the next step of the Review Ladder; after the last step, or if dirf review trigger returns stop_for_person, stop and give the result to a person"
     },
     "questions": [
       "What branch, commit range, diff, or PR should be reviewed?",
       "What issue, specification, or expected behavior defines correctness?"
     ],
     "skill_flow": {
-      "label": "review, fix, test, and review again until clear",
+      "label": "review, add two reviewers, fix one time, review the fix, then stop",
       "steps": [
         {
           "stage": "review",
@@ -210,7 +210,7 @@
         },
         {
           "stage": "review",
-          "reason": "Review the updated PR and repeat until no confirmed issue remains or dirf review trigger returns stop_for_person.",
+          "reason": "Review the fixed commit one time against the earlier reviews. Stop when that review does not qualify.",
           "capability": "code review"
         }
       ]

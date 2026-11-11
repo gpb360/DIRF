@@ -7,6 +7,23 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+### Changed
+- **Review Ladder** — the workflow policy and the `pr-review` playbook now
+  limit a PR review to five agents: one reviewer, two more reviewers on the same
+  commit, one code-cleaner, and one reviewer of the fix. Then a person decides.
+  The playbook no longer tells agents to repeat until clear. A child agent does
+  not start agents. The policy no longer tells every agent to run
+  `dirf skills materialize`; the command stays available on request.
+- **Review Ladder check gate** — before the first reviewer and before the
+  reviewer of the fix, the task's required checks run as commands. If one
+  fails, no reviewer starts; the check output goes to the commit's author.
+
+### Fixed
+- **`dirf learn` YouTube captions** — the yt-dlp fallback now asks for the
+  original caption track (`en-orig`) before the translated one (`en`), which
+  YouTube rate-limits with HTTP 429. When yt-dlp fails, the error now names its
+  real cause instead of asking to install yt-dlp.
+
 ### Added
 - **`dirf state link`** — joins this machine's checkout to a project in a
   shared store when its absolute path differs, such as Windows and Linux.
