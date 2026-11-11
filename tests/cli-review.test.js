@@ -481,3 +481,19 @@ execFileSync("git", ["commit", "-q", "-am", "fix"]);
   assert.match(failing.stdout, /A required check failed/);
   assert.match(failing.stdout, /lint failed/);
 });
+
+test("dirf review loop refuses an unregistered checkout before it runs any command", () => {
+  const work = mkdtempSync(join(tmpdir(), "dirf-review-loop-unregistered-"));
+  git(work, ["init", "-q"]);
+  git(work, ["config", "user.email", "dirf@example.invalid"]);
+  git(work, ["config", "user.name", "DIRF Test"]);
+  writeFileSync(join(work, "a.txt"), "a");
+  git(work, ["add", "a.txt"]);
+  git(work, ["commit", "-q", "-m", "a"]);
+  const marker = join(work, "ran.txt").split("\\").join("/");
+  const touch = `node -e "require('fs').writeFileSync('${marker}', 'x')"`;
+  const result = run(work, ["review", "loop", "--pr", "1", "--reviewer", touch, "--fixer", touch, "--check", touch]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /no DIRF project/);
+  assert.equal(existsSync(marker), false);
+});

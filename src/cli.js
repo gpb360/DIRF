@@ -33,7 +33,7 @@ import { installationDiagnostics } from "./doctor.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveReviewProject, recordReviewRound, recordedReviewEntry, resetReviewRounds, assertReviewRoundRecorded, resolveProject, resolveProjectReference, listProjects, registerProject, linkCheckout, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, projectHandoffContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, attemptNextAction, projectWorkSnapshot, observeAttempt, bindExecutionAuthority, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings, workflowGates, attemptAudit, runBuiltinCheck, attemptSummary, deriveSlug, checkoutSummary } from "./state.js";
+import { resolveReviewProject, recordReviewRound, recordedReviewEntries, resetReviewRounds, assertReviewRoundRecorded, resolveProject, resolveProjectReference, listProjects, registerProject, linkCheckout, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, projectHandoffContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, attemptNextAction, projectWorkSnapshot, observeAttempt, bindExecutionAuthority, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings, workflowGates, attemptAudit, runBuiltinCheck, attemptSummary, deriveSlug, checkoutSummary } from "./state.js";
 import { ARTIFACT_TYPES, explainGoverningArtifact } from "./artifacts.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 import {
@@ -2275,6 +2275,8 @@ function cmdReviewLoop(args) {
   const git = (...gitArgs) => execFileSync("git", ["-C", checkout, ...gitArgs], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   const gitDir = git("rev-parse", "--absolute-git-dir");
   const project = resolveProject(checkout, { migrate: false });
+  // Fail before any check or reviewer runs: every review must reach the ledger.
+  if (!project) throw new Error("This checkout has no DIRF project, so dirf review loop cannot record reviews. Run dirf state register from the main checkout, or dirf state link for a shared store.");
   const report = runReviewLadder({
     pr: args.pr,
     reviewer: args.reviewer,
@@ -2284,8 +2286,9 @@ function cmdReviewLoop(args) {
   }, {
     run: (command, env) => runShellCommand(command, env, checkout),
     head: () => git("rev-parse", "HEAD"),
+    descends: (ancestor, descendant) => spawnSync("git", ["-C", checkout, "merge-base", "--is-ancestor", ancestor, descendant], { stdio: "ignore" }).status === 0,
     trigger: (review) => recordReviewRound(resolveReviewProject(checkout, review), review),
-    recorded: (pr, head) => (project ? recordedReviewEntry(project.slug, pr, head) : null),
+    recorded: (pr, head) => recordedReviewEntries(project.slug, pr, head),
   });
   console.log(args.json ? JSON.stringify(report, null, 2) : formatLoopReport(report));
   if (!loopPassed(report)) process.exitCode = 1;

@@ -21,6 +21,7 @@ export const LOOP_OUTCOMES = Object.freeze({
   stop_for_person: "The review ledger stopped the loop for a person.",
   fixer_failed: "The fixer command failed.",
   fixer_made_no_commit: "The fixer command made no new commit.",
+  fixer_rewrote_history: "The fixer command replaced the reviewed commit instead of adding a commit on top of it.",
   needs_new_examination: "The review of the fix is not qualified. The work needs a new examination by a person.",
   error: "The loop stopped because of an error.",
 });
@@ -34,6 +35,14 @@ export function loopPassed(report) {
 // A review is qualified when it has no P0, P1, P2, or P3 finding.
 export function isQualified(review) {
   return review.findings.length === 0;
+}
+
+// The recorded reviews of one commit qualify it when the ladder would stop
+// there: every review is qualified, or at least two reviews are qualified.
+// One clean entry after reviews with findings does not qualify the commit.
+export function recordedCommitQualified(entries) {
+  const clean = entries.filter((entry) => QUALIFIED_ACTIONS.has(entry.action)).length;
+  return clean > 0 && (clean === entries.length || clean >= 2);
 }
 
 function tail(text) {
@@ -69,8 +78,9 @@ class LoopStop extends Error {
  * @param {{
  *   run: (command: string, env: Record<string, string>) => { status: number, output: string },
  *   head: () => string,
+ *   descends: (ancestor: string, descendant: string) => boolean,
  *   trigger: (review: any) => any,
- *   recorded: (pr: number, head: string) => any,
+ *   recorded: (pr: number, head: string) => any[],
  * }} deps
  */
 export function runReviewLadder(options, deps) {
@@ -91,7 +101,7 @@ export function runReviewLadder(options, deps) {
     if (result.status !== 0) throw new LoopStop("check_failed", { check_output: result.output });
   };
 
-  const review = (step, prior = []) => {
+  const review = (step, prior = [], requestPath = "") => {
     const path = join(outDir, `${head.slice(0, 12)}-step${step}.json`);
     rmSync(path, { force: true });
     const result = deps.run(reviewer, {
@@ -100,6 +110,7 @@ export function runReviewLadder(options, deps) {
       DIRF_REVIEW_HEAD: head,
       DIRF_REVIEW_STEP: String(step),
       DIRF_REVIEW_PRIOR: prior.join(delimiter),
+      DIRF_REVIEW_REQUEST: requestPath,
     });
     if (result.status !== 0) throw new LoopStop("error", { error: `The reviewer command exited with status ${result.status} at step ${step}.`, output: result.output });
     if (!existsSync(path)) throw new LoopStop("error", { error: `The reviewer command wrote no review at step ${step}. It must write review JSON to DIRF_REVIEW_OUTPUT.` });
@@ -134,8 +145,7 @@ export function runReviewLadder(options, deps) {
   });
 
   try {
-    const recorded = deps.recorded(pr, head);
-    if (recorded && QUALIFIED_ACTIONS.has(recorded.action)) return finish("already_qualified");
+    if (recordedCommitQualified(deps.recorded(pr, head) || [])) return finish("already_qualified");
 
     checkGate("step 1");
     const first = review(1);
@@ -164,10 +174,14 @@ export function runReviewLadder(options, deps) {
     if (fix.status !== 0) return finish("fixer_failed", { output: fix.output });
     const fixedHead = String(deps.head()).toLowerCase();
     if (fixedHead === head) return finish("fixer_made_no_commit");
+    if (!deps.descends(head, fixedHead)) {
+      head = fixedHead;
+      return finish("fixer_rewrote_history");
+    }
     head = fixedHead;
 
     checkGate("step 4");
-    const last = review(4, reviewPaths);
+    const last = review(4, reviewPaths, requestPath);
     try {
       verifyUpdatedReview(request, last.review);
     } catch (error) {

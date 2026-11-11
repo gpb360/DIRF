@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { ledgerAction } from "../skills/code-review/scripts/review-ledger.mjs";
-import { formatLoopReport, loopPassed, runReviewLadder, runShellCommand } from "../src/review-loop.js";
+import { formatLoopReport, loopPassed, recordedCommitQualified, runReviewLadder, runShellCommand } from "../src/review-loop.js";
 
 const SHA_A = "a".repeat(40);
 const SHA_B = "b".repeat(40);
@@ -34,12 +34,13 @@ function review(head, withFinding) {
 
 // A fake checkout. `reviews` is the queue of review results (true = finding).
 // `checks` is the queue of check exit statuses.
-function harness({ reviews = [], checks = [], fixStatus = 0, fixCommits = true, recorded = null, trigger } = {}) {
+function harness({ reviews = [], checks = [], fixStatus = 0, fixCommits = true, recorded = [], trigger, descends = true } = {}) {
   let head = SHA_B;
   const calls = [];
   const deps = {
     head: () => head,
     recorded: () => recorded,
+    descends: () => descends,
     trigger: trigger || ((artifact) => ledgerAction(artifact)),
     run: (command, env) => {
       calls.push({ command, env });
@@ -78,7 +79,7 @@ test("a failed check starts no reviewer and reports the check output", () => {
 });
 
 test("an already qualified commit runs no command", () => {
-  const h = harness({ recorded: { head_sha: SHA_B, action: "verify_merge_readiness" } });
+  const h = harness({ recorded: [{ head_sha: SHA_B, action: "verify_merge_readiness" }] });
   const report = runReviewLadder(h.options, h.deps);
   assert.equal(report.outcome, "already_qualified");
   assert.deepEqual(h.commands(), []);
@@ -155,4 +156,45 @@ test("runShellCommand passes the loop environment and captures output", () => {
   const result = runShellCommand(`node -e "process.stdout.write(process.env.DIRF_REVIEW_STEP); process.exit(3)"`, { DIRF_REVIEW_STEP: "4" }, process.cwd());
   assert.equal(result.status, 3);
   assert.equal(result.output, "4");
+});
+
+test("recorded reviews qualify a commit only when the ladder would stop there", () => {
+  const clean = { action: "verify_merge_readiness" };
+  const open = { action: "fix_and_update_same_pr" };
+  assert.equal(recordedCommitQualified([]), false);
+  assert.equal(recordedCommitQualified([clean]), true);
+  assert.equal(recordedCommitQualified([open, clean, clean]), true);
+  assert.equal(recordedCommitQualified([open, open, clean]), false);
+  assert.equal(recordedCommitQualified([open, clean]), false);
+  assert.equal(recordedCommitQualified([open]), false);
+});
+
+test("a rerun after a failed fix does not report the commit as qualified", () => {
+  const recorded = [
+    { action: "fix_and_update_same_pr" },
+    { action: "fix_and_update_same_pr" },
+    { action: "verify_merge_readiness" },
+  ];
+  const h = harness({ recorded, checks: [1] });
+  const report = runReviewLadder(h.options, h.deps);
+  assert.equal(report.outcome, "check_failed");
+  assert.deepEqual(h.commands(), ["check"]);
+});
+
+test("the reviewer of the fix gets the fix request", () => {
+  const h = harness({ reviews: [true, true, true, false] });
+  runReviewLadder(h.options, h.deps);
+  const fix = h.calls.find(({ command }) => command === "fix");
+  const last = h.calls.at(-1);
+  assert.equal(last.env.DIRF_REVIEW_STEP, "4");
+  assert.equal(last.env.DIRF_REVIEW_REQUEST, fix.env.DIRF_REVIEW_REQUEST);
+  assert.equal(h.calls.find(({ env }) => env.DIRF_REVIEW_STEP === "1").env.DIRF_REVIEW_REQUEST, "");
+});
+
+test("a fixer that replaces the reviewed commit stops before the review of the fix", () => {
+  const h = harness({ reviews: [true, true, true], descends: false });
+  const report = runReviewLadder(h.options, h.deps);
+  assert.equal(report.outcome, "fixer_rewrote_history");
+  assert.deepEqual(h.commands(), ["check", "review", "review", "review", "fix"]);
+  assert.equal(loopPassed(report), false);
 });

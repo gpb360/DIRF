@@ -45,8 +45,11 @@ is complete, required checks passed, and no review conversations remain open.
 To run the ladder without a person between steps, run `dirf review loop --pr N
 --reviewer CMD --fixer CMD --check CMD` in the PR checkout. The reviewer command
 writes review JSON to `DIRF_REVIEW_OUTPUT` for the commit in `DIRF_REVIEW_HEAD`.
-The fixer command reads the reviews in `DIRF_REVIEW_FINDINGS` and makes one
-commit. The command does not push or merge.
+The fixer command reads the reviews in `DIRF_REVIEW_FINDINGS` and adds one
+commit on top of the reviewed commit. The fixer and the reviewer of the fix read
+the fix request in `DIRF_REVIEW_REQUEST`. When that request requires a new
+approach, the review of the fix describes it in `target.approach_change`. The
+command does not push or merge.
 
 Run `dirf review trigger` for each review. The round count in the DIRF store is
 a second limit. When the command returns `stop_for_person`, stop and give the
