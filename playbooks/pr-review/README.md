@@ -42,6 +42,12 @@ next. Run `dirf review ready review.json` before asking to merge. That command
 must confirm the report covers the current commit, no issues remain, the review
 is complete, required checks passed, and no review conversations remain open.
 
+To run the ladder without a person between steps, run `dirf review loop --pr N
+--reviewer CMD --fixer CMD --check CMD` in the PR checkout. The reviewer command
+writes review JSON to `DIRF_REVIEW_OUTPUT` for the commit in `DIRF_REVIEW_HEAD`.
+The fixer command reads the reviews in `DIRF_REVIEW_FINDINGS` and makes one
+commit. The command does not push or merge.
+
 Run `dirf review trigger` for each review. The round count in the DIRF store is
 a second limit. When the command returns `stop_for_person`, stop and give the
 remaining issues to a person.

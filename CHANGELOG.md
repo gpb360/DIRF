@@ -25,6 +25,11 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   real cause instead of asking to install yt-dlp.
 
 ### Added
+- **`dirf review loop`** — runs the Review Ladder once for a PR checkout with
+  a reviewer command, a fixer command, and an optional check command, then
+  reports once. Every review goes through the review ledger. A failed check
+  starts no reviewer. The command makes at most one fix and never pushes or
+  merges.
 - **`dirf state link`** — joins this machine's checkout to a project in a
   shared store when its absolute path differs, such as Windows and Linux.
 - **`dirf skills materialize`** — copies the skills bound to an attempt, plus any

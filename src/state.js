@@ -476,6 +476,15 @@ export function recordReviewRound(slug, review, now = new Date()) {
   });
 }
 
+// The latest ledger entry for one commit since the last reset, or null.
+// Read-only: the review loop uses it to skip a commit that is already qualified.
+export function recordedReviewEntry(slug, prNumber, headSha) {
+  const ledger = readReviewRounds(slug, prNumber);
+  if (!ledger) return null;
+  const head = String(headSha || "").toLowerCase();
+  return currentReviewSegment(ledger).findLast((entry) => entry.head_sha === head) || null;
+}
+
 export function resetReviewRounds(slug, prNumber, reason, now = new Date()) {
   if (!Number.isInteger(prNumber) || prNumber < 1) throw new Error("reset-rounds requires a pull-request number");
   if (typeof reason !== "string" || !reason.trim()) throw new Error("reset-rounds requires --reason");

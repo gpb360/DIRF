@@ -33,7 +33,7 @@ import { installationDiagnostics } from "./doctor.js";
 import { buildFlow, findCapabilityGaps, reconcile } from "./flow.js";
 import { graphLines, renderFolderHtml, resolveGraph } from "./folders.js";
 import { createAttempt, findAttempt, listAttempts, loadProjectConfig, projectRoot, repositoryIdentity, setupProject } from "./project.js";
-import { resolveReviewProject, recordReviewRound, resetReviewRounds, assertReviewRoundRecorded, resolveProject, resolveProjectReference, listProjects, registerProject, linkCheckout, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, projectHandoffContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, attemptNextAction, projectWorkSnapshot, observeAttempt, bindExecutionAuthority, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings, workflowGates, attemptAudit, runBuiltinCheck, attemptSummary, deriveSlug, checkoutSummary } from "./state.js";
+import { resolveReviewProject, recordReviewRound, recordedReviewEntry, resetReviewRounds, assertReviewRoundRecorded, resolveProject, resolveProjectReference, listProjects, registerProject, linkCheckout, readHandoff, writeHandoff, listAttempts as listAttemptsState, getAttempt as getAttemptState, storeHome, storeProjectDir, importHandoff, migrateCleanup, appendObservation, listObservations, promoteObservation, startTrackingAttempt, updateAttemptLifecycle, attemptPhases, attemptContextState, attemptContextStates, projectHandoffContextState, attemptGateState, attemptResponsibility, pendingGates, gateIsPending, recordedEvidence, autoAdvance, readSettings, writeSettings, linkAttemptWorktree, claimAttemptCheckout, inspectProjectWorktrees, archiveWorktree, remindArchivedWorktree, removeArchivedWorktree, portfolioSnapshot, setProjectStatus, attemptNextAction, projectWorkSnapshot, observeAttempt, bindExecutionAuthority, syncAttemptFromHandoff, recordProgress, listAttemptArtifacts, recordAttemptArtifact, acceptAttemptArtifact, governingAttemptArtifact, readAttemptSkillBindings, writeAttemptSkillBindings, workflowGates, attemptAudit, runBuiltinCheck, attemptSummary, deriveSlug, checkoutSummary } from "./state.js";
 import { ARTIFACT_TYPES, explainGoverningArtifact } from "./artifacts.js";
 import { exportGraphify, exportObsidian } from "./exports.js";
 import {
@@ -50,6 +50,7 @@ import { checkoutRoot as skillCheckoutRoot, materializeSkills, removeMaterialize
 import { binding as skillBinding } from "./skill-bindings.js";
 import { run as runReviewReport } from "../skills/code-review/scripts/review-report.mjs";
 import { run as runReviewLedger } from "../skills/code-review/scripts/review-ledger.mjs";
+import { formatLoopReport, loopPassed, runReviewLadder, runShellCommand } from "./review-loop.js";
 import { bindingsFromPlan, refreshSkillBindings } from "./skill-bindings.js";
 import { runSteCheck } from "./ste.js";
 
@@ -1970,6 +1971,12 @@ function parse(argv) {
     if (a === "--attempt") { out.attempt = rest[++i]; continue; }
     if (a === "--worker") { out.worker = rest[++i]; continue; }
     if (a === "--reason") { out.reason = rest[++i]; continue; }
+    if (["--pr", "--reviewer", "--fixer", "--check"].includes(a)) {
+      const value = rest[++i];
+      if (!value || value.startsWith("--")) throw new Error(`${a} requires a value`);
+      out[a.slice(2)] = a === "--pr" ? Number(value) : value;
+      continue;
+    }
     if (a === "--host") { out.host = rest[++i]; continue; }
     if (a === "--include") { out.include = rest[++i]; continue; }
     if (a === "--worktree") { out.worktree = rest[++i]; continue; }
@@ -2085,6 +2092,8 @@ Usage:
   dirf review <validate|render|ready> review.json     validate, render, or prove a PR review is ready
   dirf review trigger review.json                    record the review round and emit the next action
   dirf review reset-rounds <pr> --reason "..."       restart the round count after a person decides
+  dirf review loop --pr N --reviewer CMD --fixer CMD [--check CMD] [--json]
+                                                      run the Review Ladder once for this checkout, then report
   dirf review verify-update request.json updated-review.json  compare the report targets
   dirf ste check <file-or-dir>... [--words FILE] [--json]  check prose against ASD-STE100 writing rules
   dirf ste rules                                       list the STE rules the checker tests
@@ -2261,14 +2270,37 @@ function cmdGovern(args) {
   process.exitCode = 2;
 }
 
+function cmdReviewLoop(args) {
+  const checkout = args.path ? resolve(args.path) : process.cwd();
+  const git = (...gitArgs) => execFileSync("git", ["-C", checkout, ...gitArgs], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const gitDir = git("rev-parse", "--absolute-git-dir");
+  const project = resolveProject(checkout, { migrate: false });
+  const report = runReviewLadder({
+    pr: args.pr,
+    reviewer: args.reviewer,
+    fixer: args.fixer,
+    check: args.check,
+    outDir: join(gitDir, "dirf-review-loop", `pr-${args.pr}`),
+  }, {
+    run: (command, env) => runShellCommand(command, env, checkout),
+    head: () => git("rev-parse", "HEAD"),
+    trigger: (review) => recordReviewRound(resolveReviewProject(checkout, review), review),
+    recorded: (pr, head) => (project ? recordedReviewEntry(project.slug, pr, head) : null),
+  });
+  console.log(args.json ? JSON.stringify(report, null, 2) : formatLoopReport(report));
+  if (!loopPassed(report)) process.exitCode = 1;
+}
+
 function cmdReview(args) {
   const subcommand = args._[0];
+  if (subcommand === "loop") { cmdReviewLoop(args); return; }
   const files = args._.slice(1);
   if (!subcommand || !files.length) {
     console.error("usage: dirf review <validate|render|ready> review.json");
     console.error("       dirf review trigger review.json");
     console.error("       dirf review verify-update request.json updated-review.json");
     console.error('       dirf review reset-rounds <pr> --reason "..."');
+    console.error("       dirf review loop --pr N --reviewer CMD --fixer CMD [--check CMD] [--json]");
     process.exitCode = 2;
     return;
   }

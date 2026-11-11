@@ -423,3 +423,61 @@ test("dirf review ready rejects historical reports before any live Git lookup", 
   assert.match(result.stderr, /schema version 2/i);
   assert.doesNotMatch(result.stderr, /live pull-request/i);
 });
+
+test("dirf review loop runs the Review Ladder through the store and reports once", () => {
+  const root = mkdtempSync(join(tmpdir(), "dirf-review-loop-"));
+  const origin = join(root, "origin.git");
+  const work = join(root, "work");
+  mkdirSync(work);
+  git(root, ["init", "--bare", "-q", origin]);
+  git(work, ["init", "-q"]);
+  git(work, ["config", "user.email", "dirf@example.invalid"]);
+  git(work, ["config", "user.name", "DIRF Test"]);
+  git(work, ["remote", "add", "origin", origin]);
+  writeFileSync(join(work, "change.txt"), "base\n");
+  git(work, ["add", "change.txt"]);
+  git(work, ["commit", "-q", "-m", "base"]);
+  const base = git(work, ["rev-parse", "HEAD"]);
+  writeFileSync(join(work, "change.txt"), "head\n");
+  git(work, ["commit", "-q", "-am", "head"]);
+  const head = git(work, ["rev-parse", "HEAD"]);
+  assert.equal(run(work, ["state", "register"]).status, 0);
+
+  // Reviewer: a finding on every commit except the fixed one.
+  const template = reviewFor(pathToFileURL(origin).href, base, head, 3);
+  const reviewer = join(root, "reviewer.mjs");
+  writeFileSync(reviewer, `import { writeFileSync } from "node:fs";
+const review = ${JSON.stringify(template)};
+review.target.head_sha = process.env.DIRF_REVIEW_HEAD;
+if (process.env.DIRF_REVIEW_STEP !== "4") {
+  review.axes.correctness = { status: "finding", evidence: "P2-001" };
+  review.findings = [{ id: "P2-001", priority: "P2", confidence: 92, axis: "correctness", title: "Fix the text",
+    file: "change.txt", line: 1, body: "The text is wrong. Write the fixed text.", evidence: ["change.txt says head"] }];
+}
+writeFileSync(process.env.DIRF_REVIEW_OUTPUT, JSON.stringify(review));
+`);
+  const fixer = join(root, "fixer.mjs");
+  writeFileSync(fixer, `import { execFileSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
+if (JSON.parse(readFileSync(process.env.DIRF_REVIEW_REQUEST, "utf8")).action !== "fix_and_update_same_pr") process.exit(9);
+writeFileSync("change.txt", "fixed");
+execFileSync("git", ["commit", "-q", "-am", "fix"]);
+`);
+  const args = ["review", "loop", "--pr", "3", "--reviewer", `node "${reviewer}"`, "--fixer", `node "${fixer}"`, "--check", `node -e "process.exit(0)"`];
+  const first = run(work, [...args, "--json"]);
+  assert.equal(first.status, 0, first.stderr + first.stdout);
+  const report = JSON.parse(first.stdout);
+  assert.equal(report.outcome, "qualified_after_fix");
+  assert.deepEqual(report.steps.map(({ kind }) => kind), ["check", "review", "review", "review", "fix", "check", "review"]);
+  assert.notEqual(report.head, head);
+  assert.equal(git(work, ["status", "--porcelain"]), "");
+
+  const second = run(work, args);
+  assert.equal(second.status, 0, second.stderr);
+  assert.match(second.stdout, /The recorded review of this commit is qualified/);
+
+  const failing = run(work, ["review", "loop", "--pr", "4", "--reviewer", `node "${reviewer}"`, "--fixer", `node "${fixer}"`, "--check", `node -e "console.log('lint failed'); process.exit(2)"`]);
+  assert.equal(failing.status, 1);
+  assert.match(failing.stdout, /A required check failed/);
+  assert.match(failing.stdout, /lint failed/);
+});
