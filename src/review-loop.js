@@ -208,7 +208,10 @@ export function formatLoopReport(report) {
   if (report.error) lines.push(`Error: ${report.error}`);
   if (report.reported_findings?.length) lines.push(`Open findings: ${report.reported_findings.map((item) => `${item.id} ${item.title}`).join("; ")}`);
   if (report.check_output) lines.push("Check output (end):", report.check_output.trimEnd());
-  if (report.head !== report.start_head) lines.push(`The fixer made commit ${report.head}. Push it before you ask for merge approval.`);
+  // A rewritten commit was never reviewed; pushing it would need a force-push.
+  if (report.head !== report.start_head && report.outcome !== "fixer_rewrote_history") {
+    lines.push(`The fixer made commit ${report.head}. Push it before you ask for merge approval.`);
+  }
   if (loopPassed(report)) lines.push("Next: run dirf review ready on the current review before you ask to merge.");
   else lines.push("Next: give this result to a person.");
   return lines.join("\n");
