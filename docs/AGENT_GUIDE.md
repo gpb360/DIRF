@@ -361,6 +361,7 @@ summary and have reconciled its existing owner and content.
 | `dirf review ready <review.json>` | fail closed unless the exact PR is merge-ready |
 | `dirf review trigger <review.json>` | record the review round in the store and emit a fix, reconsider-approach, stop-for-person, continued review, or live-readiness check action |
 | `dirf review reset-rounds <pr> --reason "..."` | restart the round count after a person decides to continue |
+| `dirf review loop --pr N --reviewer CMD --fixer CMD [--check CMD] [--json]` | run the Review Ladder once for this checkout: check, up to three reviews, one fix, check, one review of the fix; never pushes or merges |
 | `dirf review verify-update <request.json> <updated-review.json>` | compare artifact targets and emit a re-review trigger; the harness must verify the live PR head |
 | `dirf ste check <file-or-dir>... [--words FILE] [--json]` | check prose against the ASD-STE100 writing rules |
 | `dirf ste rules` | list the STE rules that the checker tests |

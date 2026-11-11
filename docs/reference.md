@@ -237,6 +237,8 @@ dirf review render <review.json>                        render a review artifact
 dirf review ready <review.json>                         fail closed unless the exact PR is merge-ready
 dirf review trigger <review.json>                       record the review round and emit the next action
 dirf review reset-rounds <pr> --reason "..."            restart the round count after a person decides
+dirf review loop --pr N --reviewer CMD --fixer CMD [--check CMD] [--json]
+                                                        run the Review Ladder once for this checkout, then report
 
 # writing standard (ASD-STE100)
 dirf ste check <file-or-dir>... [--words FILE] [--json]  check prose against the STE writing rules (exit 1 on findings)
