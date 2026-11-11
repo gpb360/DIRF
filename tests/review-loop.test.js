@@ -197,6 +197,7 @@ test("a fixer that replaces the reviewed commit stops before the review of the f
   assert.equal(report.outcome, "fixer_rewrote_history");
   assert.deepEqual(h.commands(), ["check", "review", "review", "review", "fix"]);
   assert.equal(loopPassed(report), false);
+  assert.doesNotMatch(formatLoopReport(report), /Push it/);
 });
 
 test("isQualified ignores a pre-existing P2 or P3 finding but not a pre-existing P1", () => {
