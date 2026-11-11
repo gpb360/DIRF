@@ -6,7 +6,16 @@ import { join } from "node:path";
 import { ROOT } from "../src/paths.js";
 
 const read = (path) => readFileSync(join(ROOT, path), "utf8");
-const HARD_LIMIT = /Limit instructions to 20 words|Keep sentences within the ASD-STE100 limits|Give one instruction per sentence|word-count conventions in section 8|Keep lists to five relevant items/;
+const HARD_LIMIT = new RegExp([
+  "Limit instructions to 20 words",
+  "Keep sentences within the ASD-STE100 limits",
+  "Give one instruction per sentence",
+  "Write one instruction in each step",
+  "Do not use contractions",
+  "follows the STE writing rules",
+  "word-count conventions in section 8",
+  "Keep lists to five relevant items",
+].join("|"));
 
 test("policy and editing skills ask for mostly-STE style, not hard limits", () => {
   for (const path of ["policies/workflow-policy.md", "skills/unslop/README.md", "skills/ste100/README.md", "playbooks/documentation/README.md"]) {
