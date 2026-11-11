@@ -7,11 +7,10 @@ import { SKILL_STATUS, missingSkillFiles, skillIsIncomplete } from "./skills.js"
 const GOVERNANCE_MARKER = "<!-- governance:v1 -->";
 const FM_RE = /^([A-Za-z0-9_-]+):\s*(.*)$/;
 export const FOCUSED_OUTPUT_RULES = [
-  "Lead with the result or current state. Keep routine updates brief. Use ASD-STE100 Issue 9 for human technical output.",
-  "Use approved words with their approved meanings and parts of speech. Use defined technical terms consistently.",
-  "Use full sentences. Use active voice unless a descriptive sentence has an unknown actor. Limit instructions to 20 words per sentence and descriptions to 25 words per sentence.",
-  "Give one instruction per sentence unless actions occur together. Put required conditions before actions. Keep each paragraph to one topic and at most six sentences.",
-  "Include concrete validation evidence. Keep lists to five relevant items or fewer. State failures plainly and name the affected step. End with exactly one next action, or `Complete`.",
+  "Lead with the result or current state. Keep routine updates brief.",
+  "Write mostly in the style of ASD-STE100 Simplified Technical English: short sentences, one idea per sentence, active voice, and consistently using the same word for the same thing.",
+  "Use a paragraph of flowing prose where ideas connect, and keep bullets for lists of separate items. Put required conditions before actions.",
+  "Include concrete validation evidence. State failures plainly and name the affected step. End with exactly one next action, or `Complete`.",
 ];
 
 const PR_REVIEW_OUTPUT_RULES = [

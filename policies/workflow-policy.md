@@ -73,27 +73,23 @@ Use this policy in every generated workflow prompt.
 - The limit does not waive a finding, a failed check, or a gate. The work stays incomplete until a person decides.
 
 ## Communication
-- Use ASD-STE100 Issue 9 for human technical output. Apply its writing rules
-  and approved-word dictionary during authoring and the final prose review.
-  Use approved meanings, parts of speech, and verb forms. Define necessary
-  technical terms and use them consistently. Do not treat jargon as an exception.
-- Use full sentences without contractions or semicolons. Use active voice.
-  In descriptions, use passive voice only when the actor is unknown.
-  Give one instruction per sentence, except for simultaneous actions.
-  Put prerequisite conditions before the command. Limit instructions to 20 words
-  per sentence and descriptions to 25. Give each paragraph one topic and at most
-  six sentences. Use the word-count conventions in section 8 of the standard.
+- Write human technical output mostly in the style of ASD-STE100 Simplified
+  Technical English: short sentences, one idea per sentence, active voice, and
+  consistently using the same word for the same thing. Use a paragraph of
+  flowing prose where ideas connect, and keep bullets for lists of separate
+  items. Put prerequisite conditions before the action. Define necessary
+  technical terms and use them consistently.
 - Preserve required facts, failures, uncertainty, and approval boundaries.
   Rewrite the sentence when a word substitution would change its meaning.
   Preserve literal code, commands, logs, labels, quotations, citations, and
   machine-readable data. Task-specific creative writing keeps its requested form.
-  These instructions guide output. Do not claim full STE compliance without
-  reviewing the applicable rules and dictionary usage.
+  These instructions guide style. Do not claim STE compliance.
 - Run `dirf ste check FILE` on changed prose files. The check tests sentence
   length, paragraph length, passive voice, and one instruction per step. It does
   not test the dictionary. Add `--words FILE` when the project supplies an
   approved-word list. The check is a heuristic and reads only a subset of
-  Markdown. Read each finding before you change the text.
+  Markdown. Its findings are advisory: read each one and fix it only when the
+  fix makes the text clearer.
 - Write user-facing updates in simple, ordinary English. Keep internal workflow
   terms such as exact-head, fixed-point, remediation, gate, convergence, and
   evidence ledger out of the update unless the user asks for technical detail.

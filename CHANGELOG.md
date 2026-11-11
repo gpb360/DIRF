@@ -8,6 +8,13 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 ## Unreleased
 
 ### Changed
+- **Mostly-STE style (experiment)** — focused output rules and the workflow
+  policy no longer set hard ASD-STE100 limits (20/25-word sentences, one
+  instruction per sentence, six-sentence paragraphs, five-item lists). They now
+  ask for prose mostly in ASD-STE100 style, with flowing paragraphs where ideas
+  connect. `dirf ste check` findings are advisory. Reason: Anthropic's
+  "Prompting Claude Fable 5.2" guide says hard style limits make that model's
+  prose choppy.
 - **Review Ladder** — the workflow policy and the `pr-review` playbook now
   limit a PR review to five agents: one reviewer, two more reviewers on the same
   commit, one code-cleaner, and one reviewer of the fix. Then a person decides.

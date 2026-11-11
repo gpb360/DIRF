@@ -81,7 +81,7 @@ try {
   assertContains(readmeText, "bundled default");
   assertContains(readmeText, "No installed agents were found on this host");
   const handoffText = readFileSync(handoff, "utf8");
-  assertContains(handoffText, "Keep lists to five relevant items or fewer.");
+  assertContains(handoffText, "Use a paragraph of flowing prose where ideas connect, and keep bullets for lists of separate items.");
   assertContains(handoffText, "State failures plainly and name the affected step.");
 
   const snapshotText = readFileSync(wfJson, "utf8");
@@ -95,7 +95,7 @@ try {
   assertContains(run(["graph", attempt]), "[workflow] smoke");
   const runOutput = run(["run", attempt]);
   assertContains(runOutput, "Focused output:");
-  assertContains(runOutput, "Keep lists to five relevant items or fewer.");
+  assertContains(runOutput, "Use a paragraph of flowing prose where ideas connect, and keep bullets for lists of separate items.");
   assertContains(runOutput, "State failures plainly and name the affected step.");
   if (run(["run", attempt, "--no-focused-output"]).includes("Focused output:")) throw new Error("run ignored --no-focused-output");
 

@@ -11,8 +11,11 @@ capabilities: ["controlled language"]
 
 # Write to ASD-STE100
 
-ASD-STE100 is the Simplified Technical English (STE) standard. Use these rules
-for documentation, reports, handoffs, and pull-request text.
+ASD-STE100 is the Simplified Technical English (STE) standard. Write mostly in
+its style: short sentences, one idea per sentence, active voice, and the same
+word for the same thing. Use a paragraph of flowing prose where ideas connect,
+and keep bullets for lists of separate items. The standard's rules follow. Treat
+the numeric limits as targets, not hard limits.
 
 1. Write procedural sentences of 20 words or fewer.
 2. Write descriptive sentences of 25 words or fewer.
@@ -33,8 +36,8 @@ Then run the checker:
 dirf ste check <file-or-dir> [--words approved-words.txt]
 ```
 
-The checker tests rules 1 to 4, 6, and 10. It uses heuristics, so read each
-finding before you change the text. Do not change a correct technical term to
+The checker tests rules 1 to 4, 6, and 10. It uses heuristics, so its findings
+are advisory: read each one and fix it only when the fix makes the text clearer. Do not change a correct technical term to
 make the checker pass.
 
 ## What the checker reads
