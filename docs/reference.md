@@ -239,6 +239,8 @@ dirf review trigger <review.json>                       record the review round 
 dirf review reset-rounds <pr> --reason "..."            restart the round count after a person decides
 dirf review loop --pr N --reviewer CMD --fixer CMD [--check CMD] [--json]
                                                         run the Review Ladder once for this checkout, then report
+                                                        reviewer env: DIRF_REVIEW_OUTPUT, _PR, _HEAD, _STEP, _PRIOR, _REQUEST
+                                                        fixer env: DIRF_REVIEW_PR, _HEAD, _FINDINGS, _REQUEST, _NEW_AGENT ("1" = start a new agent session)
 
 # writing standard (ASD-STE100)
 dirf ste check <file-or-dir>... [--words FILE] [--json]  check prose against the STE writing rules (exit 1 on findings)

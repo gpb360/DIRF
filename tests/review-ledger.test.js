@@ -82,7 +82,10 @@ test("findings at round 3 force a new approach and keep the fix request", () => 
   assert.equal(request.approach_change_required, true);
   assert.equal(request.remaining, 2);
   assert.equal(request.next_review.round, 4);
+  assert.equal(request.new_agent.required, true);
+  assert.match(request.new_agent.input, /do not continue the session/);
   assert.equal(ledgerAction(withFinding(4)).approach_change_required, undefined);
+  assert.equal(ledgerAction(withFinding(4)).new_agent, undefined);
   const updated = (extra) => review({ target: { ...review().target, head_sha: SHA_C, ...extra } });
   assert.throws(() => verifyUpdatedReview(request, updated({})), /approach_change/);
   assert.equal(verifyUpdatedReview(request, updated({ approach_change: "Move the check to the store" })).verified, true);
@@ -156,6 +159,7 @@ test("agent instructions state the same loop limit as the code", () => {
   const policy = readFileSync(new URL("../policies/workflow-policy.md", import.meta.url), "utf8");
   assert.match(policy, new RegExp(`loop after ${MAX_LOOP_ROUNDS} rounds`));
   assert.match(policy, /reconsider_approach/);
+  assert.match(policy, /new agent/);
   assert.match(policy, /stop_for_person/);
   const playbook = readFileSync(new URL("../playbooks/pr-review/README.md", import.meta.url), "utf8");
   assert.match(playbook, /stop_for_person/);

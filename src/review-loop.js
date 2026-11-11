@@ -170,6 +170,8 @@ export function runReviewLadder(options, deps) {
       DIRF_REVIEW_HEAD: head,
       DIRF_REVIEW_FINDINGS: reviewPaths.join(delimiter),
       DIRF_REVIEW_REQUEST: requestPath,
+      // "1" when the ledger asks for a new approach: run the fix in a new agent session.
+      DIRF_REVIEW_NEW_AGENT: request.new_agent?.required ? "1" : "",
     });
     steps.push({ kind: "fix", head, status: fix.status === 0 ? "passed" : "failed" });
     if (fix.status !== 0) return finish("fixer_failed", { output: fix.output });
