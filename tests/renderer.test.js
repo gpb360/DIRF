@@ -83,7 +83,7 @@ test("kickoff prompt is optional in Markdown and embedded in HTML, preserving st
   assert.match(prompt, /Write mostly in the style of ASD-STE100 Simplified Technical English/);
   assert.match(prompt, /Use a paragraph of flowing prose where ideas connect, and keep bullets for lists of separate items/);
   assert.ok(!prompt.includes("20 words"), "hard STE word limits must not be rendered");
-  assert.ok(!prompt.includes("one instruction per sentence"));
+  assert.doesNotMatch(prompt, /one instruction (per|in each) (sentence|step)|words per sentence|at most six sentences/i);
   assert.ok(!/codex|claude/i.test(prompt));
   assert.ok(!prompt.includes("```"), "prompt must be safe inside a fenced block");
 

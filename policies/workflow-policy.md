@@ -77,10 +77,11 @@ Use this policy in every generated workflow prompt.
   Technical English: short sentences, one idea per sentence, active voice, and
   consistently using the same word for the same thing. Use a paragraph of
   flowing prose where ideas connect, and keep bullets for lists of separate
-  items. Put prerequisite conditions before the action. Define necessary
-  technical terms and use them consistently.
+  items. Use full sentences. Put prerequisite conditions before the action.
+  Define necessary technical terms and use them consistently.
 - Preserve required facts, failures, uncertainty, and approval boundaries.
-  Rewrite the sentence when a word substitution would change its meaning.
+  When the project supplies an approved-word list, use those words, and rewrite
+  the sentence when a word substitution would change its meaning.
   Preserve literal code, commands, logs, labels, quotations, citations, and
   machine-readable data. Task-specific creative writing keeps its requested form.
   These instructions guide style. Do not claim STE compliance.
@@ -89,7 +90,8 @@ Use this policy in every generated workflow prompt.
   not test the dictionary. Add `--words FILE` when the project supplies an
   approved-word list. The check is a heuristic and reads only a subset of
   Markdown. Its findings are advisory: read each one and fix it only when the
-  fix makes the text clearer.
+  fix makes the text clearer. Exit status 1 means that findings exist. It is
+  not a failed step.
 - Write user-facing updates in simple, ordinary English. Keep internal workflow
   terms such as exact-head, fixed-point, remediation, gate, convergence, and
   evidence ledger out of the update unless the user asks for technical detail.
