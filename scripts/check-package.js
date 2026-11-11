@@ -10,8 +10,10 @@ if (!npm) throw new Error("Run this check with npm run check:package");
 const output = execFileSync(process.execPath, [npm, "pack", "--dry-run", "--json", "--ignore-scripts"], {
   cwd: root, encoding: "utf8", windowsHide: true, maxBuffer: 8 * 1024 * 1024,
 });
-/** @type {{files: {path: string}[], entryCount: number}[]} */
-const packages = JSON.parse(output);
+// npm 11 and older print an array; npm 12 prints an object keyed by package name.
+/** @type {{files: {path: string}[], entryCount: number}[] | Record<string, {files: {path: string}[], entryCount: number}>} */
+const parsed = JSON.parse(output);
+const packages = Array.isArray(parsed) ? parsed : Object.values(parsed);
 if (packages.length !== 1 || !packages[0].files?.length) throw new Error("npm returned no package manifest");
 const errors = validatePublicationBoundary(root, packages[0].files.map((file) => file.path));
 if (errors.length) {
