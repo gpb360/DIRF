@@ -21,7 +21,7 @@ Use this policy in every generated workflow prompt.
 - The harness binds the execution authority token during trusted setup before children run and keeps it out of child environments; identity variables and a self-written transfer reason do not grant registry authority or abandonment rights.
 - Every child assignment identifies the parent Attempt and requires the child to report its state, result, blocker, and handoff back to the orchestrator.
 - Child agents do not call DIRF state commands. The orchestrator submits their reports as one bounded execution snapshot.
-- Before you start an agent in a new worktree on a `claude`, `codex`, or `agents` host, run `dirf skills materialize --attempt ID --host HOST --path WORKTREE`. On another host, continue without copied skills.
+- A child agent does not start agents. Only the orchestrator starts agents.
 - A child is a separate Attempt only when it needs an independent lifecycle and handoff.
 
 ## Build Bias
@@ -51,7 +51,21 @@ Use this policy in every generated workflow prompt.
 - After every final push, refresh the exact PR head; collect all review comments, unresolved threads, and checks; reconcile every P0, P1, P2, and P3 finding; fix and verify each finding; then rerun the relevant checks and review the new head.
 - Re-fetch that exact head's reviews, unresolved threads, checks, mergeability, and diff. Report "ready to merge" only when no unresolved review findings remain and all required gates pass.
 - Dismiss a finding only when evidence shows it is invalid or a duplicate. A retained P0, P1, P2, or P3 finding cannot be waived for completion; fix and verify it, then review the new head. Otherwise report "not ready" and state the exact remaining action.
-- Follow the Loop Limit. Run `dirf review trigger` for each review. When it returns `reconsider_approach`, change the approach before the next fix. When it returns `stop_for_person`, stop the fixes and give the result to a person.
+- Follow the Review Ladder and the Loop Limit. Run `dirf review trigger` for each review. When it returns `reconsider_approach`, change the approach before the next fix. When it returns `stop_for_person`, stop the fixes and give the result to a person.
+
+## Review Ladder
+- A PR review uses at most 5 agents: 4 reviewers and 1 code-cleaner. No step occurs twice.
+- A reviewer only reviews. A code-cleaner only changes code. Neither starts agents.
+- A review is qualified when it meets the gate that the user or task states. Without a stated gate, a review is qualified when it has no P0, P1, P2, or P3 finding.
+- Before step 1, read the recorded review of the current commit. If it is qualified, start no agents.
+- Check gate: before step 1 and before step 4, run the required checks of the task, such as lint, type check, tests, and build. The checks are commands, not agents.
+- If a required check fails, start no reviewer. Give the check output to the author of the commit and stop.
+- Step 1: one reviewer reviews the current commit. If the review is qualified, stop.
+- Step 2: two more reviewers review the same commit. If two of the three reviews are qualified, stop. Report the findings of the third review.
+- Step 3: one code-cleaner reads all three reviews and fixes the issues in one commit. That commit is the baseline.
+- Step 4: one reviewer reviews the baseline against the three earlier reviews. The reviewer checks that the fix corrected each issue and caused no defect.
+- Step 5: if that review is not qualified, stop. Tell the person that the work needs a new examination.
+- Only a person starts the ladder again.
 
 ## Loop Limit
 - Stop any repeated fix, retry, or review loop after 5 rounds. Use a different limit only when the user or task states it.

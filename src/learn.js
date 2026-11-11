@@ -199,47 +199,76 @@ export function transcriptFromVtt(value) {
   return normalizedText(cues.join("\n"));
 }
 
+// YouTube lists two tracks for auto-captioned videos: `<lang>-orig` is the
+// original speech-recognition track, and `<lang>` is the same captions served
+// through the translation endpoint (`tlang=`), which YouTube rate-limits with
+// HTTP 429 far more readily. Try the original track first.
+export function ytDlpCaptionLanguages(language) {
+  const requested = String(language || "en").trim() || "en";
+  if (/-orig$/i.test(requested)) return [requested];
+  return [`${requested}-orig`, requested];
+}
+
+function ytDlpFailureDetail(result) {
+  const lines = String(result.stderr || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const error = lines.filter((line) => /^ERROR:/i.test(line)).at(-1);
+  if (error) return error.slice(0, 300);
+  if (result.error?.code === "ETIMEDOUT" || result.signal) return "yt-dlp timed out";
+  if (result.error) return `yt-dlp failed: ${result.error.message}`.slice(0, 300);
+  if (result.status) return `yt-dlp exited with status ${result.status}`;
+  return "yt-dlp wrote no subtitle file";
+}
+
 function readYouTubeWithYtDlp(input, options = {}, dependencies = {}) {
-  const folder = mkdtempSync(join(tmpdir(), "dirf-youtube-"));
-  try {
-    const command = dependencies.ytDlpCommand || "yt-dlp";
-    const language = String(options.language || "en").trim() || "en";
-    const output = join(folder, "transcript.%(ext)s");
-    const result = spawnSync(command, [
-      "--ignore-config",
-      "--skip-download",
-      "--no-playlist",
-      "--no-progress",
-      "--write-subs",
-      "--write-auto-subs",
-      "--sub-langs", language,
-      "--sub-format", "vtt",
-      "--output", output,
-      input,
-    ], {
-      encoding: "utf8",
-      shell: false,
-      windowsHide: true,
-      timeout: 60_000,
-      maxBuffer: 1024 * 1024,
-    });
-    if (result.error?.code === "ENOENT") return null;
-    if (result.error) return null;
-    const files = readdirSync(folder).filter((name) => name.toLowerCase().endsWith(".vtt")).sort();
-    if (!files.length) return null;
-    const selected = files.find((name) => name.toLowerCase().endsWith(`.${language.toLowerCase()}.vtt`)) || files[0];
-    const sourceBytes = readFileSync(join(folder, selected));
-    if (sourceBytes.length > MAX_REMOTE_BYTES) throw new Error("YouTube transcript exceeds the 5 MB limit");
-    const markdown = transcriptFromVtt(sourceBytes.toString("utf8"));
-    if (!markdown) return null;
-    return {
-      markdown,
-      sourceBytes,
-      parser: { name: "yt-dlp-public-captions", version: "local", language, optionalAdapter: true },
-    };
-  } finally {
-    rmSync(folder, { recursive: true, force: true });
+  const command = dependencies.ytDlpCommand || "yt-dlp";
+  const spawn = dependencies.spawnSync || spawnSync;
+  const failures = [];
+  for (const language of ytDlpCaptionLanguages(options.language)) {
+    const folder = mkdtempSync(join(tmpdir(), "dirf-youtube-"));
+    try {
+      const output = join(folder, "transcript.%(ext)s");
+      const result = spawn(command, [
+        "--ignore-config",
+        "--skip-download",
+        "--no-playlist",
+        "--no-progress",
+        "--write-subs",
+        "--write-auto-subs",
+        "--sub-langs", language,
+        "--sub-format", "vtt",
+        "--output", output,
+        input,
+      ], {
+        encoding: "utf8",
+        shell: false,
+        windowsHide: true,
+        timeout: 60_000,
+        maxBuffer: 1024 * 1024,
+      });
+      if (result.error?.code === "ENOENT") return { unavailable: true };
+      const files = readdirSync(folder).filter((name) => name.toLowerCase().endsWith(".vtt")).sort();
+      const selected = files.find((name) => name.toLowerCase().endsWith(`.${language.toLowerCase()}.vtt`)) || files[0];
+      if (!selected) {
+        failures.push(`${language}: ${ytDlpFailureDetail(result)}`);
+        continue;
+      }
+      const sourceBytes = readFileSync(join(folder, selected));
+      if (sourceBytes.length > MAX_REMOTE_BYTES) throw new Error("YouTube transcript exceeds the 5 MB limit");
+      const markdown = transcriptFromVtt(sourceBytes.toString("utf8"));
+      if (!markdown) {
+        failures.push(`${language}: subtitle file had no transcript text`);
+        continue;
+      }
+      return {
+        markdown,
+        sourceBytes,
+        parser: { name: "yt-dlp-public-captions", version: "local", language, optionalAdapter: true },
+      };
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
   }
+  return { failures };
 }
 
 async function readYouTubeSource(input, options, dependencies) {
@@ -261,11 +290,17 @@ async function readYouTubeSource(input, options, dependencies) {
   }
   let fallback = null;
   if (!markdown) fallback = await (dependencies.youtubeFallback || readYouTubeWithYtDlp)(input, options, dependencies);
-  if (!markdown && fallback) {
+  if (!markdown && fallback?.markdown) {
     markdown = fallback.markdown;
     transcriptResponse = { bytes: fallback.sourceBytes };
   }
-  if (!markdown) throw new Error("YouTube caption endpoint returned no transcript text; paste a transcript, provide a local file, or install yt-dlp for the optional local fallback");
+  if (!markdown) {
+    const base = "YouTube caption endpoint returned no transcript text";
+    if (fallback?.failures?.length) {
+      throw new Error(`${base}; yt-dlp fallback failed (${fallback.failures.join("; ")}); retry later, paste a transcript, or provide a local file`);
+    }
+    throw new Error(`${base}; paste a transcript, provide a local file, or install yt-dlp for the optional local fallback`);
+  }
   return {
     kind: "youtube",
     title: safeTitle(player?.videoDetails?.title, `YouTube ${youtubeVideoId(input)}`),
