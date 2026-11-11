@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import {
   assertPublicHttpsUrl,
@@ -14,6 +14,7 @@ import {
   transcriptFromVtt,
   transcriptFromXml,
   youtubeVideoId,
+  ytDlpCaptionLanguages,
 } from "../src/learn.js";
 
 function attemptRoot() {
@@ -113,6 +114,92 @@ test("ingests a mocked YouTube transcript with provenance and no code execution"
   assert.equal(manifest.parser.language, "en");
   assert.equal(manifest.safety.codeExecution, "disabled");
   assert.equal(manifest.safety.repositoryWrites, "none");
+});
+
+function youtubeWithoutPublicCaptions() {
+  const player = {
+    videoDetails: { title: "Fallback video" },
+    captions: { playerCaptionsTracklistRenderer: { captionTracks: [
+      { baseUrl: "https://www.youtube.com/api/timedtext?v=abc&exp=xpe", languageCode: "en", kind: "asr" },
+    ] } },
+  };
+  const responses = [
+    { body: `<script>var ytInitialPlayerResponse = ${JSON.stringify(player)};</script>`, finalUrl: "https://www.youtube.com/watch?v=abc" },
+    { body: "", bytes: Buffer.alloc(0) },
+    { body: "", bytes: Buffer.alloc(0) },
+  ];
+  return async () => responses.shift();
+}
+
+// Stub yt-dlp: `tracks` maps a --sub-langs value to VTT text, or to an
+// { stderr } failure. Records each requested language.
+function stubYtDlp(tracks, calls) {
+  return (command, args) => {
+    const language = args[args.indexOf("--sub-langs") + 1];
+    const output = args[args.indexOf("--output") + 1];
+    calls.push(language);
+    const track = tracks[language];
+    if (typeof track === "string") {
+      writeFileSync(join(dirname(output), `transcript.${language}.vtt`), track);
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: track?.stderr || "" };
+  };
+}
+
+test("yt-dlp fallback asks for the original caption track before the translated one", () => {
+  assert.deepEqual(ytDlpCaptionLanguages(undefined), ["en-orig", "en"]);
+  assert.deepEqual(ytDlpCaptionLanguages("pt-BR"), ["pt-BR-orig", "pt-BR"]);
+  assert.deepEqual(ytDlpCaptionLanguages("en-orig"), ["en-orig"]);
+});
+
+test("yt-dlp fallback uses the en-orig track when present", async () => {
+  const root = attemptRoot();
+  const calls = [];
+  const result = await ingestLearningSource({ attemptRoot: root, input: "https://www.youtube.com/watch?v=abc" }, {
+    fetchText: youtubeWithoutPublicCaptions(),
+    spawnSync: stubYtDlp({ "en-orig": "WEBVTT\n\n00:00.000 --> 00:01.000\nOriginal track" }, calls),
+  });
+  assert.deepEqual(calls, ["en-orig"]);
+  assert.equal(readFileSync(result.artifactPath, "utf8"), "Original track\n");
+  const manifest = JSON.parse(readFileSync(result.manifestPath, "utf8"));
+  assert.equal(manifest.parser.name, "yt-dlp-public-captions");
+  assert.equal(manifest.parser.language, "en-orig");
+});
+
+test("yt-dlp fallback falls back to the requested track when no original track exists", async () => {
+  const root = attemptRoot();
+  const calls = [];
+  const result = await ingestLearningSource({ attemptRoot: root, input: "https://www.youtube.com/watch?v=abc" }, {
+    fetchText: youtubeWithoutPublicCaptions(),
+    spawnSync: stubYtDlp({ en: "WEBVTT\n\n00:00.000 --> 00:01.000\nManual track" }, calls),
+  });
+  assert.deepEqual(calls, ["en-orig", "en"]);
+  assert.equal(readFileSync(result.artifactPath, "utf8"), "Manual track\n");
+  assert.equal(JSON.parse(readFileSync(result.manifestPath, "utf8")).parser.language, "en");
+});
+
+test("yt-dlp fallback reports the real yt-dlp error instead of asking to install it", async () => {
+  const calls = [];
+  const throttled = { stderr: "WARNING: old\nERROR: Unable to download video subtitles for 'en': HTTP Error 429: Too Many Requests\n" };
+  await assert.rejects(ingestLearningSource({ attemptRoot: attemptRoot(), input: "https://www.youtube.com/watch?v=abc" }, {
+    fetchText: youtubeWithoutPublicCaptions(),
+    spawnSync: stubYtDlp({ "en-orig": throttled, en: throttled }, calls),
+  }), (error) => {
+    assert.match(error.message, /HTTP Error 429/);
+    assert.match(error.message, /en-orig: /);
+    assert.doesNotMatch(error.message, /install yt-dlp/);
+    return true;
+  });
+  assert.deepEqual(calls, ["en-orig", "en"]);
+});
+
+test("yt-dlp fallback asks to install yt-dlp only when it is missing", async () => {
+  const missing = () => ({ error: Object.assign(new Error("spawn yt-dlp ENOENT"), { code: "ENOENT" }) });
+  await assert.rejects(ingestLearningSource({ attemptRoot: attemptRoot(), input: "https://www.youtube.com/watch?v=abc" }, {
+    fetchText: youtubeWithoutPublicCaptions(),
+    spawnSync: missing,
+  }), /install yt-dlp/);
 });
 
 test("normalizes an explicitly selected local text document", async () => {
