@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { collectRoutingFacts, loadPlaybooks, recommend } from "../src/router.js";
 import { folderHash } from "../src/paths.js";
+import { kickoffPrompt } from "../src/renderer.js";
 
 test("landing page match", () => {
   const r = recommend("build a landing page");
@@ -165,15 +166,23 @@ test("visual conformance with fixes carries implementation and recapture phases"
 });
 
 test("visual conformance carries a per-dimension quality bar with fresh-context critics", () => {
-  const workflow = recommend("Compare every screen to the design mock and fix every verified mismatch").workflow;
+  const result = recommend("Compare every screen to the design mock and fix every verified mismatch");
+  const { workflow } = result;
   const contract = workflow.requirements.join("\n");
-  assert.match(contract, /numeric bar per dimension/);
-  assert.match(contract, /fresh-context critics/);
-  assert.match(contract, /calibration offset/);
-  assert.match(contract, /measured .* or eyeballed/);
-  assert.match(contract, /round ledger/);
-  assert.match(contract, /own score .* never let it decide a stop/);
-  assert.match(workflow.agent_contracts["test-engineer"].verification, /never by the builder's own score/);
+  // The bar has a scale, an owner, and user approval, so the builder cannot set its own stop.
+  assert.match(contract, /ui-designer freezes a 0-100 bar per dimension and the user approves it/);
+  assert.ok(result.questions.some((question) => /0-100 score must each dimension meet/.test(question)));
+  assert.match(contract, /test-engineer launches at least two fresh-context critics/);
+  assert.match(contract, /not specified; it is excluded from the stop check/);
+  assert.match(contract, /per-dimension calibration offset \(default 0\)/);
+  assert.match(contract, /own score; it never decides a stop/);
+  assert.match(contract, /Among issues whose dependencies are met/);
+  assert.match(contract, /more than 5 points is a regression/);
+  assert.match(contract, /repeat the fix and recapture phases as a new round/);
+  assert.match(workflow.recovery, /critic scoring blocked and do not claim parity/);
+  assert.match(workflow.agent_contracts["test-engineer"].verification, /never from the builder's own score/);
+  // The contract must reach the agent, not only the registry.
+  assert.match(kickoffPrompt(result), /fresh-context critics/);
 });
 
 test("generic refactor routes to impeccable-polish", () => {
