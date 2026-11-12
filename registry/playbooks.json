@@ -1975,7 +1975,7 @@
         "independently recapture and verify the complete matrix"
       ],
       "output": "complete visual evidence ledger, dependency-ordered issues, implemented fixes, and independently verified final design parity",
-      "validation": "prove inventory completeness, exact reference identity, desktop and mobile evidence, keyboard and assistive behavior, focused tests, production build, and a complete post-fix recapture",
+      "validation": "prove inventory completeness, exact reference identity, desktop and mobile evidence, keyboard and assistive behavior, focused tests, production build, and a complete post-fix recapture; score every unblocked row per dimension against the frozen bar with fresh-context critics and stop only when the calibrated critic median meets the bar on every dimension",
       "recovery": "if a reference, authenticated state, fixture, or environment is unavailable, mark the exact row blocked instead of guessing; continue every unblocked row and do not claim full parity",
       "agent_contracts": {
         "ux-researcher": {
@@ -1999,7 +1999,7 @@
             "independently recapture and verify the complete matrix"
           ],
           "output": "before and after evidence for every unblocked matrix row",
-          "verification": "captures use the frozen fixtures, viewports, references, and independent final comparison"
+          "verification": "captures use the frozen fixtures, viewports, references, and independent final comparison; final parity is scored per dimension by fresh-context critics against the frozen bar, never by the builder's own score"
         },
         "frontend-developer": {
           "phases": [
@@ -2013,7 +2013,16 @@
         "independently recapture and verify the complete matrix": {
           "kind": "decision"
         }
-      }
+      },
+      "requirements": [
+        "Freeze a numeric bar per dimension before the first comparison: layout and spacing, typography, color, components and states, content density, motion and interaction. Never use one overall score; the weakest dimension must stay visible.",
+        "Score with at least two fresh-context critics. Each critic receives only the reference-beside-capture evidence and the rubric with the bar: no code, no history, no author, and not the builder's own score. Take the median per dimension; when critics differ by more than 10 points, add one more critic.",
+        "Log the builder's own score but never let it decide a stop. When the user gives an estimate, record the gap as the calibration offset, apply it to later critic medians, and report raw and calibrated numbers.",
+        "Label every number as measured (a command produced it this round) or eyeballed (a person or model judged it). Write not measured for any check that did not run.",
+        "Keep a round ledger artifact: focus and reason, changes, evidence paths, per-dimension scores against the previous round, best round so far, and the stop check. If a round lowers a score, fix it or return to the best round before continuing.",
+        "Choose each round's focus in this order: open user feedback, any row far below the bar, then the dimension with the largest total gap. Make one surface meet the bar before widening.",
+        "Stop only when every dimension of every unblocked row meets the bar by calibrated critic median and the user accepts the final decision gate. Meeting the bar unexpectedly early means the bar was read too low: recheck full-size captures and the weakest row."
+      ]
     },
     "questions": [
       "Where is the approved design source of truth?",

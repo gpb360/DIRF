@@ -164,6 +164,18 @@ test("visual conformance with fixes carries implementation and recapture phases"
   assert.match(workflow.output, /implemented fixes/);
 });
 
+test("visual conformance carries a per-dimension quality bar with fresh-context critics", () => {
+  const workflow = recommend("Compare every screen to the design mock and fix every verified mismatch").workflow;
+  const contract = workflow.requirements.join("\n");
+  assert.match(contract, /numeric bar per dimension/);
+  assert.match(contract, /fresh-context critics/);
+  assert.match(contract, /calibration offset/);
+  assert.match(contract, /measured .* or eyeballed/);
+  assert.match(contract, /round ledger/);
+  assert.match(contract, /own score .* never let it decide a stop/);
+  assert.match(workflow.agent_contracts["test-engineer"].verification, /never by the builder's own score/);
+});
+
 test("generic refactor routes to impeccable-polish", () => {
   assert.equal(recommend("refactor the parser for clarity").playbook, "impeccable-polish");
 });
