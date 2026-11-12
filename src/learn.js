@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { basename, extname, join, resolve } from "node:path";
+import { basename, extname, join, posix, resolve } from "node:path";
 
 export const MAX_PASTED_BYTES = 2 * 1024 * 1024;
 import { fetchTextSafely, MAX_REMOTE_BYTES } from "./public-http.js";
@@ -345,10 +345,102 @@ async function readWebPageSource(input, options, dependencies) {
   };
 }
 
+// A GitHub repository page renders only the README; a skill's method usually
+// lives in SKILL.md and the Markdown files it names. Read those as raw text.
+export const MAX_GITHUB_FILES = 12;
+const GITHUB_RESERVED_OWNERS = new Set([
+  "about", "apps", "collections", "enterprise", "explore", "features", "login",
+  "marketplace", "orgs", "pricing", "settings", "sponsors", "topics", "users",
+]);
+
+export function githubRepositoryRef(input) {
+  let url;
+  try { url = new URL(input); }
+  catch { return null; }
+  if (url.protocol !== "https:" || !["github.com", "www.github.com"].includes(url.hostname.toLowerCase())) return null;
+  const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  const name = /^[A-Za-z0-9_.-]+$/;
+  if (parts.length < 2 || !name.test(parts[0]) || !name.test(parts[1])) return null;
+  if (GITHUB_RESERVED_OWNERS.has(parts[0].toLowerCase())) return null;
+  const owner = parts[0];
+  const repo = parts[1].replace(/\.git$/i, "");
+  if (parts.length === 2) return { owner, repo, ref: "HEAD", folder: "" };
+  if (parts[2] !== "tree" || !parts[3]) return null;
+  const folder = parts.slice(4).join("/");
+  if (folder.split("/").some((segment) => segment === ".." || segment === ".")) return null;
+  return { owner, repo, ref: parts[3], folder };
+}
+
+export function linkedMarkdownPaths(markdown) {
+  const found = new Set();
+  const source = String(markdown || "");
+  const candidates = [
+    ...[...source.matchAll(/\]\(([^)\s#]+\.md)(?:#[^)]*)?\)/gi)].map((match) => match[1]),
+    ...[...source.matchAll(/`([^`\s]+\.md)`/gi)].map((match) => match[1]),
+  ];
+  for (const raw of candidates) {
+    const path = raw.replace(/^\.\//, "");
+    if (/^[a-z][a-z0-9+.-]*:/i.test(path) || path.startsWith("/") || path.startsWith("~")) continue;
+    if (path.split("/").some((segment) => !segment || segment === "." || segment === "..")) continue;
+    if (!/^[A-Za-z0-9_./-]+$/.test(path)) continue;
+    found.add(path);
+  }
+  return [...found];
+}
+
+async function readGitHubRepositorySource(input, repository, options, dependencies) {
+  const fetchText = dependencies.fetchText || fetchTextSafely;
+  const base = `https://raw.githubusercontent.com/${repository.owner}/${repository.repo}/${repository.ref}/`;
+  const prefix = repository.folder ? `${repository.folder}/` : "";
+  const queue = ["SKILL.md", "README.md"];
+  const seen = new Set();
+  const files = [];
+  let totalBytes = 0;
+  let requests = 0;
+  while (queue.length && files.length < MAX_GITHUB_FILES && requests < MAX_GITHUB_FILES * 3) {
+    const path = queue.shift();
+    if (seen.has(path)) continue;
+    seen.add(path);
+    requests += 1;
+    let response;
+    try { response = await fetchText(`${base}${prefix}${path}`, options, dependencies); }
+    catch { continue; }
+    const bytes = response.bytes || Buffer.from(response.body);
+    if (totalBytes + bytes.length > MAX_REMOTE_BYTES) break;
+    const text = normalizedText(response.body);
+    if (!text || /^\s*<(?:!doctype|html)/i.test(text)) continue;
+    totalBytes += bytes.length;
+    files.push({ path, url: `${base}${prefix}${path}`, text, bytes });
+    // Skills name files relative to the linking file or to the skill root; try both.
+    for (const linked of linkedMarkdownPaths(text)) {
+      for (const candidate of [posix.normalize(posix.join(posix.dirname(path), linked)), linked]) {
+        if (!candidate.startsWith("..") && !seen.has(candidate) && !queue.includes(candidate)) queue.push(candidate);
+      }
+    }
+  }
+  if (!files.length) return null;
+  const label = `${repository.owner}/${repository.repo}${repository.folder ? `/${repository.folder}` : ""}`;
+  const markdown = files.map((file) => `<!-- dirf-source-file: ${file.path} -->\n\n${file.text}`).join("\n\n---\n\n");
+  return {
+    kind: "github",
+    title: safeTitle(`GitHub ${label}`),
+    markdown,
+    sourceBytes: Buffer.concat(files.map((file) => file.bytes)),
+    sourceRef: redactedUrl(input),
+    finalUrl: redactedUrl(`${base}${prefix}`),
+    files: files.map((file) => ({ path: file.path, url: file.url, sha256: sha256(file.bytes), sizeBytes: file.bytes.length })),
+    parser: { name: "github-raw-markdown", version: "1", ref: repository.ref, maxFiles: MAX_GITHUB_FILES },
+  };
+}
+
 export function classifyLearningSource(input, explicitFile) {
   if (explicitFile) return { kind: "file", value: resolve(explicitFile) };
   const value = String(input || "").trim();
-  if (/^https?:\/\//i.test(value)) return { kind: youtubeVideoId(value) ? "youtube" : "web", value };
+  if (/^https?:\/\//i.test(value)) {
+    if (youtubeVideoId(value)) return { kind: "youtube", value };
+    const repository = githubRepositoryRef(value);
+    return repository ? { kind: "github", value, repository } : { kind: "web", value };
+  }
   const candidate = value ? resolve(value) : "";
   if (candidate && existsSync(candidate) && statSync(candidate).isFile()) return { kind: "file", value: candidate };
   if (/^(?:\.{0,2}[\\/]|[A-Za-z]:[\\/])/.test(value)) return { kind: "file", value: candidate };
@@ -373,6 +465,7 @@ function writeTextLearningArtifact(attemptRoot, source) {
       title: source.title,
       sha256: sha256(source.sourceBytes),
       sizeBytes: source.sourceBytes.length,
+      files: source.files,
       authorizedBy: "explicit-input",
     },
     artifact: {
@@ -424,9 +517,11 @@ export async function ingestLearningSource({ attemptRoot, input, explicitFile, l
     });
   }
   const options = { language: requestedLanguage };
-  const source = classified.kind === "youtube"
-    ? await readYouTubeSource(classified.value, options, dependencies)
-    : await readWebPageSource(classified.value, options, dependencies);
+  let source = null;
+  if (classified.kind === "youtube") source = await readYouTubeSource(classified.value, options, dependencies);
+  else if (classified.kind === "github") source = await readGitHubRepositorySource(classified.value, classified.repository, options, dependencies);
+  // No raw SKILL.md or README.md: fall back to the rendered page.
+  if (!source) source = await readWebPageSource(classified.value, options, dependencies);
   return writeTextLearningArtifact(attemptRoot, source);
 }
 

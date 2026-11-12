@@ -8,7 +8,9 @@ import {
   classifyLearningSource,
   extractYouTubePlayerResponse,
   fetchTextSafely,
+  githubRepositoryRef,
   htmlToMarkdown,
+  linkedMarkdownPaths,
   ingestLearningSource,
   transcriptFromJson3,
   transcriptFromVtt,
@@ -114,6 +116,62 @@ test("ingests a mocked YouTube transcript with provenance and no code execution"
   assert.equal(manifest.parser.language, "en");
   assert.equal(manifest.safety.codeExecution, "disabled");
   assert.equal(manifest.safety.repositoryWrites, "none");
+});
+
+test("recognizes GitHub repository and folder URLs only", () => {
+  assert.deepEqual(githubRepositoryRef("https://github.com/Leonxlnx/cook#install"), { owner: "Leonxlnx", repo: "cook", ref: "HEAD", folder: "" });
+  assert.deepEqual(githubRepositoryRef("https://github.com/o/r/tree/main/skills/x"), { owner: "o", repo: "r", ref: "main", folder: "skills/x" });
+  assert.equal(githubRepositoryRef("https://github.com/o/r/issues/1"), null);
+  assert.equal(githubRepositoryRef("https://github.com/topics/ai"), null);
+  assert.equal(githubRepositoryRef("https://example.com/o/r"), null);
+  assert.equal(classifyLearningSource("https://github.com/o/r").kind, "github");
+});
+
+test("keeps only safe relative Markdown paths from links and code spans", () => {
+  assert.deepEqual(
+    linkedMarkdownPaths("[a](references/a.md) `templates/B.md` [x](https://e.com/x.md) `../up.md` `/abs.md` [c](./c.md#part)"),
+    ["references/a.md", "c.md", "templates/B.md"],
+  );
+});
+
+test("ingests a GitHub skill as raw SKILL.md plus the Markdown files it names", async () => {
+  const root = attemptRoot();
+  const files = {
+    "https://raw.githubusercontent.com/o/cook/HEAD/SKILL.md": "# Cook\nRead `references/loop.md` and [brief](templates/brief.md). Ignore [ext](https://e.com/x.md).",
+    "https://raw.githubusercontent.com/o/cook/HEAD/README.md": "# cook readme",
+    "https://raw.githubusercontent.com/o/cook/HEAD/references/loop.md": "# Loop\nSee `rules.md`.",
+    "https://raw.githubusercontent.com/o/cook/HEAD/references/rules.md": "# Rules",
+    "https://raw.githubusercontent.com/o/cook/HEAD/templates/brief.md": "# Brief",
+  };
+  const requested = [];
+  const result = await ingestLearningSource({ attemptRoot: root, input: "https://github.com/o/cook#install" }, {
+    fetchText: async (url) => {
+      requested.push(url);
+      if (!(url in files)) throw new Error("learning URL returned HTTP 404");
+      return { body: files[url], bytes: Buffer.from(files[url]) };
+    },
+  });
+  assert.equal(result.kind, "github");
+  assert.ok(requested.every((url) => url.startsWith("https://raw.githubusercontent.com/o/cook/HEAD/")));
+  const markdown = readFileSync(result.artifactPath, "utf8");
+  for (const text of ["# Cook", "# cook readme", "# Loop", "# Rules", "# Brief"]) assert.match(markdown, new RegExp(text));
+  const manifest = JSON.parse(readFileSync(result.manifestPath, "utf8"));
+  assert.deepEqual(manifest.source.files.map((file) => file.path), ["SKILL.md", "README.md", "templates/brief.md", "references/loop.md", "references/rules.md"]);
+  assert.match(manifest.source.files[0].sha256, /^[0-9a-f]{64}$/);
+  assert.equal(manifest.parser.name, "github-raw-markdown");
+  assert.equal(manifest.safety.codeExecution, "disabled");
+});
+
+test("falls back to the rendered GitHub page when no raw Markdown exists", async () => {
+  const root = attemptRoot();
+  const result = await ingestLearningSource({ attemptRoot: root, input: "https://github.com/o/empty" }, {
+    fetchText: async (url) => {
+      if (url.startsWith("https://raw.githubusercontent.com/")) throw new Error("learning URL returned HTTP 404");
+      return { body: "<html><title>Repo</title><body><main><p>Rendered page</p></main></body></html>", contentType: "text/html", finalUrl: url };
+    },
+  });
+  assert.equal(result.kind, "web");
+  assert.match(readFileSync(result.artifactPath, "utf8"), /Rendered page/);
 });
 
 function youtubeWithoutPublicCaptions() {
