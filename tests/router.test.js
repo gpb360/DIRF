@@ -169,20 +169,32 @@ test("visual conformance carries a per-dimension quality bar with fresh-context 
   const result = recommend("Compare every screen to the design mock and fix every verified mismatch");
   const { workflow } = result;
   const contract = workflow.requirements.join("\n");
-  // The bar has a scale, an owner, and user approval, so the builder cannot set its own stop.
-  assert.match(contract, /ui-designer freezes a 0-100 bar per dimension and the user approves it/);
-  assert.ok(result.questions.some((question) => /0-100 score must each dimension meet/.test(question)));
-  assert.match(contract, /test-engineer launches at least two fresh-context critics/);
+  // The bar has a scale, an owner, and a labelled default, so the builder cannot set its own stop.
+  assert.match(contract, /ui-designer freezes the rubric: a 0-100 bar for each dimension/);
+  assert.match(contract, /otherwise use 90 and label it a default/);
+  assert.ok(result.questions.some((question) => /0-100 score must each dimension meet\? Default: 90/.test(question)));
+  // The critic rule terminates: one tie-break critic, not an unbounded series.
+  assert.match(contract, /add one tie-break critic and use the median of three/);
   assert.match(contract, /not specified; it is excluded from the stop check/);
-  assert.match(contract, /per-dimension calibration offset \(default 0\)/);
+  assert.match(contract, /offset = user estimate minus critic median/);
   assert.match(contract, /own score; it never decides a stop/);
+  assert.match(contract, /ui-designer opens an issue for each new gap, regression, or user feedback item/);
   assert.match(contract, /Among issues whose dependencies are met/);
-  assert.match(contract, /more than 5 points is a regression/);
-  assert.match(contract, /repeat the fix and recapture phases as a new round/);
-  assert.match(workflow.recovery, /critic scoring blocked and do not claim parity/);
-  assert.match(workflow.agent_contracts["test-engineer"].verification, /never from the builder's own score/);
+  // The stop check always has an exit.
+  assert.match(contract, /for at most 5 rounds/);
+  assert.match(contract, /critic scoring is blocked, or when the user accepts the named remaining gaps, stop and report not full parity/);
+  assert.match(workflow.recovery, /mark critic scoring blocked and report not full parity/);
   // The contract must reach the agent, not only the registry.
   assert.match(kickoffPrompt(result), /fresh-context critics/);
+});
+
+test("visual conformance quality bar needs no question when the user excludes questions", () => {
+  const result = recommend("Compare every screen to the design mock and fix every verified mismatch. Do not ask me any questions.");
+  assert.equal(result.playbook, "visual-conformance");
+  assert.deepEqual(result.questions, []);
+  const contract = result.workflow.requirements.join("\n");
+  assert.doesNotMatch(contract, /user approves/);
+  assert.match(contract, /otherwise use 90 and label it a default/);
 });
 
 test("generic refactor routes to impeccable-polish", () => {

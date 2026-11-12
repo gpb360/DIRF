@@ -1975,8 +1975,8 @@
         "independently recapture and verify the complete matrix"
       ],
       "output": "complete visual evidence ledger, dependency-ordered issues, implemented fixes, and independently verified final design parity",
-      "validation": "prove inventory completeness, exact reference identity, desktop and mobile evidence, keyboard and assistive behavior, focused tests, production build, and a complete post-fix recapture; meet the quality bar and stop check in the requirements",
-      "recovery": "if a reference, authenticated state, fixture, or environment is unavailable, mark the exact row blocked instead of guessing; continue every unblocked row and do not claim full parity; if fresh-context critics are unavailable, mark critic scoring blocked and do not claim parity; if the bar is not met at recapture, repeat the fix and recapture phases as a new round",
+      "validation": "prove inventory completeness, exact reference identity, desktop and mobile evidence, keyboard and assistive behavior, focused tests, production build, and a complete post-fix recapture",
+      "recovery": "if a reference, authenticated state, fixture, or environment is unavailable, mark the exact row blocked instead of guessing; continue every unblocked row and do not claim full parity; if fresh-context critics are unavailable, mark critic scoring blocked and report not full parity",
       "agent_contracts": {
         "ux-researcher": {
           "phases": [
@@ -1991,7 +1991,7 @@
             "create durable issues and dependency-order every verified mismatch or missing surface"
           ],
           "output": "exact reference bindings and a dependency-ordered issue ledger",
-          "verification": "no row relies on inferred approval and every issue owns one verified mismatch; the user-approved 0-100 bar per dimension is frozen before the first comparison"
+          "verification": "no row relies on inferred approval and every issue owns one verified mismatch; the 0-100 rubric is frozen before the first comparison"
         },
         "test-engineer": {
           "phases": [
@@ -1999,7 +1999,7 @@
             "independently recapture and verify the complete matrix"
           ],
           "output": "before and after evidence for every unblocked matrix row",
-          "verification": "captures use the frozen fixtures, viewports, references, and independent final comparison; final parity comes from the critics in the requirements, never from the builder's own score"
+          "verification": "captures use the frozen fixtures, viewports, references, and independent final comparison"
         },
         "frontend-developer": {
           "phases": [
@@ -2015,20 +2015,20 @@
         }
       },
       "requirements": [
-        "Before the first comparison, ui-designer freezes a 0-100 bar per dimension and the user approves it: layout and spacing, typography, color, components and states, content density, motion and interaction. Never use one overall score.",
-        "Each round, test-engineer launches at least two fresh-context critics. A critic receives only the rubric, the bar, and reference-beside-capture evidence, with interaction recordings for motion: no code, history, author, or builder score. Use the median per dimension; add a critic when two scores differ by more than 10.",
-        "Record a dimension that the reference does not specify as not specified; it is excluded from the stop check.",
-        "Log the builder's own score; it never decides a stop. A user estimate sets a per-dimension calibration offset (default 0) for later critic medians; report raw and calibrated numbers.",
+        "Before the first comparison, ui-designer freezes the rubric: a 0-100 bar for each dimension (layout and spacing, typography, color, components and states, content density, motion and interaction). Use the user's bar when given; otherwise use 90 and label it a default. Never use one overall score.",
+        "Each round, test-engineer launches two fresh-context critics. A critic receives only the rubric and reference-beside-capture evidence, with interaction recordings for motion: no code, history, author, or builder score. When the two scores for a row and dimension differ by more than 10, add one tie-break critic and use the median of three.",
+        "test-engineer records a dimension that the reference does not specify as not specified; it is excluded from the stop check.",
+        "Log the builder's own score; it never decides a stop. When the user estimates a dimension, test-engineer records offset = user estimate minus critic median for that round and applies it to later medians of that dimension (default 0). Report raw and calibrated numbers.",
         "Label every number measured (a command produced it this round) or eyeballed (a person or model judged it); write not measured for a check that did not run.",
-        "Keep a round ledger artifact: focus and reason, changes, evidence paths, per-dimension scores, best round so far, and stop check. A drop of more than 5 points is a regression: fix it or return to the best round.",
-        "Among issues whose dependencies are met, fix open user feedback first, then rows more than 15 points below the bar, then the dimension with the largest total gap.",
-        "Stop only when every specified dimension of every unblocked row meets the bar by calibrated critic median and the user accepts the final gate; otherwise repeat the fix and recapture phases as a new round."
+        "Keep a round ledger artifact: focus and reason, changes, evidence paths, scores per row and dimension, and the stop check result. Before each fix phase, ui-designer opens an issue for each new gap, regression, or user feedback item. A drop of more than 10 points from the previous round for the same row and dimension is a regression: re-score it, and if the drop remains, fix it or revert the change that caused it.",
+        "Among issues whose dependencies are met, fix user feedback first, then issues on any row and dimension more than 15 points below its bar, then the dimension with the largest total gap.",
+        "Stop when every specified dimension of every unblocked row meets the bar by calibrated critic median. Otherwise repeat issue creation, fixes, and recapture as a new round, for at most 5 rounds. At the round limit, when critic scoring is blocked, or when the user accepts the named remaining gaps, stop and report not full parity with each gap listed."
       ]
     },
     "questions": [
       "Where is the approved design source of truth?",
       "Which live or local environment should provide runtime evidence?",
-      "What 0-100 score must each dimension meet before parity is accepted?"
+      "What 0-100 score must each dimension meet? Default: 90."
     ],
     "skill_flow": {
       "label": "full visual conformance",
