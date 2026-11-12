@@ -165,36 +165,45 @@ test("visual conformance with fixes carries implementation and recapture phases"
   assert.match(workflow.output, /implemented fixes/);
 });
 
-test("visual conformance carries a per-dimension quality bar with fresh-context critics", () => {
+test("visual conformance carries a four-rule per-dimension quality bar", () => {
   const result = recommend("Compare every screen to the design mock and fix every verified mismatch");
-  const { workflow } = result;
-  const contract = workflow.requirements.join("\n");
-  // The bar has a scale, an owner, and a labelled default, so the builder cannot set its own stop.
-  assert.match(contract, /ui-designer freezes the rubric: a 0-100 bar for each dimension/);
-  assert.match(contract, /otherwise use 90 and label it a default/);
+  const { requirements } = result.workflow;
+  assert.equal(requirements.length, 4);
+  const [bar, scoring, evidence, stop] = requirements;
+  // Bar: an owner, a scale, per-dimension, a labelled default, and an honest not-scored path.
+  assert.match(bar, /^Bar: before the first comparison, ui-designer freezes a 0-100 bar for each dimension/);
+  assert.match(bar, /layout and spacing, typography, color, components and states, content density, motion and interaction/);
+  assert.match(bar, /otherwise use 90 and label it a default/);
+  assert.match(bar, /Never use one overall score/);
+  assert.match(bar, /does not specify, or that cannot be captured, not scored, and list it in the final report/);
   assert.ok(result.questions.some((question) => /0-100 score must each dimension meet\? Default: 90/.test(question)));
-  // The critic rule terminates: one tie-break critic, not an unbounded series.
-  assert.match(contract, /lower of the two; when they differ by more than 10, add one tie-break critic/);
-  assert.match(contract, /cannot be captured is blocked and listed as a gap/);
-  assert.match(contract, /offset = user estimate minus critic score/);
-  assert.match(contract, /own score; it never decides a stop/);
-  assert.match(contract, /opens an issue for each new gap, regression, or user feedback item, naming the concrete mismatch/);
-  assert.match(contract, /Among issues whose dependencies are met/);
-  // The stop check always has an exit and an honest report.
-  assert.match(contract, /for at most 5 rounds/);
-  assert.match(contract, /report not full parity, listing each gap and unresolved regression/);
-  // Hosts that receive only the kickoff prompt must see when critic scoring is blocked.
+  // Scoring: isolated critics decide; the builder never does.
+  assert.match(scoring, /^Scoring: each round, test-engineer launches at least two fresh-context critics/);
+  assert.match(scoring, /no code, history, author, or builder score/);
+  assert.match(scoring, /lowest critic score/);
+  assert.match(scoring, /builder's own score; it never decides a stop/);
+  assert.match(scoring, /If fresh-context critics are unavailable, critic scoring is blocked/);
+  // Evidence: labelled numbers and a round ledger.
+  assert.match(evidence, /^Evidence: label every number measured or eyeballed; write not measured when a check did not run/);
+  assert.match(evidence, /round ledger artifact with the changes, evidence paths, and scores per row and dimension/);
+  // Stop: always terminates and hands gaps to the existing final decision gate.
+  assert.match(stop, /^Stop: stop when every scored dimension of every unblocked row meets the bar/);
+  assert.match(stop, /not full parity, listing each gap with its raw score, for the final decision gate/);
+  // Dropped rules stay dropped.
+  const contract = requirements.join("\n");
+  assert.doesNotMatch(contract, /offset|regression|tie-break|focus/i);
+  // Hosts that receive only the kickoff prompt must see both critical exits.
   const kickoff = kickoffPrompt(result);
-  assert.match(kickoff, /launches two fresh-context critics/);
-  assert.match(kickoff, /fresh-context critics are unavailable \(critic scoring blocked\)/);
+  assert.match(kickoff, /after at most 5 rounds \(the first comparison is round 1\)/);
+  assert.match(kickoff, /or when critic scoring is blocked/);
+  assert.match(kickoff, /If fresh-context critics are unavailable, critic scoring is blocked/);
 });
 
 test("visual conformance quality bar needs no question when the user excludes questions", () => {
   const result = recommend("Compare every screen to the design mock and fix every verified mismatch. Do not ask me any questions.");
   assert.equal(result.playbook, "visual-conformance");
   assert.deepEqual(result.questions, []);
-  const contract = result.workflow.requirements.join("\n");
-  assert.match(contract, /otherwise use 90 and label it a default/);
+  assert.match(result.workflow.requirements[0], /otherwise use 90 and label it a default/);
   assert.match(kickoffPrompt(result), /otherwise use 90 and label it a default/);
 });
 
