@@ -80,9 +80,10 @@ test("kickoff prompt is optional in Markdown and embedded in HTML, preserving st
   assert.ok(prompt.includes("Say how many confirmed issues remain"));
   assert.ok(prompt.includes("Keep grades, confidence scores, and P-codes in the detailed review report"));
   assert.ok(prompt.includes("End with exactly one next action, or `Complete`"));
-  assert.match(prompt, /Use ASD-STE100 Issue 9 for human technical output/);
-  assert.match(prompt, /approved meanings and parts of speech/);
-  assert.match(prompt, /instructions to 20 words per sentence and descriptions to 25/);
+  assert.match(prompt, /Write mostly in the style of ASD-STE100 Simplified Technical English/);
+  assert.match(prompt, /Use a paragraph of flowing prose where ideas connect, and keep bullets for lists of separate items/);
+  assert.ok(!prompt.includes("20 words"), "hard STE word limits must not be rendered");
+  assert.doesNotMatch(prompt, /one instruction (per|in each) (sentence|step)|words per sentence|at most six sentences/i);
   assert.ok(!/codex|claude/i.test(prompt));
   assert.ok(!prompt.includes("```"), "prompt must be safe inside a fenced block");
 
@@ -140,10 +141,10 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.ok(readme.includes("agents/frontend-developer.md"));
   assert.match(readme, /Keep 5% of the model context available for handoff/);
   assert.match(readme, /## Focused output/);
-  assert.match(readme, /Keep lists to five relevant items or fewer/);
-  assert.match(readme, /Use ASD-STE100 Issue 9 for human technical output/);
+  assert.match(readme, /State failures plainly and name the affected step/);
+  assert.match(readme, /Write mostly in the style of ASD-STE100 Simplified Technical English/);
   assert.match(readme, /Put required conditions before actions/);
-  assert.match(readme, /one topic and at most six sentences/);
+  assert.doesNotMatch(readme, /at most six sentences|five relevant items|20 words/);
   assert.match(readme, /Say how many confirmed issues remain/);
   assert.match(readme, /uses: \["playbook"\]/);
   assert.match(policy, /The user's task defines what the workflow delivers/);
@@ -171,10 +172,10 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.match(policy, /Separate code pushed, PR text posted, checks completed, and review completed/);
   assert.match(policy, /Link the published PR\s+update when the user expects to see it on GitHub/);
   assert.match(policy, /When the workflow includes a prose-editing capability/);
-  assert.match(policy, /approved-word dictionary during authoring and the final prose review/);
-  assert.match(policy, /Use full sentences without contractions or semicolons/);
-  assert.match(policy, /word-count conventions in section 8/);
-  assert.match(policy, /Do not claim full STE compliance without/);
+  assert.match(policy, /mostly in the style of ASD-STE100 Simplified\s+Technical English/);
+  assert.match(policy, /Its findings are advisory: read each one and fix it only when the\s+fix makes the text clearer/);
+  assert.match(policy, /Do not claim STE compliance/);
+  assert.doesNotMatch(policy, /Limit instructions to 20 words|word-count conventions in section 8/);
   assert.match(policy, /Do not rewrite code, machine-readable data, commands, logs, citations/);
   assert.match(readme, /Findings stay local by default/);
   assert.deepEqual(resolveGraph(outDir, { allowedRoots: [outDir] }).map((unit) => unit.meta.kind), ["skill", "playbook", "workflow"]);
@@ -182,7 +183,7 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.match(agentDetail, /assigned contribution is complete and handed back/);
   assert.match(buildHtml(workflow), /Done when[\s\S]*assigned contribution is complete and handed back/);
   assert.match(buildHtml(workflow), /Say how many confirmed issues remain/);
-  assert.match(buildHtml(workflow), /Use ASD-STE100 Issue 9 for human technical output/);
+  assert.match(buildHtml(workflow), /Write mostly in the style of ASD-STE100 Simplified Technical English/);
   assert.match(buildHtml(workflow), /Keep grades, confidence scores, and P-codes in the detailed review report/);
   const detail = readFileSync(join(outDir, "agents", "frontend-developer.md"), "utf-8");
   assert.ok(detail.includes("# frontend-developer"));

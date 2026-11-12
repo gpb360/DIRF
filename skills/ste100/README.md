@@ -1,23 +1,26 @@
 ---
 name: ste100
 kind: skill
-description: "Edit human-facing prose to the ASD-STE100 Simplified Technical English writing rules and check it with dirf ste check"
+description: "Edit human-facing prose mostly in ASD-STE100 Simplified Technical English style and check it with dirf ste check as advisory"
 uses: []
 details: []
 inputs: ["draft prose", "intended audience", "optional approved word list"]
-outputs: ["prose that follows the STE writing rules, with the checker result"]
+outputs: ["prose mostly in STE style, with the advisory checker result"]
 capabilities: ["controlled language"]
 ---
 
 # Write to ASD-STE100
 
-ASD-STE100 is the Simplified Technical English (STE) standard. Use these rules
-for documentation, reports, handoffs, and pull-request text.
+ASD-STE100 is the Simplified Technical English (STE) standard. Write mostly in
+its style: short sentences, one idea per sentence, active voice, and the same
+word for the same thing. Use a paragraph of flowing prose where ideas connect,
+and keep bullets for lists of separate items. The standard's rules follow. Treat
+them as targets, not hard limits.
 
 1. Write procedural sentences of 20 words or fewer.
 2. Write descriptive sentences of 25 words or fewer.
 3. Put 6 sentences or fewer in a descriptive paragraph.
-4. Write one instruction in each step. Use a numbered list for steps.
+4. Prefer one instruction in each step. Use a numbered list for steps.
 5. Use the imperative in instructions. Write "Run the tests".
 6. Use the active voice. Name the person or thing that does the action.
 7. Use one word for one meaning. Do not change words for variety.
@@ -25,7 +28,7 @@ for documentation, reports, handoffs, and pull-request text.
 9. Start a warning or a caution with a short command. Give the reason after it.
 10. Use approved STE words with their approved meanings, and technical names.
     When the project supplies an approved word list, use only those words.
-11. Do not use contractions or semicolons.
+11. Avoid contractions and semicolons.
 
 Then run the checker:
 
@@ -33,9 +36,10 @@ Then run the checker:
 dirf ste check <file-or-dir> [--words approved-words.txt]
 ```
 
-The checker tests rules 1 to 4, 6, and 10. It uses heuristics, so read each
-finding before you change the text. Do not change a correct technical term to
-make the checker pass.
+The checker tests rules 1 to 4, 6, and 10. It uses heuristics, so its findings
+are advisory: read each one and fix it only when the fix makes the text
+clearer. Exit status 1 means that findings exist. It is not a failed step. Do
+not change a correct technical term to make the checker pass.
 
 ## What the checker reads
 

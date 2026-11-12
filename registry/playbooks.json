@@ -1339,7 +1339,7 @@
         },
         {
           "stage": "prose",
-          "reason": "Apply the ASD-STE100 writing rules and run dirf ste check on the changed files.",
+          "reason": "Write mostly in ASD-STE100 style and run dirf ste check on the changed files as advisory.",
           "capability": "controlled language"
         },
         {
