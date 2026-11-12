@@ -185,7 +185,7 @@ test("visual conformance carries a four-rule per-dimension quality bar", () => {
   assert.match(scoring, /If fresh-context critics are unavailable, critic scoring is blocked/);
   // Evidence: labelled numbers and a round ledger.
   assert.match(evidence, /^Evidence: label every number measured or eyeballed; write not measured when a check did not run/);
-  assert.match(evidence, /round ledger artifact with the changes, evidence paths, and scores per row and dimension/);
+  assert.match(evidence, /round ledger artifact with the changes, evidence paths, each critic's score and input list per row and dimension, and the builder's score in its own column/);
   // Stop: always terminates and hands gaps to the existing final decision gate.
   assert.match(stop, /^Stop: stop when every scored dimension of every unblocked row meets the bar/);
   assert.match(stop, /not full parity, listing each gap with its raw score, for the final decision gate/);
@@ -197,6 +197,13 @@ test("visual conformance carries a four-rule per-dimension quality bar", () => {
   assert.match(kickoff, /after at most 5 rounds \(the first comparison is round 1\)/);
   assert.match(kickoff, /or when critic scoring is blocked/);
   assert.match(kickoff, /If fresh-context critics are unavailable, critic scoring is blocked/);
+  // Stopping on blocked or unscored work must never read as a pass.
+  assert.match(kickoff, /A not-scored dimension, or any round with critic scoring blocked, is never full parity/);
+  assert.match(kickoff, /A new round repeats phases 4 to 6/);
+  assert.match(kickoff, /each critic's score and input list per row and dimension/);
+  // Role files are built from agent_contracts, so each owner must see its duty there.
+  assert.match(result.workflow.agent_contracts["ui-designer"].output, /frozen per-dimension bar/);
+  assert.match(result.workflow.agent_contracts["test-engineer"].output, /fresh-context critic scores for every round/);
 });
 
 test("visual conformance quality bar needs no question when the user excludes questions", () => {
