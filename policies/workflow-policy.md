@@ -56,7 +56,7 @@ Use this policy in every generated workflow prompt.
 ## Review Ladder
 - A PR review uses at most 5 agents: 4 reviewers and 1 code-cleaner. No step occurs twice.
 - A reviewer only reviews. A code-cleaner only changes code. Neither starts agents.
-- A review is qualified when it meets the gate that the user or task states. Without a stated gate, a review is qualified when it has no P0, P1, P2, or P3 finding.
+- A review is qualified when it meets the gate that the user or task states. Without a stated gate, a review is qualified when it has no blocking P0, P1, P2, or P3 finding. A pre-existing P2 or P3 finding does not block (see the findings contract). A pre-existing P0 or P1 finding blocks.
 - Before step 1, read the recorded review of the current commit. If it is qualified, start no agents.
 - Check gate: before step 1 and before step 4, run the required checks of the task, such as lint, type check, tests, and build. The checks are commands, not agents.
 - If a required check fails, start no reviewer. Give the check output to the author of the commit and stop.

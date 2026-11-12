@@ -432,3 +432,21 @@ test("clean render clearly marks the zero-finding definition of done", () => {
   assert.match(rendered, /P0 0 · P1 0 · P2 0 · P3 0/);
   assert.match(rendered, /\*\*Definition of done:\*\* MET/);
 });
+
+test("a pre-existing P3 finding allows readiness and renders as follow-up; a pre-existing P1 blocks", () => {
+  const old = (priority) => finding({
+    id: `${priority}-PRE`, priority, origin: "pre_existing",
+    base_evidence: `The same retry code exists at ${SHA_A}`,
+  });
+  const followUp = withFinding(artifact(), old("P3"));
+  assert.equal(deriveVerdict(followUp), "PASS");
+  assert.deepEqual(priorityCounts(followUp), { P0: 0, P1: 0, P2: 0, P3: 0 });
+  assert.equal(assertReviewReady(followUp, gitContext()).ready, true);
+  const rendered = renderReview(followUp);
+  assert.match(rendered, /## Pre-existing findings for follow-up/);
+  assert.match(rendered, /No actionable findings/);
+
+  const severe = withFinding(artifact(), old("P1"));
+  assert.equal(deriveVerdict(severe), "FAIL");
+  assert.throws(() => assertReviewReady(severe, gitContext()), /review issue remains/);
+});

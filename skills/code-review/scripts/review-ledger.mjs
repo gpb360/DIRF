@@ -2,7 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { validateReview, priorityCounts, deriveVerdict } from "./review-report.mjs";
+import { validateReview, priorityCounts, deriveVerdict, blockingFindings, followUpFindings } from "./review-report.mjs";
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 export const MAX_LOOP_ROUNDS = 5;
@@ -39,9 +39,13 @@ export function ledgerAction(review, count = {}) {
     throw new Error("Review ledger triggers require schema version 2; historical reports are read-only.");
   }
   const counts = priorityCounts(review);
-  const findings = review.findings.map(({ id, priority, axis, title, file, line, body, evidence }) => ({
+  const brief = ({ id, priority, axis, title, file, line, body, evidence }) => ({
     id, priority, axis, title, file, line, body, evidence,
-  }));
+  });
+  // Only blocking findings go to a fixer or count against the round limit.
+  const findings = blockingFindings(review).map(brief);
+  const followUp = followUpFindings(review).map(({ base_evidence, ...finding }) => ({ ...brief(finding), base_evidence }));
+  const extra = followUp.length > 0 ? { follow_up_findings: followUp } : {};
 
   // The DIRF store supplies the count through dirf review trigger. The target
   // fields are only the fallback for running this script directly.
@@ -64,6 +68,7 @@ export function ledgerAction(review, count = {}) {
       remaining,
       findings,
       priority_counts: counts,
+      ...extra,
       guardrails: { human_decision_required: true, merge_is_not_authorized: true },
     };
   }
@@ -81,6 +86,7 @@ export function ledgerAction(review, count = {}) {
       remaining,
       findings,
       priority_counts: counts,
+      ...extra,
       guardrails: {
         same_repository: true,
         same_pr_number: true,
@@ -109,6 +115,7 @@ export function ledgerAction(review, count = {}) {
     remaining,
     findings: [],
     priority_counts: counts,
+    ...extra,
     guardrails: { live_readiness_required: true, merge_is_not_authorized: true },
   };
 }

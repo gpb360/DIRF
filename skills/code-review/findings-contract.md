@@ -69,6 +69,20 @@ Every published finding must contain:
 - a body that connects trigger, path, wrong outcome, impact, and correction;
 - at least one concrete evidence item.
 
+Optional origin fields:
+
+- `origin`: `introduced` (the default) or `pre_existing`.
+- `base_evidence`: required when `origin` is `pre_existing`. State how you proved
+  that the defect exists at `target.base_sha`, for example `git show BASE:path`
+  or `git blame`.
+
+A pre-existing P2 or P3 finding does not go to the fixer, does not count against
+the round limit, and does not block `dirf review ready`. The ledger returns it in
+`follow_up_findings`, and the rendered report lists it for follow-up. A
+pre-existing P0 or P1 finding blocks like an introduced finding. Do not mark a
+finding pre-existing to leave the loop. If you cannot prove the defect at the
+base, do not set `origin`.
+
 Priority meanings:
 
 - P0: immediate catastrophic impact or broadly exploitable compromise; block all release activity.

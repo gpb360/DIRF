@@ -7,6 +7,13 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 
 ## Unreleased
 
+### Added
+- **Pre-existing findings** — a review finding can set `origin: "pre_existing"`
+  with `base_evidence` that proves the defect exists at the base commit. A
+  pre-existing P2 or P3 finding goes to `follow_up_findings`. It does not start
+  a fix, use a review round, or block `dirf review ready`. A pre-existing P0 or
+  P1 finding still blocks. `dirf review loop` uses the same rule.
+
 ### Changed
 - **Mostly-STE style (experiment)** — focused output rules and the workflow
   policy no longer set hard ASD-STE100 limits (20/25-word sentences, one
