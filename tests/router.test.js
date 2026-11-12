@@ -174,18 +174,19 @@ test("visual conformance carries a per-dimension quality bar with fresh-context 
   assert.match(contract, /otherwise use 90 and label it a default/);
   assert.ok(result.questions.some((question) => /0-100 score must each dimension meet\? Default: 90/.test(question)));
   // The critic rule terminates: one tie-break critic, not an unbounded series.
-  assert.match(contract, /add one tie-break critic and use the median of three/);
-  assert.match(contract, /not specified; it is excluded from the stop check/);
-  assert.match(contract, /offset = user estimate minus critic median/);
+  assert.match(contract, /lower of the two; when they differ by more than 10, add one tie-break critic/);
+  assert.match(contract, /cannot be captured is blocked and listed as a gap/);
+  assert.match(contract, /offset = user estimate minus critic score/);
   assert.match(contract, /own score; it never decides a stop/);
-  assert.match(contract, /ui-designer opens an issue for each new gap, regression, or user feedback item/);
+  assert.match(contract, /opens an issue for each new gap, regression, or user feedback item, naming the concrete mismatch/);
   assert.match(contract, /Among issues whose dependencies are met/);
-  // The stop check always has an exit.
+  // The stop check always has an exit and an honest report.
   assert.match(contract, /for at most 5 rounds/);
-  assert.match(contract, /critic scoring is blocked, or when the user accepts the named remaining gaps, stop and report not full parity/);
-  assert.match(workflow.recovery, /mark critic scoring blocked and report not full parity/);
-  // The contract must reach the agent, not only the registry.
-  assert.match(kickoffPrompt(result), /fresh-context critics/);
+  assert.match(contract, /report not full parity, listing each gap and unresolved regression/);
+  // Hosts that receive only the kickoff prompt must see when critic scoring is blocked.
+  const kickoff = kickoffPrompt(result);
+  assert.match(kickoff, /launches two fresh-context critics/);
+  assert.match(kickoff, /fresh-context critics are unavailable \(critic scoring blocked\)/);
 });
 
 test("visual conformance quality bar needs no question when the user excludes questions", () => {
@@ -193,8 +194,8 @@ test("visual conformance quality bar needs no question when the user excludes qu
   assert.equal(result.playbook, "visual-conformance");
   assert.deepEqual(result.questions, []);
   const contract = result.workflow.requirements.join("\n");
-  assert.doesNotMatch(contract, /user approves/);
   assert.match(contract, /otherwise use 90 and label it a default/);
+  assert.match(kickoffPrompt(result), /otherwise use 90 and label it a default/);
 });
 
 test("generic refactor routes to impeccable-polish", () => {
