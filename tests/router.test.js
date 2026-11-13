@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { collectRoutingFacts, loadPlaybooks, recommend } from "../src/router.js";
 import { bundledSkills } from "../src/skills.js";
 import { folderHash } from "../src/paths.js";
+import { kickoffPrompt } from "../src/renderer.js";
 
 test("landing page match", () => {
   const r = recommend("build a landing page");
@@ -163,6 +164,55 @@ test("visual conformance with fixes carries implementation and recapture phases"
   assert.ok(workflow.phases.includes("implement dependency-ordered issue-owned fixes"));
   assert.ok(workflow.phases.includes("independently recapture and verify the complete matrix"));
   assert.match(workflow.output, /implemented fixes/);
+});
+
+test("visual conformance carries a four-rule per-dimension quality bar", () => {
+  const result = recommend("Compare every screen to the design mock and fix every verified mismatch");
+  const { requirements } = result.workflow;
+  assert.equal(requirements.length, 4);
+  const [bar, scoring, evidence, stop] = requirements;
+  // Bar: an owner, a scale, per-dimension, a labelled default, and an honest not-scored path.
+  assert.match(bar, /^Bar: before the first comparison, ui-designer freezes a 0-100 bar for each dimension/);
+  assert.match(bar, /layout and spacing, typography, color, components and states, content density, motion and interaction/);
+  assert.match(bar, /otherwise use 90 and label it a default/);
+  assert.match(bar, /Never use one overall score/);
+  assert.match(bar, /does not specify, or that cannot be captured, not scored, and list it in the final report/);
+  assert.ok(result.questions.some((question) => /0-100 score must each dimension meet\? Default: 90/.test(question)));
+  // Scoring: isolated critics decide; the builder never does.
+  assert.match(scoring, /^Scoring: each round, test-engineer launches at least two fresh-context critics/);
+  assert.match(scoring, /no code, history, author, or builder score/);
+  assert.match(scoring, /lowest critic score/);
+  assert.match(scoring, /builder's own score; it never decides a stop/);
+  assert.match(scoring, /If fresh-context critics are unavailable, critic scoring is blocked/);
+  // Evidence: labelled numbers and a round ledger.
+  assert.match(evidence, /^Evidence: label every number measured or eyeballed; write not measured when a check did not run/);
+  assert.match(evidence, /round ledger artifact with the changes, evidence paths, each critic's score and input list per row and dimension, and the builder's score in its own column/);
+  // Stop: always terminates and hands gaps to the existing final decision gate.
+  assert.match(stop, /^Stop: stop when every scored dimension of every unblocked row meets the bar/);
+  assert.match(stop, /not full parity, listing each gap with its raw score, for the final decision gate/);
+  // Dropped rules stay dropped.
+  const contract = requirements.join("\n");
+  assert.doesNotMatch(contract, /offset|regression|tie-break|focus/i);
+  // Hosts that receive only the kickoff prompt must see both critical exits.
+  const kickoff = kickoffPrompt(result);
+  assert.match(kickoff, /after at most 5 rounds \(the first comparison is round 1\)/);
+  assert.match(kickoff, /or when critic scoring is blocked/);
+  assert.match(kickoff, /If fresh-context critics are unavailable, critic scoring is blocked/);
+  // Stopping on blocked or unscored work must never read as a pass.
+  assert.match(kickoff, /A not-scored dimension, or any round with critic scoring blocked, is never full parity/);
+  assert.match(kickoff, /A new round repeats phases 4 to 6/);
+  assert.match(kickoff, /each critic's score and input list per row and dimension/);
+  // Role files are built from agent_contracts, so each owner must see its duty there.
+  assert.match(result.workflow.agent_contracts["ui-designer"].output, /frozen per-dimension bar/);
+  assert.match(result.workflow.agent_contracts["test-engineer"].output, /fresh-context critic scores for every round/);
+});
+
+test("visual conformance quality bar needs no question when the user excludes questions", () => {
+  const result = recommend("Compare every screen to the design mock and fix every verified mismatch. Do not ask me any questions.");
+  assert.equal(result.playbook, "visual-conformance");
+  assert.deepEqual(result.questions, []);
+  assert.match(result.workflow.requirements[0], /otherwise use 90 and label it a default/);
+  assert.match(kickoffPrompt(result), /otherwise use 90 and label it a default/);
 });
 
 test("generic refactor routes to impeccable-polish", () => {
