@@ -2362,6 +2362,386 @@
       ]
     }
   },
+  "pr-watch": {
+    "description": "Watch an open pull request through checks and review bots, fix the real findings, and stop when it is ready.",
+    "keywords": [
+      "babysit",
+      "babysit pr",
+      "watch pr",
+      "watch the pr",
+      "monitor pr",
+      "monitor the pr",
+      "watch pull request"
+    ],
+    "agents": [
+      "agent-organizer",
+      "test-engineer",
+      "error-coordinator"
+    ],
+    "workflow": {
+      "phases": [
+        "record the PR and its latest commit",
+        "handle the checks and comments that already exist",
+        "run one watcher and wait",
+        "check each new finding against the code",
+        "fix real findings and answer the rest",
+        "keep the branch current with its base",
+        "confirm the PR is ready on the latest commit"
+      ],
+      "gates": {
+        "confirm the PR is ready on the latest commit": {
+          "kind": "decision"
+        }
+      },
+      "agent_contracts": {
+        "agent-organizer": {
+          "phases": [
+            "record the PR and its latest commit",
+            "handle the checks and comments that already exist",
+            "run one watcher and wait",
+            "keep the branch current with its base",
+            "confirm the PR is ready on the latest commit"
+          ],
+          "output": "one watcher for the PR, a current branch, and a plain ready, waiting, or blocked status for the latest commit",
+          "verification": "the status names the latest commit, every required check, every open review conversation, and whether the branch is behind its base"
+        },
+        "test-engineer": {
+          "phases": [
+            "check each new finding against the code"
+          ],
+          "output": "each finding and failed check marked real, not real, or infrastructure fault, with evidence",
+          "verification": "every verdict cites the code, a reproduction, or the check output for the latest commit"
+        },
+        "error-coordinator": {
+          "phases": [
+            "fix real findings and answer the rest"
+          ],
+          "output": "the smallest fix for each real finding and a written reason for each declined one",
+          "verification": "each fix has proof from this session and each declined finding has a posted reply"
+        }
+      },
+      "output": "a pull request that is ready on its latest commit, or a plain statement of what blocks it; a merge happens only when the user asked for it",
+      "validation": "required checks pass on the latest commit, review bots finished, no review conversation is open, and the branch is not behind its base",
+      "recovery": "if the watcher stops or GitHub is unreachable, check the rate limit and start one watcher again; if another pull request makes this one obsolete, stop and ask before closing it"
+    },
+    "questions": [
+      "Which pull request should be watched?",
+      "May the pull request be merged when it is ready, or does a person merge it?"
+    ],
+    "skill_flow": {
+      "label": "watch, verify each finding, fix what is real, stop when ready",
+      "steps": [
+        {
+          "stage": "verify",
+          "reason": "Check every bot finding and failed check against the code before any change.",
+          "capability": "code review"
+        },
+        {
+          "stage": "fix",
+          "reason": "Fix real findings in the intended case with the smallest change. Decline the rest.",
+          "capability": "minimalism"
+        },
+        {
+          "stage": "verify",
+          "reason": "Prove each fix before the push.",
+          "capability": "testing"
+        },
+        {
+          "stage": "report",
+          "reason": "Reply to each finding and report the result in plain language.",
+          "capability": "pull request communication"
+        }
+      ]
+    }
+  },
+  "pr-modernize": {
+    "description": "Bring an old pull request up to date and decide whether it still belongs: modernize, rework, or close.",
+    "keywords": [
+      "modernize",
+      "modernize pr",
+      "rebase pr",
+      "rebase the pr",
+      "rebase this pr",
+      "stale pr",
+      "old pr",
+      "outdated pr"
+    ],
+    "agents": [
+      "agent-organizer",
+      "research-analyst",
+      "test-engineer"
+    ],
+    "workflow": {
+      "phases": [
+        "fetch the latest base and PR head",
+        "state the smallest goal of the PR",
+        "check what changed on the base branch",
+        "choose modernize, rework, or close",
+        "rebase in a safe checkout",
+        "compare the commits before and after the rebase",
+        "run the focused checks",
+        "push with a lease and report"
+      ],
+      "gates": {
+        "choose modernize, rework, or close": {
+          "kind": "soft"
+        },
+        "push with a lease and report": {
+          "kind": "decision"
+        }
+      },
+      "agent_contracts": {
+        "agent-organizer": {
+          "phases": [
+            "fetch the latest base and PR head",
+            "choose modernize, rework, or close",
+            "rebase in a safe checkout",
+            "push with a lease and report"
+          ],
+          "output": "a recorded PR state, one disposition with its reason, and a rebased branch when the disposition is modernize",
+          "verification": "the disposition cites base-branch evidence, and the push used a lease tied to the head recorded before the rebase"
+        },
+        "research-analyst": {
+          "phases": [
+            "state the smallest goal of the PR",
+            "check what changed on the base branch"
+          ],
+          "output": "the smallest goal of the PR and the base-branch changes that affect it",
+          "verification": "the goal comes from the PR title, body, issues, commits, and diff, and each base-branch change cites a commit or pull request"
+        },
+        "test-engineer": {
+          "phases": [
+            "compare the commits before and after the rebase",
+            "run the focused checks"
+          ],
+          "output": "a comparison of the commit series before and after the rebase, and the check results for the touched area",
+          "verification": "no intended behavior disappeared, no merged behavior returned, and each failed check is marked new, pre-existing, or infrastructure fault"
+        }
+      },
+      "output": "a report that leads with MODERNIZE, REWORK, or CLOSE and its reason; a rebased and pushed branch only for MODERNIZE",
+      "validation": "git range-diff of the old and new commit series shows the intended changes only, and the focused checks for the touched area pass",
+      "recovery": "if the lease fails, fetch and assess the new commits before any second push; if a conflict shows a product or architecture disagreement, stop and choose the disposition again"
+    },
+    "questions": [
+      "Which pull request should be brought up to date?",
+      "If the right result is a rework, may it be done now or should the run stop at the recommendation?"
+    ],
+    "skill_flow": {
+      "label": "old pull request -> does it still belong -> safe rebase",
+      "steps": [
+        {
+          "stage": "understand",
+          "reason": "State what the pull request tried to do and what changed around it.",
+          "capability": "code review"
+        },
+        {
+          "stage": "decide",
+          "reason": "Keep the pull request only when its goal and its shape are still right.",
+          "capability": "minimalism"
+        },
+        {
+          "stage": "verify",
+          "reason": "Prove the rebase kept the intended behavior.",
+          "capability": "testing"
+        },
+        {
+          "stage": "report",
+          "reason": "Lead with the disposition and separate facts from judgment.",
+          "capability": "pull request communication"
+        }
+      ]
+    }
+  },
+  "pr-takeover": {
+    "description": "Finish another author's pull request, branch, or agent thread and keep the original credit.",
+    "keywords": [
+      "take over",
+      "takeover",
+      "taking over",
+      "take over pr",
+      "finish this pr",
+      "inherit this pr"
+    ],
+    "agents": [
+      "agent-organizer",
+      "dx-optimizer",
+      "test-engineer"
+    ],
+    "workflow": {
+      "phases": [
+        "read the source work and its review history",
+        "resolve the handoff to the real code and latest commit",
+        "choose replacement, in-place, or stacked continuation",
+        "bring the work up to date with its base",
+        "finish the original goal",
+        "verify the original failure and the real workflows",
+        "file or update the PR with credit",
+        "report what was inherited, changed, and verified"
+      ],
+      "gates": {
+        "choose replacement, in-place, or stacked continuation": {
+          "kind": "soft"
+        },
+        "report what was inherited, changed, and verified": {
+          "kind": "decision"
+        }
+      },
+      "agent_contracts": {
+        "agent-organizer": {
+          "phases": [
+            "read the source work and its review history",
+            "resolve the handoff to the real code and latest commit",
+            "choose replacement, in-place, or stacked continuation",
+            "file or update the PR with credit",
+            "report what was inherited, changed, and verified"
+          ],
+          "output": "the original goal, the real state of the inherited code, the continuation form, and a pull request that credits the original contributors",
+          "verification": "the recorded state matches the live branch and latest commit, uncommitted work is accounted for, and Git authorship and co-author trailers are intact"
+        },
+        "dx-optimizer": {
+          "phases": [
+            "bring the work up to date with its base",
+            "finish the original goal"
+          ],
+          "output": "current work that reaches the original goal, with the new fixes in separate commits",
+          "verification": "the changes serve the original goal only, and no intended behavior or surface was dropped"
+        },
+        "test-engineer": {
+          "phases": [
+            "verify the original failure and the real workflows"
+          ],
+          "output": "proof from this session that the original failure is fixed and the real workflows work",
+          "verification": "the proof exercises real behavior, not only mocked tests, and names what remains unverified"
+        }
+      },
+      "output": "a finished pull request that keeps the original credit, with a report of what was inherited, what changed, how it was verified, and what a person must still decide",
+      "validation": "the original failure is reproduced and then fixed in this session, and git log shows the original authors on their commits",
+      "recovery": "if the source work is unavailable, ask for its link or branch; if the handoff and the code disagree, trust the code and report the difference; if another session is active on the same checkout, stop for the person"
+    },
+    "questions": [
+      "Which pull request, branch, or thread should be taken over?",
+      "Should the work continue in a replacement pull request, in place, or stacked on the original?"
+    ],
+    "skill_flow": {
+      "label": "inherit, check against the code, finish the same goal, keep the credit",
+      "steps": [
+        {
+          "stage": "understand",
+          "reason": "Read the source work and check the handoff against the code.",
+          "capability": "code review"
+        },
+        {
+          "stage": "fix",
+          "reason": "Rework only what the original goal needs.",
+          "capability": "minimalism"
+        },
+        {
+          "stage": "verify",
+          "reason": "Prove the original failure is fixed in real workflows.",
+          "capability": "testing"
+        },
+        {
+          "stage": "report",
+          "reason": "File the pull request with credit and report the inherited state.",
+          "capability": "pull request communication"
+        }
+      ]
+    }
+  },
+  "pr-unattended": {
+    "description": "Take a change to a ready pull request while nobody watches the thread: full stop leaves it for a person to merge, full send also merges.",
+    "keywords": [
+      "full stop",
+      "full send",
+      "unattended",
+      "not watching"
+    ],
+    "agents": [
+      "agent-organizer",
+      "dx-optimizer",
+      "test-engineer"
+    ],
+    "workflow": {
+      "phases": [
+        "confirm the unattended request and its mode",
+        "finish the smallest change",
+        "prove every change",
+        "review the change until it qualifies",
+        "file the PR",
+        "watch the PR and fix real findings",
+        "check readiness on the latest commit",
+        "hand off the ready PR or merge it"
+      ],
+      "gates": {
+        "prove every change": {
+          "kind": "soft"
+        },
+        "check readiness on the latest commit": {
+          "kind": "soft"
+        }
+      },
+      "agent_contracts": {
+        "agent-organizer": {
+          "phases": [
+            "confirm the unattended request and its mode",
+            "review the change until it qualifies",
+            "file the PR",
+            "watch the PR and fix real findings",
+            "check readiness on the latest commit",
+            "hand off the ready PR or merge it"
+          ],
+          "output": "a pull request that is ready on its latest commit, left open in stop mode or merged in send mode, with a final report",
+          "verification": "the report names the mode, the pull request link, the latest commit, the verdict, and whether the pull request is open or merged"
+        },
+        "dx-optimizer": {
+          "phases": [
+            "finish the smallest change"
+          ],
+          "output": "the smallest change that reaches the goal of the request, on its own branch",
+          "verification": "the diff fixes the case that happened and holds nothing the goal does not need"
+        },
+        "test-engineer": {
+          "phases": [
+            "prove every change"
+          ],
+          "output": "proof observed in this session for every change in the diff",
+          "verification": "each change maps to command output, a reproduction, or a screenshot from this session"
+        }
+      },
+      "output": "stop mode: an open, unmerged pull request that is ready for a person to merge; send mode: a merged pull request; both with proof, the review result, and each decision made for the user",
+      "validation": "on the latest commit: proof covers the whole diff, required checks passed, review bots finished with each finding fixed or declined in writing, no person requests changes, and the branch is current and mergeable",
+      "recovery": "if a change cannot be proved or readiness cannot pass, ask through the host's question tool; with no answer, leave the pull request open and unmerged and start the final message with the question"
+    },
+    "questions": [
+      "What change should be taken to a pull request?",
+      "Is this full stop, where a person merges, or full send, where the agent merges?"
+    ],
+    "skill_flow": {
+      "label": "finish, prove, review, file, watch, then stop or merge",
+      "steps": [
+        {
+          "stage": "fix",
+          "reason": "Finish the goal with the smallest change that works.",
+          "capability": "minimalism"
+        },
+        {
+          "stage": "verify",
+          "reason": "Get direct proof for every change before any review.",
+          "capability": "testing"
+        },
+        {
+          "stage": "review",
+          "reason": "Follow the Review Ladder before the pull request opens.",
+          "capability": "code review"
+        },
+        {
+          "stage": "report",
+          "reason": "File the pull request and write the final report.",
+          "capability": "pull request communication"
+        }
+      ]
+    }
+  },
   "read-only-audit": {
     "description": "Inspect a system or change and report evidence-backed findings without implementation.",
     "keywords": [

@@ -740,3 +740,28 @@ test("malformed or missing project playbook inputs fail before routing", () => {
   ].join("\n"));
   assert.throws(() => loadPlaybooks({ projectPlaybookDir: wrongKind }), /expected kind playbook/);
 });
+
+test("pull request lifecycle requests route to their own playbooks", () => {
+  for (const [task, playbook] of [
+    ["babysit PR 12", "pr-watch"],
+    ["watch the pr until the checks pass", "pr-watch"],
+    ["modernize PR 31", "pr-modernize"],
+    ["rebase this pr onto the latest base", "pr-modernize"],
+    ["take over PR 88 from the other agent", "pr-takeover"],
+    ["fix the export crash, full stop", "pr-unattended"],
+    ["add the retry and full send", "pr-unattended"],
+  ]) assert.equal(recommend(task).playbook, playbook, task);
+  // A plain review request still belongs to the Review Ladder.
+  assert.equal(recommend("Review PR 47").playbook, "pr-review");
+});
+
+test("pull request lifecycle playbooks bind the pr-communication skill", () => {
+  const playbooks = loadPlaybooks();
+  for (const name of ["pr-watch", "pr-modernize", "pr-takeover", "pr-unattended"]) {
+    const steps = playbooks[name].skill_flow.steps;
+    assert.ok(steps.some((step) => step.capability === "pull request communication"), name);
+    // Every phase has exactly one owner, so no step is left unassigned.
+    const owned = Object.values(playbooks[name].workflow.agent_contracts).flatMap((contract) => contract.phases);
+    assert.deepEqual([...owned].sort(), [...playbooks[name].workflow.phases].sort(), name);
+  }
+});

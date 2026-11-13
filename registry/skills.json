@@ -183,6 +183,19 @@
       ]
     },
     {
+      "name": "pr-communication",
+      "category": "quality",
+      "applies_to": [
+        "agent-organizer",
+        "workflow-orchestrator",
+        "documentation-engineer"
+      ],
+      "summary": "Problem-first pull request titles and descriptions, and agent-written comments that name the model",
+      "capabilities": [
+        "pull request communication"
+      ]
+    },
+    {
       "name": "document-artifact-ingestion",
       "category": "ingestion",
       "applies_to": [

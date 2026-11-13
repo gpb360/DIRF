@@ -116,7 +116,12 @@ Use this policy in every generated workflow prompt.
   Never present one as proof of another.
 - Include the PR number and current head when they matter. Link the published PR
   update when the user expects to see it on GitHub.
-- Do not add AI attribution footers or generated-by boilerplate.
+- Name the model and harness on pull request descriptions and on comments an
+  agent posts for the user, as the `pr-communication` skill states. Several
+  agents can work on one pull request, and a reader must know which one wrote what.
+- Add no tool advertising or badge. Leave commit messages and code without
+  attribution unless the project asks for it. Project instructions that forbid
+  attribution win.
 - Pull requests created during the workflow carry a description: what
   changed, why, and how it was verified — never a title-only PR.
 
