@@ -6,6 +6,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { collectRoutingFacts, loadPlaybooks, recommend } from "../src/router.js";
+import { bundledSkills } from "../src/skills.js";
 import { folderHash } from "../src/paths.js";
 
 test("landing page match", () => {
@@ -754,6 +755,8 @@ test("pull request lifecycle requests route to their own playbooks", () => {
     // Watch requests that also name a merge or a review still belong to pr-watch.
     ["watch PR 12 and merge it when the checks are green", "pr-watch"],
     ["monitor PR 12 until the review bots finish", "pr-watch"],
+    ["babysit this pull request", "pr-watch"],
+    ["babysit PR 12 and merge when green", "pr-watch"],
   ]) assert.equal(recommend(task).playbook, playbook, task);
   // Ordinary work that only shares a word must not reach the autonomous playbook.
   for (const task of [
@@ -766,11 +769,23 @@ test("pull request lifecycle requests route to their own playbooks", () => {
   assert.equal(recommend("Review PR 47").playbook, "pr-review");
 });
 
-test("pull request lifecycle playbooks bind the pr-communication skill", () => {
+test("pull request lifecycle playbooks bind bundled skills that carry their rules", () => {
   const playbooks = loadPlaybooks();
-  for (const name of ["pr-watch", "pr-modernize", "pr-takeover", "pr-unattended"]) {
+  // A built task receives skill files, not playbook prose. Each playbook must
+  // open with a capability that one bundled skill declares.
+  const declared = new Map(Object.values(bundledSkills()).flatMap((skill) => skill.capabilities.map((capability) => [capability, skill.name])));
+  for (const [name, engine] of [
+    ["pr-watch", "pr-watching"],
+    ["pr-modernize", "pr-modernization"],
+    ["pr-takeover", "work-takeover"],
+    ["pr-unattended", "unattended-delivery"],
+  ]) {
     const steps = playbooks[name].skill_flow.steps;
-    assert.ok(steps.some((step) => step.capability === "pull request communication"), name);
+    assert.equal(declared.get(steps[0].capability), engine, name);
+    assert.equal(declared.get("contribution writeup"), "pr-communication");
+    assert.ok(steps.some((step) => step.capability === "contribution writeup"), name);
+    // Every shipped playbook ends in a user-owned decision gate.
+    assert.equal(playbooks[name].workflow.gates[playbooks[name].workflow.phases.at(-1)].kind, "decision", name);
     // Every phase has exactly one owner, so no step is left unassigned.
     const owned = Object.values(playbooks[name].workflow.agent_contracts).flatMap((contract) => contract.phases);
     assert.deepEqual([...owned].sort(), [...playbooks[name].workflow.phases].sort(), name);

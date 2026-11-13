@@ -2374,7 +2374,13 @@
       "watch pull request",
       "until the checks",
       "checks are green",
-      "review bots"
+      "review bots",
+      "watch this pr",
+      "babysit this pr",
+      "watch my pr",
+      "watch this pull request",
+      "babysit this pull request",
+      "merge when green"
     ],
     "agents": [
       "agent-organizer",
@@ -2385,7 +2391,7 @@
       "phases": [
         "record the PR and its latest commit",
         "handle the checks and comments that already exist",
-        "run one watcher and wait",
+        "wait for the next PR event",
         "check each new finding against the code",
         "fix real findings and answer the rest",
         "keep the branch current with its base",
@@ -2401,7 +2407,7 @@
           "phases": [
             "record the PR and its latest commit",
             "handle the checks and comments that already exist",
-            "run one watcher and wait",
+            "wait for the next PR event",
             "keep the branch current with its base",
             "confirm the PR is ready on the latest commit"
           ],
@@ -2435,6 +2441,11 @@
       "label": "watch, verify each finding, fix what is real, stop when ready",
       "steps": [
         {
+          "stage": "watch",
+          "reason": "Use one watcher. Act only on checks and comments that are newer than the latest push.",
+          "capability": "readiness babysitting"
+        },
+        {
           "stage": "verify",
           "reason": "Check every bot finding and failed check against the code before any change.",
           "capability": "code review"
@@ -2452,7 +2463,7 @@
         {
           "stage": "report",
           "reason": "Reply to each finding and report the result in plain language.",
-          "capability": "pull request communication"
+          "capability": "contribution writeup"
         }
       ]
     }
@@ -2534,14 +2545,14 @@
       "label": "old pull request -> does it still belong -> safe rebase",
       "steps": [
         {
-          "stage": "understand",
-          "reason": "State what the pull request tried to do and what changed around it.",
-          "capability": "code review"
+          "stage": "decide",
+          "reason": "State the goal of the pull request and decide whether it still belongs before any rebase.",
+          "capability": "branch modernization"
         },
         {
-          "stage": "decide",
-          "reason": "Keep the pull request only when its goal and its shape are still right.",
-          "capability": "minimalism"
+          "stage": "understand",
+          "reason": "Read what changed on the base branch around the pull request.",
+          "capability": "code review"
         },
         {
           "stage": "verify",
@@ -2551,7 +2562,7 @@
         {
           "stage": "report",
           "reason": "Lead with the disposition and separate facts from judgment.",
-          "capability": "pull request communication"
+          "capability": "contribution writeup"
         }
       ]
     }
@@ -2581,7 +2592,7 @@
         "bring the work up to date with its base",
         "finish the original goal",
         "verify the original failure and the real workflows",
-        "file or update the PR with credit",
+        "open or update the PR with credit",
         "report what was inherited, changed, and verified"
       ],
       "gates": {
@@ -2598,7 +2609,7 @@
             "read the source work and its review history",
             "resolve the handoff to the real code and latest commit",
             "choose replacement, in-place, or stacked continuation",
-            "file or update the PR with credit",
+            "open or update the PR with credit",
             "report what was inherited, changed, and verified"
           ],
           "output": "the original goal, the real state of the inherited code, the continuation form, and a pull request that credits the original contributors",
@@ -2632,9 +2643,14 @@
       "label": "inherit, check against the code, finish the same goal, keep the credit",
       "steps": [
         {
-          "stage": "understand",
-          "reason": "Read the source work and check the handoff against the code.",
-          "capability": "code review"
+          "stage": "inherit",
+          "reason": "Check the handoff against the code, choose the continuation, and keep the original credit.",
+          "capability": "work takeover"
+        },
+        {
+          "stage": "update",
+          "reason": "Bring the continuation branch up to date with its base.",
+          "capability": "branch modernization"
         },
         {
           "stage": "fix",
@@ -2649,7 +2665,12 @@
         {
           "stage": "report",
           "reason": "File the pull request with credit and report the inherited state.",
-          "capability": "pull request communication"
+          "capability": "contribution writeup"
+        },
+        {
+          "stage": "watch",
+          "reason": "Watch the filed pull request until it is ready.",
+          "capability": "readiness babysitting"
         }
       ]
     }
@@ -2671,7 +2692,7 @@
         "confirm the unattended request and its mode",
         "finish the smallest change",
         "prove every change",
-        "file the PR",
+        "open the PR",
         "review the PR until it qualifies",
         "watch the PR and fix real findings",
         "check readiness on the latest commit",
@@ -2683,13 +2704,16 @@
         },
         "check readiness on the latest commit": {
           "kind": "soft"
+        },
+        "hand off the ready PR or merge it": {
+          "kind": "decision"
         }
       },
       "agent_contracts": {
         "agent-organizer": {
           "phases": [
             "confirm the unattended request and its mode",
-            "file the PR",
+            "open the PR",
             "review the PR until it qualifies",
             "watch the PR and fix real findings",
             "check readiness on the latest commit",
@@ -2722,6 +2746,11 @@
       "label": "finish, prove, file, review, watch, then stop or merge",
       "steps": [
         {
+          "stage": "own",
+          "reason": "Confirm the mode and what the request permits. Own the work to a ready pull request.",
+          "capability": "unattended delivery"
+        },
+        {
           "stage": "fix",
           "reason": "Finish the goal with the smallest change that works.",
           "capability": "minimalism"
@@ -2732,14 +2761,19 @@
           "capability": "testing"
         },
         {
+          "stage": "file",
+          "reason": "File the pull request and write the final report.",
+          "capability": "contribution writeup"
+        },
+        {
           "stage": "review",
           "reason": "Follow the Review Ladder on the latest commit of the pull request.",
           "capability": "code review"
         },
         {
-          "stage": "report",
-          "reason": "File the pull request and write the final report.",
-          "capability": "pull request communication"
+          "stage": "watch",
+          "reason": "Watch the pull request and fix the real findings.",
+          "capability": "readiness babysitting"
         }
       ]
     }

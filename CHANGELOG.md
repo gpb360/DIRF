@@ -16,6 +16,9 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   `pr-unattended` ("full stop" takes a change to a ready pull request with
   nobody watching; "full send" also merges when the project allows it). They
   adapt the MIT-licensed [tstack](https://github.com/t3dotgg/tstack) skills.
+- **Skills that carry the rules** — a built task receives skill files, not
+  playbook prose, so each playbook binds a bundled skill: `pr-watching`,
+  `pr-modernization`, `work-takeover`, and `unattended-delivery`.
 - **`pr-communication` skill** — problem-first pull request titles and
   descriptions, a model and harness line, and a note on agent-written comments
   that names the model.

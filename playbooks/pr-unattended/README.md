@@ -3,143 +3,22 @@ name: pr-unattended
 kind: playbook
 order: 20
 description: "Take a change to a ready pull request while nobody watches the thread: full stop leaves it for a person to merge, full send also merges."
-uses: ["../../skills/pr-communication", "../../skills/code-review"]
+uses: ["../../skills/unattended-delivery","../../skills/code-review","../../skills/pr-watching","../../skills/pr-communication"]
 details: []
 inputs: ["task"]
 outputs: ["workflow"]
 capabilities: []
-config: {"description": "Take a change to a ready pull request while nobody watches the thread: full stop leaves it for a person to merge, full send also merges.", "keywords": ["full stop", "full send", "i am not watching"], "agents": ["agent-organizer", "dx-optimizer", "test-engineer"], "workflow": {"phases": ["confirm the unattended request and its mode", "finish the smallest change", "prove every change", "file the PR", "review the PR until it qualifies", "watch the PR and fix real findings", "check readiness on the latest commit", "hand off the ready PR or merge it"], "gates": {"prove every change": {"kind": "soft"}, "check readiness on the latest commit": {"kind": "soft"}}, "agent_contracts": {"agent-organizer": {"phases": ["confirm the unattended request and its mode", "file the PR", "review the PR until it qualifies", "watch the PR and fix real findings", "check readiness on the latest commit", "hand off the ready PR or merge it"], "output": "a pull request that is ready on its latest commit, left open in stop mode or merged in send mode, with a final report", "verification": "the report names the mode, the pull request link, the latest commit, the verdict, and whether the pull request is open or merged"}, "dx-optimizer": {"phases": ["finish the smallest change"], "output": "the smallest change that reaches the goal of the request, on its own branch", "verification": "the diff fixes the case that happened and holds nothing the goal does not need"}, "test-engineer": {"phases": ["prove every change"], "output": "proof observed in this session for every change in the diff", "verification": "each change maps to command output, a reproduction, or a screenshot from this session"}}, "output": "stop mode: an open, unmerged pull request that is ready for a person to merge; send mode: a merged pull request; both with proof, the review result, and each decision made for the user", "validation": "on the latest commit: proof covers the whole diff, dirf review ready review.json passes, required checks passed, review bots finished, no review conversation is open, no person requests changes, and the branch is current and mergeable", "recovery": "if a change cannot be proved or readiness cannot pass, ask through the host's question tool; with no answer, leave the pull request open and unmerged and start the final message with the question"}, "questions": [], "skill_flow": {"label": "finish, prove, file, review, watch, then stop or merge", "steps": [{"stage": "fix", "reason": "Finish the goal with the smallest change that works.", "capability": "minimalism"}, {"stage": "verify", "reason": "Get direct proof for every change before the pull request opens.", "capability": "testing"}, {"stage": "review", "reason": "Follow the Review Ladder on the latest commit of the pull request.", "capability": "code review"}, {"stage": "report", "reason": "File the pull request and write the final report.", "capability": "pull request communication"}]}}
+config: {"description": "Take a change to a ready pull request while nobody watches the thread: full stop leaves it for a person to merge, full send also merges.", "keywords": ["full stop", "full send", "i am not watching"], "agents": ["agent-organizer", "dx-optimizer", "test-engineer"], "workflow": {"phases": ["confirm the unattended request and its mode", "finish the smallest change", "prove every change", "open the PR", "review the PR until it qualifies", "watch the PR and fix real findings", "check readiness on the latest commit", "hand off the ready PR or merge it"], "gates": {"prove every change": {"kind": "soft"}, "check readiness on the latest commit": {"kind": "soft"}, "hand off the ready PR or merge it": {"kind": "decision"}}, "agent_contracts": {"agent-organizer": {"phases": ["confirm the unattended request and its mode", "open the PR", "review the PR until it qualifies", "watch the PR and fix real findings", "check readiness on the latest commit", "hand off the ready PR or merge it"], "output": "a pull request that is ready on its latest commit, left open in stop mode or merged in send mode, with a final report", "verification": "the report names the mode, the pull request link, the latest commit, the verdict, and whether the pull request is open or merged"}, "dx-optimizer": {"phases": ["finish the smallest change"], "output": "the smallest change that reaches the goal of the request, on its own branch", "verification": "the diff fixes the case that happened and holds nothing the goal does not need"}, "test-engineer": {"phases": ["prove every change"], "output": "proof observed in this session for every change in the diff", "verification": "each change maps to command output, a reproduction, or a screenshot from this session"}}, "output": "stop mode: an open, unmerged pull request that is ready for a person to merge; send mode: a merged pull request; both with proof, the review result, and each decision made for the user", "validation": "on the latest commit: proof covers the whole diff, dirf review ready review.json passes, required checks passed, review bots finished, no review conversation is open, no person requests changes, and the branch is current and mergeable", "recovery": "if a change cannot be proved or readiness cannot pass, ask through the host's question tool; with no answer, leave the pull request open and unmerged and start the final message with the question"}, "questions": [], "skill_flow": {"label": "finish, prove, file, review, watch, then stop or merge", "steps": [{"stage": "own", "reason": "Confirm the mode and what the request permits. Own the work to a ready pull request.", "capability": "unattended delivery"}, {"stage": "fix", "reason": "Finish the goal with the smallest change that works.", "capability": "minimalism"}, {"stage": "verify", "reason": "Get direct proof for every change before the pull request opens.", "capability": "testing"}, {"stage": "file", "reason": "File the pull request and write the final report.", "capability": "contribution writeup"}, {"stage": "review", "reason": "Follow the Review Ladder on the latest commit of the pull request.", "capability": "code review"}, {"stage": "watch", "reason": "Watch the pull request and fix the real findings.", "capability": "readiness babysitting"}]}}
 
 ---
 
 # pr-unattended
 
-The user is not watching this thread. Updates and the final message stay
-unread until long after the work stops. You own the work from its current
-state to a ready pull request.
+The user is not watching this thread. Read the
+[unattended delivery skill](../../skills/unattended-delivery/README.md) before
+the first phase. It holds the two modes, what the request permits, proof,
+readiness, and how to ask a question that the user will see.
 
-Use this playbook only when the user asked for it in clear words, such as
-"full stop", "full send", or "I am not watching". Without that request, do
-not assume this autonomy. A "full stop" that only stresses another sentence,
-or that names the punctuation mark, is not this request. In that case this
-playbook does not apply.
-
-## Two modes
-
-- **Full stop** is the default. Stop when the pull request is ready. A person
-  merges it.
-- **Full send** also merges. It applies only when the user said "full send"
-  for this task and the project rules let an agent merge into that base
-  branch. The "full send" request is the answer to the merge question that
-  the workflow policy asks.
-
-In both modes you may commit, push, rebase, fix conflicts, and update the
-branch of this task with `git push --force-with-lease`.
-
-In stop mode, never merge, enable auto-merge, enter a merge queue, or push to
-the base branch. Before work begins and before each push, turn off auto-merge
-and leave any merge queue. Report that you did. If you cannot prevent an
-automatic merge, report that before you continue.
-
-## What the request permits
-
-The request permits the test methods that proof needs, even when a project
-file says to ask first. That covers browser automation, a running app or
-development server, simulators, screenshots, and visual checks.
-
-- Rules about how to test still apply. Use the command, fixture, or check the
-  project names.
-- The permission covers only the tests this task needs.
-- It does not cover production changes, data deletion, or work outside the
-  repository.
-- It does not bypass an approval prompt of the host.
-
-## Steps
-
-1. **Finish the change.** Reach the goal of the request with the smallest
-   change that works. Fix the case that happened, not every case that could.
-   Create a branch first when you are on the base branch.
-2. **Prove it.** Get proof for every change. See "Proof".
-3. **File the pull request** with the `pr-communication` skill. Rebase onto
-   the latest base branch first.
-4. **Review it.** Follow the Review Ladder in the `pr-review` playbook on the
-   latest commit of the pull request. Prefer a reviewer on a different model
-   than the author when the host can run one.
-5. **Watch it** with the `pr-watch` playbook. Fix real findings and failed
-   checks. Prove each fix before the push.
-6. **Check readiness** on the latest commit. See "Readiness".
-7. **Stop or merge**, as the mode states. Then report.
-
-Stay active from step 1 to step 7. When you end a turn while checks or bots
-are pending, the work stops, because nobody will prompt you. Wait with the
-watcher from `pr-watch` so that an event wakes you.
-
-## Proof
-
-Proof is evidence you observed in this session: command output, a
-reproduction, or a screenshot. Use the most direct proof the change allows.
-
-- Reproduce the original failure. Apply the fix. Watch the same reproduction
-  pass.
-- Run the checks that CI runs.
-- Add one focused test that fails without the fix, when the behavior has no
-  test and the repository has a test setup.
-- For interface and runtime behavior, run the app and look at the change.
-  Green mocked tests do not prove that the experience works.
-
-When you cannot find a way to prove a change, you do not have full
-confidence. Ask the user.
-
-## Readiness
-
-All of these are true on the latest commit:
-
-- Proof covers every change in the diff.
-- The review covers this commit: `dirf review ready review.json` passes. A
-  push after the review needs a new review of the new commit.
-- Required checks passed. When the base branch requires none, every check
-  passed.
-- Review bots finished, and each finding has a fix or a written reason.
-- No review conversation is open, and no person requests changes.
-- The branch is current with its base, and GitHub reports it mergeable.
-
-In send mode, merge with the method the repository uses. Merge through branch
-protection as configured. Never use an administrator bypass. When the
-repository uses a merge queue, stay until GitHub reports the merge.
-
-## Questions
-
-A question in a normal message stays unseen, and the thread looks finished.
-Ask through the question tool of the host, so the thread shows that it waits.
-Put all context in the question: the pull request link, what blocks you, and
-the options with your recommendation first.
-
-Ask only when you cannot continue alone:
-
-- You cannot prove the change.
-- Readiness cannot pass, and you cannot fix that.
-- The Loop Limit of the workflow policy is reached.
-- The next step is outside what the request permits.
-- The goal is unclear in a way that changes the result.
-- Another pull request makes this one obsolete.
-
-A decision gate still needs the person. When the work reaches one, ask
-through the question tool. The readiness check of this playbook is not a
-decision gate. Decide everything else yourself with sensible defaults, and
-list those decisions in the report.
-
-When no question tool exists, or it returns no answer, take the safe path.
-Leave the pull request open and unmerged. Start the final message with the
-question.
-
-## Report
-
-Stop the watch first. Then report:
-
-- the mode and the pull request link;
-- the latest commit and the verdict: ready to merge, waiting for a required
-  approval, blocked, or merged with the merge commit;
-- the proof and the review result;
-- each decision you made for the user;
-- the risks that remain;
-- whether the pull request is open and unmerged.
+Full stop leaves the ready pull request open for a person to merge. Full send
+also merges, and only when the user said "full send" and the project rules
+let an agent merge into that base branch.

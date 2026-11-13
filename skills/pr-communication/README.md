@@ -6,7 +6,7 @@ uses: []
 details: []
 inputs: ["pull request or branch", "the user's original request", "comment to post"]
 outputs: ["pull request title and description", "attributed comment"]
-capabilities: ["pull request communication"]
+capabilities: ["contribution writeup"]
 ---
 
 # Pull request communication

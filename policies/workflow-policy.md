@@ -119,7 +119,8 @@ Use this policy in every generated workflow prompt.
 - End a pull request description with the model and harness that made the
   change. Start each comment an agent posts for the user with a note that
   names the model and harness. Several agents can work on one pull request,
-  and a reader must know which one wrote what. The `pr-communication` skill
+  and a reader must know which one wrote what. Use the name the harness
+  reports, and never guess a model. The `pr-communication` skill
   has the exact format.
 - Add no tool advertising or badge. Leave commit messages and code without
   attribution unless the project asks for it. Project instructions that forbid

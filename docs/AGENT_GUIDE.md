@@ -110,6 +110,12 @@ the store at `~/.dirf/projects/<slug>/attempts/<id>/`. It prints the attempt id.
 Open that attempt's `README.md` — it's the operating workflow (ordered phases,
 agent roles, done-when checks, policy). Execute it one phase at a time.
 
+The router matches words, and "full stop" or "full send" names a mode, not a
+task. When a request has stronger task words, those words win the route: "fix
+the login bug, full stop" routes to `bug-fix`. When the user says either
+phrase, also apply the bundled `unattended-delivery` skill
+(`skills/unattended-delivery/README.md`) to the routed playbook.
+
 An entrypoint alone does not prove that a skill is runnable. See
 [Declare required skill resources](writing-great-playbooks.md#declare-required-skill-resources)
 for the readiness and routing contract.
