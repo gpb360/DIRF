@@ -27,7 +27,8 @@ const HOME_ROOT_NAMES = [
   ".claude/skills",
   ".zcode/cli/plugins/cache",
 ];
-const PROJECT_ROOT_NAMES = [".agents/skills", ".codex/skills", ".claude/skills", "skills"];
+const HOST_ROOT_NAMES = [".agents/skills", ".codex/skills", ".claude/skills"];
+const PROJECT_ROOT_NAMES = [...HOST_ROOT_NAMES, "skills"];
 
 // Candidate files inside a skill folder, in priority order.
 const SKILL_FILES = ["SKILL.md", "skill.json", "README.md"];
@@ -313,13 +314,16 @@ function basenameDir(path) {
   return parts[parts.length - 2] || "skill";
 }
 
-export function discover(projectRoot) {
+export function discover(projectRoot, { invokingRoot = gitRoot(process.cwd()) } = {}) {
   // Scan all roots and return an index: { skillName: { path, file, ... } }.
   // projectRoot null/undefined defaults to ROOT. Scans:
   //   1. the standard home + project roots (skillRoots)
   //   2. any directory named `skills` under the project root (auto-detect, so
   //      projects with non-standard layouts like `audit-runtime/skills/` are
   //      found without configuration — the agnostic principle)
+  //   3. the host skill roots of the repo the agent runs in, when --path
+  //      targets another repo (the "home repo" pattern). These only fill
+  //      names the target and user roots lack, so the target wins a clash.
   const index = {};
   for (const root of skillRoots(projectRoot)) {
     if (root.includes("cache")) {
@@ -333,7 +337,35 @@ export function discover(projectRoot) {
       scanFlat(root, index);
     }
   }
+  const homeRepo = {};
+  for (const root of invokingRepoRoots(projectRoot || ROOT, invokingRoot)) {
+    scanFlat(root, homeRepo);
+  }
+  for (const [name, skill] of Object.entries(homeRepo)) {
+    if (!(name in index)) index[name] = skill;
+  }
   return index;
+}
+
+function gitRoot(start) {
+  // Nearest ancestor holding .git (directory or worktree file). No git spawn.
+  let dir = resolve(start);
+  for (;;) {
+    if (existsSync(join(dir, ".git"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+function invokingRepoRoots(projectRoot, invokingRoot) {
+  // Only host skill folders (not a plain skills/ dir, which may be a kit's
+  // bundled fallbacks) of a repo other than the target.
+  if (!invokingRoot || samePath(resolve(invokingRoot), resolve(projectRoot))) return [];
+  if (samePath(resolve(invokingRoot), ROOT)) return [];
+  return HOST_ROOT_NAMES
+    .map((name) => join(invokingRoot, name))
+    .filter(isDir);
 }
 
 function findSkillFolders(projectRoot) {
