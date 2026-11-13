@@ -75,7 +75,8 @@ conversation only after its reply is posted.
 - After a rebase, push with a lease tied to the head you recorded before the
   rebase: `git push --force-with-lease=<branch>:<recorded-commit>`. A bot or a
   reviewer can push to the branch while you watch. When the lease fails,
-  fetch, keep their commits, and push again. Never use a plain force push or
+  fetch, rebase your commits on top of theirs, and push again with the lease
+  pinned to the new head. Never use a plain force push or
   a bare `--force-with-lease`.
 - When another pull request makes this one obsolete, stop the watch. Report
   it and ask before you close anything.

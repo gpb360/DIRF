@@ -128,8 +128,8 @@ Use this policy in every generated workflow prompt.
 - When the user says "full stop" or "full send", or says that nobody watches
   the thread, the user is absent. Whatever playbook the task routed to, also
   apply DIRF's bundled `unattended-delivery` skill and the skills it names.
-  `dirf doctor` prints the CLI path; the skill is
-  `skills/unattended-delivery/README.md` in that DIRF folder. A "full stop"
+  `dirf doctor` prints the CLI path, `<DIRF>/src/cli.js`; the skill is
+  `<DIRF>/skills/unattended-delivery/README.md`, in the folder above `src`. A "full stop"
   that only stresses a sentence, or that names the punctuation mark, is not
   that request.
 - If you cannot read that skill, treat the request as "full stop": take the

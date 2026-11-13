@@ -33,13 +33,15 @@ skill does not apply.
 In both modes you may commit, push, rebase, fix conflicts, and update the
 branch of this task. Push a rebased branch with a lease tied to the head you recorded before the
 rebase: `git push --force-with-lease=<branch>:<recorded-commit>`. When the
-lease fails, someone else pushed. Fetch, keep their commits, and push again.
+lease fails, someone else pushed. Fetch, rebase your commits on top of
+theirs, and push again with the lease pinned to the new head.
 Never use a plain force push or a bare `--force-with-lease`.
 
 In stop mode, never merge, enable auto-merge, enter a merge queue, or push to
 the base branch. When a person already set auto-merge or a merge queue on
 the pull request, leave it as it is and report it. Their setting is their
-decision to merge.
+decision to merge. When the ladder then stops for a person, push nothing more,
+because auto-merge would merge the next green commit.
 
 ## What the request permits
 
@@ -100,8 +102,9 @@ All of these are true on the latest commit:
 
 - Proof covers every change in the diff.
 - The review covers this commit: `dirf review ready review.json` passes.
-  A commit pushed to answer a CI or bot finding gets one reviewer pass on
-  that commit, the same as step 1 of the ladder. That pass counts toward the
+  A commit pushed to answer a CI, bot, or person's finding, or to rebase onto
+  the base branch, gets one reviewer pass on that commit, the same as step 1
+  of the ladder. That pass counts toward the
   Loop Limit. It does not start the ladder again.
 - Required checks passed. When the base branch requires none, every check
   passed.
