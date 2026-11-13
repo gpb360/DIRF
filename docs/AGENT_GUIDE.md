@@ -433,6 +433,15 @@ state which` resolves to the same store entry as the main tree (via
 per-worktree setup, no per-worktree state. Two agents in two worktrees of the
 same repo see each other's handoff updates through the store.
 
+**Creating a worktree.** Run `dirf status` and read the `New worktrees:` line
+(`repository.worktree_tool` in `--json`). When the repo has `.config/wt.toml`
+and [Worktrunk](https://github.com/max-sixty/worktrunk) is on PATH, create the
+worktree with `wt switch --create <branch>` (`git-wt` on Windows, where `wt` is
+Windows Terminal). Its hooks copy ignored files such as `node_modules` and set
+per-branch ports. Without both, use `git worktree add`. DIRF only detects the
+tool: it never installs or runs it. The fast copy relies on copy-on-write
+filesystems (btrfs, APFS, XFS); on NTFS the copy is a normal full copy.
+
 ## Live work registry
 
 `dirf project status --json` reconciles every Attempt in the current Project.
