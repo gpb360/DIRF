@@ -2,9 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { detectWorktreeTool, worktrunkCommand } from "../src/worktree-tool.js";
+import { detectWorktreeTool, findOnPath, worktrunkCommand } from "../src/worktree-tool.js";
 import { ROOT } from "../src/paths.js";
 
 const CLI = join(ROOT, "src", "cli.js");
@@ -45,7 +45,8 @@ test("on Windows the WindowsApps wt alias is Windows Terminal, not Worktrunk", (
   const terminal = bin(join(base, "Microsoft", "WindowsApps"), "wt.exe");
   assert.equal(worktrunkCommand(win([terminal])), null);
   const worktrunk = bin(join(base, "cargo", "bin"), "wt.exe");
-  assert.equal(worktrunkCommand(win([terminal, worktrunk])), "wt");
+  assert.equal(worktrunkCommand(win([terminal, worktrunk])), null, "the shell would run the Terminal alias first");
+  assert.equal(worktrunkCommand(win([worktrunk, terminal])), "wt");
 });
 
 test("on POSIX wt is preferred, then git-wt", { skip: process.platform === "win32" }, () => {
@@ -66,7 +67,8 @@ test("dirf status finds the Worktrunk config from a subdirectory", () => {
   mkdirSync(join(root, "pkg"));
   const tools = bin(mkdtempSync(join(tmpdir(), "dirf-bin-")), process.platform === "win32" ? "git-wt.exe" : "git-wt");
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^path$/i.test(key)));
-  env.PATH = [tools, process.env.PATH || process.env.Path].join(process.platform === "win32" ? ";" : ":");
+  // Only the fake tool and git: a real Worktrunk on this machine must not win.
+  env.PATH = [tools, dirname(findOnPath("git"))].join(process.platform === "win32" ? ";" : ":");
   const out = execFileSync(process.execPath, [CLI, "status", "--json", "--path", join(root, "pkg")], {
     encoding: "utf8", env, windowsHide: true,
   });

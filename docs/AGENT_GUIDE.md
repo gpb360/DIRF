@@ -437,8 +437,9 @@ same repo see each other's handoff updates through the store.
 in `--json` (the text output prints a `New worktrees:` line when the repo has a
 Worktrunk config). When the repo has `.config/wt.toml` and
 [Worktrunk](https://github.com/max-sixty/worktrunk) is on PATH, create the
-worktree with `wt switch --create <branch>` (`wt switch <branch>` for an
-existing branch; `git-wt` on Windows, where `wt` is Windows Terminal). The
+worktree with `<command> switch --create <branch>` (`<command> switch <branch>`
+for an existing branch), where `<command>` is `repository.worktree_tool.command`:
+`wt`, or `git-wt` on Windows, where `wt` is usually Windows Terminal. The
 repo's hooks can copy ignored files such as `node_modules` and set per-branch
 ports. Without both, use `git worktree add`. DIRF only detects the tool: it
 never installs or runs it. The fast copy needs a copy-on-write filesystem

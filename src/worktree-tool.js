@@ -2,7 +2,7 @@
 // Detects whether a repository opts in to Worktrunk for worktree creation.
 // DIRF never installs or runs it: detection only reads the repo config file and
 // searches PATH, so no foreign binary executes. Without both, agents use git.
-import { existsSync, statSync } from "node:fs";
+import { existsSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 
 export const WORKTRUNK_CONFIG = ".config/wt.toml";
@@ -19,8 +19,9 @@ export function findOnPath(name, { env = process.env, platform = process.platfor
   for (const dir of dirs) {
     for (const ext of exts) {
       const candidate = join(dir, name + ext.toLowerCase());
+      // App execution aliases (WindowsApps) refuse stat with EACCES; lstat sees them.
       try {
-        if (statSync(candidate).isFile()) return candidate;
+        if (!lstatSync(candidate).isDirectory()) return candidate;
       } catch { /* keep searching */ }
     }
   }
@@ -48,9 +49,10 @@ export function worktrunkCommand(options = {}) {
   const platform = options.platform ?? process.platform;
   if (platform === "win32") {
     if (findOnPath("git-wt", options)) return "git-wt";
-    const env = options.env ?? process.env;
-    const path = pathDirs(env, platform).filter((dir) => !/[\\/]WindowsApps[\\/]?$/i.test(dir)).join(";");
-    return findOnPath("wt", { platform, env: { ...env, PATH: path } }) ? "wt" : null;
+    // The shell runs the first `wt` on PATH; if that is the Terminal alias,
+    // `wt` never reaches Worktrunk.
+    const wt = findOnPath("wt", options);
+    return wt && !/[\\/]WindowsApps[\\/][^\\/]+$/i.test(wt) ? "wt" : null;
   }
   if (findOnPath("wt", options)) return "wt";
   return findOnPath("git-wt", options) ? "git-wt" : null;
