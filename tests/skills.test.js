@@ -29,6 +29,27 @@ test("discover finds local SKILL.md skills", () => {
   assert.equal(idx["demo-skill"].description, "a demo");
 });
 
+test("discover indexes home-repo skills when --path targets another repo", () => {
+  const home = makeRoot();
+  const target = makeRoot();
+  write(join(home, ".claude", "skills", "home-only"), "SKILL.md",
+    "---\nname: home-only\ndescription: from home repo\n---\nbody");
+  write(join(home, ".claude", "skills", "shared"), "SKILL.md",
+    "---\nname: shared\ndescription: home copy\n---\nbody");
+  write(join(home, "skills", "plain-home"), "SKILL.md",
+    "---\nname: plain-home\ndescription: not a host root\n---\nbody");
+  write(join(target, "skills", "shared"), "SKILL.md",
+    "---\nname: shared\ndescription: target copy\n---\nbody");
+
+  const idx = skills.discover(target, { invokingRoot: home });
+  assert.equal(idx["home-only"].description, "from home repo");
+  assert.equal(idx.shared.description, "target copy", "target skill wins a name clash");
+  assert.equal(idx["plain-home"], undefined, "plain skills/ in the home repo is not scanned");
+
+  assert.equal(skills.discover(target, { invokingRoot: target })["home-only"], undefined);
+  assert.equal(skills.discover(target, { invokingRoot: null })["home-only"], undefined);
+});
+
 test("discover retains multiline descriptions and the following invocation policy", () => {
   const root = makeRoot();
   const markers = [">", ">-", ">+", "|", "|-", "|+"];
