@@ -358,7 +358,9 @@ export function githubRepositoryRef(input) {
   try { url = new URL(input); }
   catch { return null; }
   if (url.protocol !== "https:" || !["github.com", "www.github.com"].includes(url.hostname.toLowerCase())) return null;
-  const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  let parts;
+  try { parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent); }
+  catch { return null; }
   const name = /^[A-Za-z0-9_.-]+$/;
   if (parts.length < 2 || !name.test(parts[0]) || !name.test(parts[1])) return null;
   if (GITHUB_RESERVED_OWNERS.has(parts[0].toLowerCase())) return null;

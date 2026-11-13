@@ -124,6 +124,9 @@ test("recognizes GitHub repository and folder URLs only", () => {
   assert.equal(githubRepositoryRef("https://github.com/o/r/issues/1"), null);
   assert.equal(githubRepositoryRef("https://github.com/topics/ai"), null);
   assert.equal(githubRepositoryRef("https://example.com/o/r"), null);
+  // A malformed percent escape falls back to web intake instead of throwing.
+  assert.equal(githubRepositoryRef("https://github.com/o/r%/tree/x"), null);
+  assert.equal(githubRepositoryRef("https://github.com/o/r/tree/main/docs%E0%A4%A"), null);
   assert.equal(classifyLearningSource("https://github.com/o/r").kind, "github");
 });
 
