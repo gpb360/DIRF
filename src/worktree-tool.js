@@ -2,7 +2,7 @@
 // Detects whether a repository opts in to Worktrunk for worktree creation.
 // DIRF never installs or runs it: detection only reads the repo config file and
 // searches PATH, so no foreign binary executes. Without both, agents use git.
-import { existsSync, lstatSync } from "node:fs";
+import { accessSync, constants, existsSync, lstatSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 export const WORKTRUNK_CONFIG = ".config/wt.toml";
@@ -19,13 +19,27 @@ export function findOnPath(name, { env = process.env, platform = process.platfor
   for (const dir of dirs) {
     for (const ext of exts) {
       const candidate = join(dir, name + ext.toLowerCase());
-      // App execution aliases (WindowsApps) refuse stat with EACCES; lstat sees them.
-      try {
-        if (!lstatSync(candidate).isDirectory()) return candidate;
-      } catch { /* keep searching */ }
+      if (isExecutable(candidate, platform)) return candidate;
     }
   }
   return null;
+}
+
+/**
+ * @param {string} file
+ * @param {NodeJS.Platform} platform
+ */
+function isExecutable(file, platform) {
+  try {
+    // App execution aliases (WindowsApps) refuse stat with EACCES; lstat sees them.
+    if (platform === "win32") return !lstatSync(file).isDirectory();
+    // The shell skips a file without the execute bit.
+    if (!statSync(file).isFile()) return false;
+    accessSync(file, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -50,7 +64,9 @@ export function worktrunkCommand(options = {}) {
   if (platform === "win32") {
     if (findOnPath("git-wt", options)) return "git-wt";
     // The shell runs the first `wt` on PATH; if that is the Terminal alias,
-    // `wt` never reaches Worktrunk.
+    // `wt` never reaches Worktrunk. Known limit: a Windows Terminal installed
+    // elsewhere (Scoop, portable) looks like Worktrunk here, because telling
+    // them apart would mean running the binary, which DIRF never does.
     const wt = findOnPath("wt", options);
     return wt && !/[\\/]WindowsApps[\\/][^\\/]+$/i.test(wt) ? "wt" : null;
   }

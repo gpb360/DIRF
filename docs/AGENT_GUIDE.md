@@ -439,11 +439,12 @@ Worktrunk config). When the repo has `.config/wt.toml` and
 [Worktrunk](https://github.com/max-sixty/worktrunk) is on PATH, create the
 worktree with `<command> switch --create <branch>` (`<command> switch <branch>`
 for an existing branch), where `<command>` is `repository.worktree_tool.command`:
-`wt`, or `git-wt` on Windows, where `wt` is usually Windows Terminal. The
+`wt`, or `git-wt` on Windows, where `wt` is usually Windows Terminal (DIRF
+recognises only the WindowsApps alias; a Scoop or portable Windows Terminal
+first on PATH is misreported as Worktrunk, so prefer `git-wt` there). The
 repo's hooks can copy ignored files such as `node_modules` and set per-branch
 ports. Without both, use `git worktree add`. DIRF only detects the tool: it
-never installs or runs it. The fast copy needs a copy-on-write filesystem
-(btrfs, XFS, APFS, ReFS/Dev Drive); on ext4 and NTFS it is a full copy.
+never installs or runs it.
 
 ## Live work registry
 
