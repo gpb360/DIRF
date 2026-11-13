@@ -321,9 +321,10 @@ export function discover(projectRoot, { invokingRoot = gitRoot(process.cwd()) } 
   //   2. any directory named `skills` under the project root (auto-detect, so
   //      projects with non-standard layouts like `audit-runtime/skills/` are
   //      found without configuration — the agnostic principle)
-  //   3. the host skill roots of the repo the agent runs in, when --path
-  //      targets another repo (the "home repo" pattern). These only fill
-  //      names the target and user roots lack, so the target wins a clash.
+  //   3. with an explicit projectRoot only: the host skill roots of the repo
+  //      the agent runs in, when that is a different repo (the "home repo"
+  //      pattern). These only fill names the target and user roots lack, so
+  //      the target wins a clash.
   const index = {};
   for (const root of skillRoots(projectRoot)) {
     if (root.includes("cache")) {
@@ -338,7 +339,7 @@ export function discover(projectRoot, { invokingRoot = gitRoot(process.cwd()) } 
     }
   }
   const homeRepo = {};
-  for (const root of invokingRepoRoots(projectRoot || ROOT, invokingRoot)) {
+  for (const root of projectRoot ? invokingRepoRoots(projectRoot, invokingRoot) : []) {
     scanFlat(root, homeRepo);
   }
   for (const [name, skill] of Object.entries(homeRepo)) {
@@ -358,11 +359,39 @@ function gitRoot(start) {
   }
 }
 
+function gitCommonDir(root) {
+  // Repository identity shared by a main checkout and all its worktrees, read
+  // from the .git directory or the worktree's `gitdir:` file + `commondir`.
+  if (!root) return null;
+  const dotGit = join(root, ".git");
+  let dir = dotGit;
+  try {
+    if (!statSync(dotGit).isDirectory()) {
+      const match = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, "utf8"));
+      if (!match) return null;
+      dir = resolve(root, match[1].trim());
+      const common = join(dir, "commondir");
+      if (existsSync(common)) dir = resolve(dir, readFileSync(common, "utf8").trim());
+    }
+    return realpathSync(dir);
+  } catch {
+    return null;
+  }
+}
+
+function sameRepo(a, b) {
+  const ca = gitCommonDir(a);
+  const cb = gitCommonDir(b);
+  return ca && cb ? samePath(ca, cb) : samePath(resolve(a), resolve(b));
+}
+
 function invokingRepoRoots(projectRoot, invokingRoot) {
   // Only host skill folders (not a plain skills/ dir, which may be a kit's
-  // bundled fallbacks) of a repo other than the target.
-  if (!invokingRoot || samePath(resolve(invokingRoot), resolve(projectRoot))) return [];
-  if (samePath(resolve(invokingRoot), ROOT)) return [];
+  // bundled fallbacks) of a repo other than the target or the DIRF kit. A
+  // worktree and its main checkout are the same repo.
+  if (!invokingRoot) return [];
+  const targetRoot = gitRoot(projectRoot) || resolve(projectRoot);
+  if (sameRepo(invokingRoot, targetRoot) || sameRepo(invokingRoot, gitRoot(ROOT) || ROOT)) return [];
   return HOST_ROOT_NAMES
     .map((name) => join(invokingRoot, name))
     .filter(isDir);

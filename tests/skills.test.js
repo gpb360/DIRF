@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { ROOT } from "../src/paths.js";
 import * as skills from "../src/skills.js";
@@ -48,6 +49,35 @@ test("discover indexes home-repo skills when --path targets another repo", () =>
 
   assert.equal(skills.discover(target, { invokingRoot: target })["home-only"], undefined);
   assert.equal(skills.discover(target, { invokingRoot: null })["home-only"], undefined);
+  assert.equal(skills.discover(null, { invokingRoot: home })["home-only"], undefined, "no target, no home-repo scan");
+
+  write(join(target, "skills", "bare"), "SKILL.md", "---\nname: bare\n---\nbody");
+  write(join(home, ".claude", "skills", "bare"), "SKILL.md", "---\nname: bare\ndescription: home copy\n---\nbody");
+  assert.equal(skills.discover(target, { invokingRoot: home }).bare.description, "", "target wins even without a description");
+});
+
+test("a worktree and its main checkout are one repo, not a home repo", () => {
+  const main = makeRoot();
+  execFileSync("git", ["init", "-q"], { cwd: main, windowsHide: true });
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i"], { cwd: main, windowsHide: true });
+  const wt = join(mkdtempSync(join(tmpdir(), "dirf-test-")), "wt");
+  execFileSync("git", ["worktree", "add", "-q", wt], { cwd: main, windowsHide: true });
+  write(join(main, ".claude", "skills", "main-only"), "SKILL.md",
+    "---\nname: main-only\ndescription: untracked in main\n---\nbody");
+  assert.equal(skills.discover(wt, { invokingRoot: main })["main-only"], undefined);
+});
+
+test("the default invoking repo is the git root above the current directory", (t) => {
+  const home = makeRoot();
+  execFileSync("git", ["init", "-q"], { cwd: home, windowsHide: true });
+  write(join(home, ".agents", "skills", "from-cwd"), "SKILL.md",
+    "---\nname: from-cwd\ndescription: found via cwd\n---\nbody");
+  mkdirSync(join(home, "sub"));
+  const target = makeRoot();
+  const before = process.cwd();
+  t.after(() => process.chdir(before));
+  process.chdir(join(home, "sub"));
+  assert.equal(skills.discover(target)["from-cwd"].description, "found via cwd");
 });
 
 test("discover retains multiline descriptions and the following invocation policy", () => {
