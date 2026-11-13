@@ -125,6 +125,12 @@ Use this policy in every generated workflow prompt.
 - Add no tool advertising or badge. Leave commit messages and code without
   attribution unless the project asks for it. Project instructions that forbid
   attribution win.
+- When the user says "full stop" or "full send", or says that nobody watches
+  the thread, the user is absent. Whatever playbook the task routed to, also
+  apply the bundled `unattended-delivery` skill of DIRF, with the
+  `pr-communication` and `pr-watching` skills it names. A "full stop" that
+  only stresses a sentence, or that names the punctuation mark, is not that
+  request.
 - Pull requests created during the workflow carry a description: what
   changed, why, and how it was verified — never a title-only PR.
 

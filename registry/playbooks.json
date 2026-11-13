@@ -2379,8 +2379,7 @@
       "babysit this pr",
       "watch my pr",
       "watch this pull request",
-      "babysit this pull request",
-      "merge when green"
+      "babysit this pull request"
     ],
     "agents": [
       "agent-organizer",
@@ -2429,7 +2428,7 @@
           "verification": "each fix has proof from this session and each written reason is posted as a reply"
         }
       },
-      "output": "a pull request that is ready on its latest commit, or a plain statement of what blocks it; a merge happens only when the user asked for it",
+      "output": "a pull request that is green and ready on its latest commit, or a plain statement of what blocks it; a merge happens only when the user asked for it",
       "validation": "required checks pass on the latest commit, review bots finished, no review conversation is open, and the branch is not behind its base",
       "recovery": "if the watcher stops or GitHub is unreachable, check the rate limit and start one watcher again; if another pull request makes this one obsolete, stop and ask before closing it"
     },

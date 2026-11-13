@@ -765,6 +765,11 @@ test("pull request lifecycle requests route to their own playbooks", () => {
     "the file watcher is not watching new files in src",
   ]) assert.notEqual(recommend(task).playbook, "pr-unattended", task);
   assert.notEqual(recommend("modernize the auth module to use async/await").playbook, "pr-modernize");
+  // Work that has no pull request yet must not start as a watch.
+  for (const task of [
+    "the file watcher is not watching new files in src",
+    "fix the flaky upload test and merge when green",
+  ]) assert.notEqual(recommend(task).playbook, "pr-watch", task);
   // A plain review request still belongs to the Review Ladder.
   assert.equal(recommend("Review PR 47").playbook, "pr-review");
 });
