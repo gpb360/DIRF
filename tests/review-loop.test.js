@@ -11,7 +11,11 @@ const SHA_B = "b".repeat(40);
 const SHA_C = "c".repeat(40);
 const axes = ["spec", "correctness", "concurrency", "security", "data", "frontend", "testing", "standards"];
 
+// withFinding: true = one P2 finding, false = clean, "partial" = no finding
+// but a recorded limitation (evidence incomplete).
 function review(head, withFinding) {
+  const partial = withFinding === "partial";
+  if (partial) withFinding = false;
   return {
     schema_version: 2,
     target: { repository: "https://github.com/owner/repo.git", pr_number: 7, base_sha: SHA_A, head_sha: head, mode: "full" },
@@ -27,12 +31,12 @@ function review(head, withFinding) {
       evidence: ["Calling it with [] throws a TypeError"],
     }] : [],
     verification: [{ command: "node --test", status: "passed", result: "passed" }],
-    limitations: [],
+    limitations: partial ? ["Could not run the integration tests"] : [],
     completion: { review_complete: true, required_checks: "passed", unresolved_threads: 0 },
   };
 }
 
-// A fake checkout. `reviews` is the queue of review results (true = finding).
+// A fake checkout. `reviews` is the queue of review results (see review()).
 // `checks` is the queue of check exit statuses.
 function harness({ reviews = [], checks = [], fixStatus = 0, fixCommits = true, recorded = [], trigger, descends = true } = {}) {
   let head = SHA_B;
@@ -167,6 +171,8 @@ test("recorded reviews qualify a commit only when the ladder would stop there", 
   assert.equal(recordedCommitQualified([open, open, clean]), false);
   assert.equal(recordedCommitQualified([open, clean]), false);
   assert.equal(recordedCommitQualified([open]), false);
+  // continue_review also marks a partial review, so it is not clean.
+  assert.equal(recordedCommitQualified([{ action: "continue_review" }]), false);
 });
 
 test("a rerun after a failed fix does not report the commit as qualified", () => {
@@ -229,4 +235,50 @@ test("the fixer starts a new agent only when the ledger asks for a new approach"
   // The review of the fix still has to describe the new approach.
   assert.equal(report.outcome, "error");
   assert.match(report.error, /approach_change/);
+});
+
+test("isQualified treats a review with no finding but incomplete evidence as partial", () => {
+  assert.equal(isQualified(review(SHA_B, false)), true);
+  assert.equal(isQualified(review(SHA_B, "partial")), false);
+  const lowEvidence = review(SHA_B, false);
+  lowEvidence.confidence.evidence = 70;
+  assert.equal(isQualified(lowEvidence), false);
+  const pending = review(SHA_B, false);
+  pending.verification[0].status = "pending";
+  assert.equal(isQualified(pending), false);
+});
+
+test("a partial first review is not qualified and the ladder adds reviewers", () => {
+  const h = harness({ reviews: ["partial", false, false] });
+  const report = runReviewLadder(h.options, h.deps);
+  assert.equal(report.outcome, "qualified");
+  assert.deepEqual(h.commands(), ["check", "review", "review", "review"]);
+  assert.equal(report.reviews[0].partial, true);
+});
+
+test("partial reviews without any finding stop for a person and never start the fixer", () => {
+  const h = harness({ reviews: ["partial", "partial", false] });
+  const report = runReviewLadder(h.options, h.deps);
+  assert.equal(report.outcome, "partial");
+  assert.equal(loopPassed(report), false);
+  assert.deepEqual(h.commands(), ["check", "review", "review", "review"]);
+  assert.deepEqual(report.limitations, ["Could not run the integration tests", "Could not run the integration tests"]);
+  const text = formatLoopReport(report);
+  assert.match(text, /partial \(no finding, evidence incomplete\)/);
+  assert.match(text, /Not verified: Could not run the integration tests/);
+  assert.match(text, /give this result to a person/);
+});
+
+test("a finding among partial reviews still goes to the fixer", () => {
+  const h = harness({ reviews: ["partial", true, "partial", false] });
+  const report = runReviewLadder(h.options, h.deps);
+  assert.equal(report.outcome, "qualified_after_fix");
+  assert.equal(JSON.parse(readFileSync(h.calls.find(({ command }) => command === "fix").env.DIRF_REVIEW_REQUEST, "utf8")).action, "fix_and_update_same_pr");
+});
+
+test("a partial review of the fix needs a new examination", () => {
+  const h = harness({ reviews: [true, true, true, "partial"] });
+  const report = runReviewLadder(h.options, h.deps);
+  assert.equal(report.outcome, "needs_new_examination");
+  assert.equal(loopPassed(report), false);
 });

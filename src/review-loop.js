@@ -6,12 +6,14 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import { blockingFindings, validateReview } from "../skills/code-review/scripts/review-report.mjs";
+import { blockingFindings, deriveVerdict, validateReview } from "../skills/code-review/scripts/review-report.mjs";
 import { verifyUpdatedReview } from "../skills/code-review/scripts/review-ledger.mjs";
 
 const OUTPUT_TAIL_CHARS = 4000;
-// Ledger actions for a review with no finding.
-const QUALIFIED_ACTIONS = new Set(["verify_merge_readiness", "continue_review"]);
+// The ledger action for a complete review with no finding and passing evidence.
+// continue_review is not clean: the ledger also returns it for a review that
+// has no finding but could not verify everything.
+const QUALIFIED_ACTIONS = new Set(["verify_merge_readiness"]);
 
 export const LOOP_OUTCOMES = Object.freeze({
   already_qualified: "The recorded review of this commit is qualified. No command ran.",
@@ -22,6 +24,7 @@ export const LOOP_OUTCOMES = Object.freeze({
   fixer_failed: "The fixer command failed.",
   fixer_made_no_commit: "The fixer command made no new commit.",
   fixer_rewrote_history: "The fixer command replaced the reviewed commit instead of adding a commit on top of it.",
+  partial: "No review found a blocking issue, but a review could not verify everything. A person decides.",
   needs_new_examination: "The review of the fix is not qualified. The work needs a new examination by a person.",
   error: "The loop stopped because of an error.",
 });
@@ -32,10 +35,13 @@ export function loopPassed(report) {
   return PASSING.has(report.outcome);
 }
 
-// A review is qualified when it has no blocking P0, P1, P2, or P3 finding.
-// A pre-existing P2 or P3 finding does not block; a pre-existing P0 or P1 does.
+// A review is qualified when it has no blocking P0, P1, P2, or P3 finding and
+// its evidence is complete (derived verdict PASS). A pre-existing P2 or P3
+// finding does not block; a pre-existing P0 or P1 does. A review with no
+// finding but with limitations, unpassed verification, low confidence, or an
+// incomplete completion record is partial: absence of findings is not proof.
 export function isQualified(review) {
-  return blockingFindings(review).length === 0;
+  return deriveVerdict(review) === "PASS";
 }
 
 // The recorded reviews of one commit qualify it when the ladder would stop
@@ -126,6 +132,7 @@ export function runReviewLadder(options, deps) {
     if (String(artifact.target.head_sha).toLowerCase() !== head) throw new LoopStop("error", { error: `The review from step ${step} names commit ${artifact.target.head_sha}, not the checkout commit ${head}.` });
     const action = deps.trigger(artifact);
     const entry = { step, path, head, qualified: isQualified(artifact), findings: blockingFindings(artifact).length, action: action.action };
+    if (!entry.qualified && entry.findings === 0) entry.partial = true;
     steps.push({ kind: "review", ...entry });
     reviews.push({ ...entry, review: artifact, request: action });
     if (action.action === "stop_for_person") throw new LoopStop("stop_for_person", { findings: action.findings });
@@ -140,7 +147,7 @@ export function runReviewLadder(options, deps) {
     start_head: startHead,
     head,
     steps,
-    reviews: reviews.map(({ step, path, qualified, findings }) => ({ step, path, qualified, findings })),
+    reviews: reviews.map(({ step, path, qualified, findings, partial }) => ({ step, path, qualified, findings, ...(partial ? { partial } : {}) })),
     ...detail,
     guardrails: { merge_is_not_authorized: true, push_is_not_performed: true },
   });
@@ -161,7 +168,11 @@ export function runReviewLadder(options, deps) {
       return finish("qualified", { reported_findings: blockingFindings(open.review) });
     }
 
-    const request = sameCommit.find((item) => !item.qualified).request;
+    // Only a review with a blocking finding gives the fixer work. When no
+    // review found one, the open reviews are partial and a person decides.
+    const fixSource = sameCommit.find((item) => !item.qualified && item.findings > 0);
+    if (!fixSource) return finish("partial", { limitations: sameCommit.flatMap((item) => item.review.limitations) });
+    const request = fixSource.request;
     const requestPath = join(outDir, `${head.slice(0, 12)}-fix-request.json`);
     writeFileSync(requestPath, JSON.stringify(request, null, 2) + "\n");
     const reviewPaths = sameCommit.map((item) => item.path);
@@ -203,10 +214,11 @@ export function formatLoopReport(report) {
   for (const step of report.steps) {
     if (step.kind === "check") lines.push(`- Check before ${step.before}: ${step.status}.`);
     else if (step.kind === "fix") lines.push(`- Fix: ${step.status}.`);
-    else lines.push(`- Review step ${step.step}: ${step.qualified ? "qualified" : `${step.findings} finding(s)`}.`);
+    else lines.push(`- Review step ${step.step}: ${step.qualified ? "qualified" : step.partial ? "partial (no finding, evidence incomplete)" : `${step.findings} finding(s)`}.`);
   }
   if (report.error) lines.push(`Error: ${report.error}`);
   if (report.reported_findings?.length) lines.push(`Open findings: ${report.reported_findings.map((item) => `${item.id} ${item.title}`).join("; ")}`);
+  if (report.limitations?.length) lines.push(`Not verified: ${report.limitations.join("; ")}`);
   if (report.check_output) lines.push("Check output (end):", report.check_output.trimEnd());
   // A rewritten commit was never reviewed; pushing it would need a force-push.
   if (report.head !== report.start_head && report.outcome !== "fixer_rewrote_history") {

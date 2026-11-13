@@ -57,12 +57,13 @@ Use this policy in every generated workflow prompt.
 ## Review Ladder
 - A PR review uses at most 5 agents: 4 reviewers and 1 code-cleaner. No step occurs twice.
 - A reviewer only reviews. A code-cleaner only changes code. Neither starts agents.
-- A review is qualified when it meets the gate that the user or task states. Without a stated gate, a review is qualified when it has no blocking P0, P1, P2, or P3 finding. A pre-existing P2 or P3 finding does not block (see the findings contract). A pre-existing P0 or P1 finding blocks.
+- A review is qualified when it meets the gate that the user or task states. Without a stated gate, a review is qualified when it has no blocking P0, P1, P2, or P3 finding and its evidence is complete: no limitation, every verification passed, and enough confidence. A review with no finding but incomplete evidence is partial, not qualified. A pre-existing P2 or P3 finding does not block (see the findings contract). A pre-existing P0 or P1 finding blocks.
 - Before step 1, read the recorded review of the current commit. If it is qualified, start no agents.
 - Check gate: before step 1 and before step 4, run the required checks of the task, such as lint, type check, tests, and build. The checks are commands, not agents.
 - If a required check fails, start no reviewer. Give the check output to the author of the commit and stop.
 - Step 1: one reviewer reviews the current commit. If the review is qualified, stop.
 - Step 2: two more reviewers review the same commit. If two of the three reviews are qualified, stop. Report the findings of the third review.
+- If no review of the three has a blocking finding but fewer than two are qualified, stop. Report what the partial reviews could not verify, and give the result to a person.
 - Step 3: one code-cleaner reads all three reviews and fixes the issues in one commit. That commit is the baseline.
 - Step 4: one reviewer reviews the baseline against the three earlier reviews. The reviewer checks that the fix corrected each issue and caused no defect.
 - Step 5: if that review is not qualified, stop. Tell the person that the work needs a new examination.
