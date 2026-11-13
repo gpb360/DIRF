@@ -80,6 +80,28 @@ test("the default invoking repo is the git root above the current directory", (t
   assert.equal(skills.discover(target)["from-cwd"].description, "found via cwd");
 });
 
+test("the DIRF kit's own checkout is never a home repo", () => {
+  const kit = makeRoot();
+  const target = makeRoot();
+  write(join(kit, ".claude", "skills", "kit-local"), "SKILL.md",
+    "---\nname: kit-local\ndescription: untracked in the kit\n---\nbody");
+  assert.equal(skills.discover(target, { invokingRoot: kit, kitRoot: kit })["kit-local"], undefined);
+  assert.equal(skills.discover(target, { invokingRoot: kit, kitRoot: null })["kit-local"].description, "untracked in the kit");
+});
+
+test("a kit installed under node_modules does not hide its host repo", () => {
+  const host = makeRoot();
+  execFileSync("git", ["init", "-q"], { cwd: host, windowsHide: true });
+  const kit = join(host, "node_modules", "dirf");
+  mkdirSync(kit, { recursive: true });
+  write(join(host, ".agents", "skills", "host-only"), "SKILL.md",
+    "---\nname: host-only\ndescription: from the host\n---\nbody");
+  assert.equal(skills.kitCheckout(kit), null, "no .git: not a kit checkout");
+  assert.equal(skills.kitCheckout(host), host);
+  const target = makeRoot();
+  assert.equal(skills.discover(target, { invokingRoot: host, kitRoot: skills.kitCheckout(kit) })["host-only"].description, "from the host");
+});
+
 test("discover retains multiline descriptions and the following invocation policy", () => {
   const root = makeRoot();
   const markers = [">", ">-", ">+", "|", "|-", "|+"];

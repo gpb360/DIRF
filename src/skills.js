@@ -314,7 +314,7 @@ function basenameDir(path) {
   return parts[parts.length - 2] || "skill";
 }
 
-export function discover(projectRoot, { invokingRoot = gitRoot(process.cwd()) } = {}) {
+export function discover(projectRoot, { invokingRoot, kitRoot = kitCheckout(ROOT) } = {}) {
   // Scan all roots and return an index: { skillName: { path, file, ... } }.
   // projectRoot null/undefined defaults to ROOT. Scans:
   //   1. the standard home + project roots (skillRoots)
@@ -324,7 +324,8 @@ export function discover(projectRoot, { invokingRoot = gitRoot(process.cwd()) } 
   //   3. with an explicit projectRoot only: the host skill roots of the repo
   //      the agent runs in, when that is a different repo (the "home repo"
   //      pattern). These only fill names the target and user roots lack, so
-  //      the target wins a clash.
+  //      the target wins a clash. invokingRoot defaults to the git root of
+  //      the current directory; pass null to skip the home repo.
   const index = {};
   for (const root of skillRoots(projectRoot)) {
     if (root.includes("cache")) {
@@ -339,7 +340,8 @@ export function discover(projectRoot, { invokingRoot = gitRoot(process.cwd()) } 
     }
   }
   const homeRepo = {};
-  for (const root of projectRoot ? invokingRepoRoots(projectRoot, invokingRoot) : []) {
+  if (projectRoot && invokingRoot === undefined) invokingRoot = gitRoot(process.cwd());
+  for (const root of projectRoot ? invokingRepoRoots(projectRoot, invokingRoot, kitRoot) : []) {
     scanFlat(root, homeRepo);
   }
   for (const [name, skill] of Object.entries(homeRepo)) {
@@ -385,15 +387,18 @@ function sameRepo(a, b) {
   return ca && cb ? samePath(ca, cb) : samePath(resolve(a), resolve(b));
 }
 
-function invokingRepoRoots(projectRoot, invokingRoot) {
+export function kitCheckout(root) {
+  // The kit's own repo, or null for an npm install: that has no .git, and
+  // walking up would mistake the host repo containing node_modules for the kit.
+  return existsSync(join(root, ".git")) ? root : null;
+}
+
+function invokingRepoRoots(projectRoot, invokingRoot, kitRoot) {
   // Only host skill folders (not a plain skills/ dir, which may be a kit's
   // bundled fallbacks) of a repo other than the target or the DIRF kit. A
   // worktree and its main checkout are the same repo.
   if (!invokingRoot) return [];
   const targetRoot = gitRoot(projectRoot) || resolve(projectRoot);
-  // An npm-installed kit has no .git; walking up would mistake the host repo
-  // that contains node_modules for the kit.
-  const kitRoot = existsSync(join(ROOT, ".git")) ? ROOT : null;
   if (sameRepo(invokingRoot, targetRoot) || (kitRoot && sameRepo(invokingRoot, kitRoot))) return [];
   return HOST_ROOT_NAMES
     .map((name) => join(invokingRoot, name))

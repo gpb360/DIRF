@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -92,4 +93,22 @@ test("saved bindings refresh required resource readiness", () => {
   assert.equal(bindings[0].status, "incomplete");
   assert.deepEqual(bindings[0].required_files, ["scripts/run.cjs"]);
   assert.deepEqual(bindings[0].missing_files, ["scripts/run.cjs"]);
+});
+
+test("refresh never fills a missing binding from the repo the agent runs in", (t) => {
+  const home = mkdtempSync(join(tmpdir(), "dirf-binding-home-"));
+  execFileSync("git", ["init", "-q"], { cwd: home, windowsHide: true });
+  const name = "dirf-home-refresh-probe";
+  mkdirSync(join(home, ".agents", "skills", name), { recursive: true });
+  writeFileSync(join(home, ".agents", "skills", name, "SKILL.md"), `---\nname: ${name}\ndescription: home\n---\nbody`);
+  const target = mkdtempSync(join(tmpdir(), "dirf-binding-target-"));
+  const workflow = { skill_flow: { steps: [{ skill: name, provider: "agents", path: null }] } };
+  const saved = bindingsFromPlan(workflow, target);
+  const before = process.cwd();
+  t.after(() => process.chdir(before));
+  process.chdir(home);
+
+  const bindings = refreshSkillBindings(workflow, saved, target);
+
+  assert.equal(bindings[0].status, "missing", "resume depends only on the target and saved paths");
 });

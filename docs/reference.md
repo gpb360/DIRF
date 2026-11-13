@@ -381,7 +381,11 @@ reflects the target project's skills (e.g. a repo's own `.agents/skills/`).
 When you run DIRF from a different repository (a "home repo" of shared skills),
 its `.agents/skills/`, `.codex/skills/` and `.claude/skills/` are scanned too.
 They only add names the target and global roots lack; a plain `skills/` folder
-there is not scanned. A worktree of the target counts as the same repository.
+there is not scanned. The home repo is the git repository containing the
+current directory; a worktree of the target counts as the same repository, and
+the DIRF checkout itself is never a home repo. Home-repo skills are found only
+while building: resuming an attempt keeps their saved paths but never picks up
+new skills from wherever it runs. Agents are not read from the home repo.
 
 ### Agents follow the same contract
 

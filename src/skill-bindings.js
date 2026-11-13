@@ -60,7 +60,7 @@ export function refreshSkillBindings(plan, previous, projectRoot, options = {}) 
     }
     const current = provider === "dirf"
       ? (bundled ??= (options.bundledSkills || bundledSkills)())[step.skill]
-      : (installed ??= (options.discoverSkills || (() => enrichDiscovered(discover(projectRoot))))())[step.skill];
+      : (installed ??= (options.discoverSkills || (() => enrichDiscovered(discover(projectRoot, { invokingRoot: null }))))())[step.skill];
     if (current && current.provider === provider) return binding(step, current.path, projectRoot);
     // Last resort: the skill lives only in the checkout that built the attempt.
     // Check it again, so a worktree cannot erase a good record or keep a bad one.
