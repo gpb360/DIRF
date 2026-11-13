@@ -8,6 +8,20 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 ## Unreleased
 
 ### Added
+- **Pull request lifecycle playbooks** — four playbooks cover the work around a
+  pull request that the Review Ladder does not: `pr-watch` (watch checks and
+  review bots, fix the real findings, stop when ready), `pr-modernize` (bring an
+  old pull request up to date and choose modernize, rework, or close),
+  `pr-takeover` (finish another author's work and keep the credit), and
+  `pr-unattended` ("full stop" takes a change to a ready pull request with
+  nobody watching; "full send" also merges when the project allows it). They
+  adapt the MIT-licensed [tstack](https://github.com/t3dotgg/tstack) skills.
+- **Skills that carry the rules** — a built task receives skill files, not
+  playbook prose, so each playbook binds a bundled skill: `pr-watching`,
+  `pr-modernization`, `work-takeover`, and `unattended-delivery`.
+- **`pr-communication` skill** — problem-first pull request titles and
+  descriptions, a model and harness line, and a note on agent-written comments
+  that names the model.
 - **Pre-existing findings** — a review finding can set `origin: "pre_existing"`
   with `base_evidence` that proves the defect exists at the base commit. A
   pre-existing P2 or P3 finding goes to `follow_up_findings`. It does not start
@@ -20,6 +34,10 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   for the fixer command in that case.
 
 ### Changed
+- **Model attribution** — the workflow policy no longer forbids AI attribution.
+  Pull request descriptions and agent-written comments name the model and
+  harness, because several agents can work on one pull request. Commit messages
+  and code stay without attribution, and project instructions that forbid it win.
 - **Mostly-STE style (experiment)** — focused output rules and the workflow
   policy no longer set hard ASD-STE100 limits (20/25-word sentences, one
   instruction per sentence, six-sentence paragraphs, five-item lists). They now

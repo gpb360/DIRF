@@ -183,6 +183,70 @@
       ]
     },
     {
+      "name": "pr-communication",
+      "category": "quality",
+      "applies_to": [
+        "agent-organizer",
+        "workflow-orchestrator",
+        "documentation-engineer"
+      ],
+      "summary": "Problem-first pull request titles and descriptions, and agent-written comments that name the model",
+      "capabilities": [
+        "contribution writeup"
+      ]
+    },
+    {
+      "name": "pr-watching",
+      "category": "quality",
+      "applies_to": [
+        "agent-organizer",
+        "workflow-orchestrator",
+        "test-engineer"
+      ],
+      "summary": "One watcher per pull request, each bot finding checked against the code, and a readiness check on the latest commit",
+      "capabilities": [
+        "readiness babysitting"
+      ]
+    },
+    {
+      "name": "pr-modernization",
+      "category": "quality",
+      "applies_to": [
+        "agent-organizer",
+        "research-analyst",
+        "test-engineer"
+      ],
+      "summary": "Decide modernize, rework, or close for an old pull request, then rebase with a lease and compare the commit series",
+      "capabilities": [
+        "branch modernization"
+      ]
+    },
+    {
+      "name": "work-takeover",
+      "category": "orchestration",
+      "applies_to": [
+        "agent-organizer",
+        "workflow-orchestrator",
+        "dx-optimizer"
+      ],
+      "summary": "Finish another author's work from the real code, keep the original credit, and reach the same goal",
+      "capabilities": [
+        "work takeover"
+      ]
+    },
+    {
+      "name": "unattended-delivery",
+      "category": "orchestration",
+      "applies_to": [
+        "agent-organizer",
+        "workflow-orchestrator"
+      ],
+      "summary": "Full stop and full send: take a change to a ready pull request with nobody watching, with proof, review, and safe stops",
+      "capabilities": [
+        "unattended delivery"
+      ]
+    },
+    {
       "name": "document-artifact-ingestion",
       "category": "ingestion",
       "applies_to": [

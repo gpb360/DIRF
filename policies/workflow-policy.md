@@ -116,7 +116,25 @@ Use this policy in every generated workflow prompt.
   Never present one as proof of another.
 - Include the PR number and current head when they matter. Link the published PR
   update when the user expects to see it on GitHub.
-- Do not add AI attribution footers or generated-by boilerplate.
+- End a pull request description with the model and harness that made the
+  change. Start each comment an agent posts for the user with a note that
+  names the model and harness. Several agents can work on one pull request,
+  and a reader must know which one wrote what. Use the name the harness
+  reports, and never guess a model. The `pr-communication` skill
+  has the exact format.
+- Add no tool advertising or badge. Leave commit messages and code without
+  attribution unless the project asks for it. Project instructions that forbid
+  attribution win.
+- When the user says "full stop" or "full send", or says that nobody watches
+  the thread, the user is absent. Whatever playbook the task routed to, also
+  apply DIRF's bundled `unattended-delivery` skill and the skills it names.
+  `dirf doctor` prints the CLI path, `<DIRF>/src/cli.js`; the skill is
+  `<DIRF>/skills/unattended-delivery/README.md`, in the folder above `src`. A "full stop"
+  that only stresses a sentence, or that names the punctuation mark, is not
+  that request.
+- If you cannot read that skill, treat the request as "full stop": take the
+  work to a ready pull request, never merge it, and ask questions through the
+  question tool of the host.
 - Pull requests created during the workflow carry a description: what
   changed, why, and how it was verified — never a title-only PR.
 
