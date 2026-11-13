@@ -2371,7 +2371,10 @@
       "watch the pr",
       "monitor pr",
       "monitor the pr",
-      "watch pull request"
+      "watch pull request",
+      "until the checks",
+      "checks are green",
+      "review bots"
     ],
     "agents": [
       "agent-organizer",
@@ -2416,8 +2419,8 @@
           "phases": [
             "fix real findings and answer the rest"
           ],
-          "output": "the smallest fix for each real finding and a written reason for each declined one",
-          "verification": "each fix has proof from this session and each declined finding has a posted reply"
+          "output": "the smallest fix for each real finding and a written reason for each item that is not a finding",
+          "verification": "each fix has proof from this session and each written reason is posted as a reply"
         }
       },
       "output": "a pull request that is ready on its latest commit, or a plain statement of what blocks it; a merge happens only when the user asked for it",
@@ -2438,7 +2441,7 @@
         },
         {
           "stage": "fix",
-          "reason": "Fix real findings in the intended case with the smallest change. Decline the rest.",
+          "reason": "Fix real findings with the smallest change. Answer the rest in writing.",
           "capability": "minimalism"
         },
         {
@@ -2457,8 +2460,9 @@
   "pr-modernize": {
     "description": "Bring an old pull request up to date and decide whether it still belongs: modernize, rework, or close.",
     "keywords": [
-      "modernize",
       "modernize pr",
+      "modernize this pr",
+      "modernize the pr",
       "rebase pr",
       "rebase the pr",
       "rebase this pr",
@@ -2559,6 +2563,8 @@
       "takeover",
       "taking over",
       "take over pr",
+      "take over this pr",
+      "take over this branch",
       "finish this pr",
       "inherit this pr"
     ],
@@ -2653,8 +2659,7 @@
     "keywords": [
       "full stop",
       "full send",
-      "unattended",
-      "not watching"
+      "i am not watching"
     ],
     "agents": [
       "agent-organizer",
@@ -2666,8 +2671,8 @@
         "confirm the unattended request and its mode",
         "finish the smallest change",
         "prove every change",
-        "review the change until it qualifies",
         "file the PR",
+        "review the PR until it qualifies",
         "watch the PR and fix real findings",
         "check readiness on the latest commit",
         "hand off the ready PR or merge it"
@@ -2684,8 +2689,8 @@
         "agent-organizer": {
           "phases": [
             "confirm the unattended request and its mode",
-            "review the change until it qualifies",
             "file the PR",
+            "review the PR until it qualifies",
             "watch the PR and fix real findings",
             "check readiness on the latest commit",
             "hand off the ready PR or merge it"
@@ -2709,15 +2714,12 @@
         }
       },
       "output": "stop mode: an open, unmerged pull request that is ready for a person to merge; send mode: a merged pull request; both with proof, the review result, and each decision made for the user",
-      "validation": "on the latest commit: proof covers the whole diff, required checks passed, review bots finished with each finding fixed or declined in writing, no person requests changes, and the branch is current and mergeable",
+      "validation": "on the latest commit: proof covers the whole diff, dirf review ready review.json passes, required checks passed, review bots finished, no review conversation is open, no person requests changes, and the branch is current and mergeable",
       "recovery": "if a change cannot be proved or readiness cannot pass, ask through the host's question tool; with no answer, leave the pull request open and unmerged and start the final message with the question"
     },
-    "questions": [
-      "What change should be taken to a pull request?",
-      "Is this full stop, where a person merges, or full send, where the agent merges?"
-    ],
+    "questions": [],
     "skill_flow": {
-      "label": "finish, prove, review, file, watch, then stop or merge",
+      "label": "finish, prove, file, review, watch, then stop or merge",
       "steps": [
         {
           "stage": "fix",
@@ -2726,12 +2728,12 @@
         },
         {
           "stage": "verify",
-          "reason": "Get direct proof for every change before any review.",
+          "reason": "Get direct proof for every change before the pull request opens.",
           "capability": "testing"
         },
         {
           "stage": "review",
-          "reason": "Follow the Review Ladder before the pull request opens.",
+          "reason": "Follow the Review Ladder on the latest commit of the pull request.",
           "capability": "code review"
         },
         {

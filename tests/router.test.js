@@ -750,7 +750,18 @@ test("pull request lifecycle requests route to their own playbooks", () => {
     ["take over PR 88 from the other agent", "pr-takeover"],
     ["fix the export crash, full stop", "pr-unattended"],
     ["add the retry and full send", "pr-unattended"],
+    ["I am not watching, take this to a PR", "pr-unattended"],
+    // Watch requests that also name a merge or a review still belong to pr-watch.
+    ["watch PR 12 and merge it when the checks are green", "pr-watch"],
+    ["monitor PR 12 until the review bots finish", "pr-watch"],
   ]) assert.equal(recommend(task).playbook, playbook, task);
+  // Ordinary work that only shares a word must not reach the autonomous playbook.
+  for (const task of [
+    "fix the unattended install script for the windows runner",
+    "document the unattended setup flags in the readme",
+    "the file watcher is not watching new files in src",
+  ]) assert.notEqual(recommend(task).playbook, "pr-unattended", task);
+  assert.notEqual(recommend("modernize the auth module to use async/await").playbook, "pr-modernize");
   // A plain review request still belongs to the Review Ladder.
   assert.equal(recommend("Review PR 47").playbook, "pr-review");
 });

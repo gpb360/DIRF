@@ -116,9 +116,11 @@ Use this policy in every generated workflow prompt.
   Never present one as proof of another.
 - Include the PR number and current head when they matter. Link the published PR
   update when the user expects to see it on GitHub.
-- Name the model and harness on pull request descriptions and on comments an
-  agent posts for the user, as the `pr-communication` skill states. Several
-  agents can work on one pull request, and a reader must know which one wrote what.
+- End a pull request description with the model and harness that made the
+  change. Start each comment an agent posts for the user with a note that
+  names the model and harness. Several agents can work on one pull request,
+  and a reader must know which one wrote what. The `pr-communication` skill
+  has the exact format.
 - Add no tool advertising or badge. Leave commit messages and code without
   attribution unless the project asks for it. Project instructions that forbid
   attribution win.

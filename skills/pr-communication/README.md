@@ -61,7 +61,7 @@ Start every comment that an agent posts for the user with this note:
 
 ```md
 > [!NOTE]
-> 🤖 **<model> responding on behalf of <user>**
+> 🤖 **<model> in <harness> responding on behalf of <user>**
 
 The comment starts here.
 ```
@@ -102,4 +102,5 @@ REST limit is separate. When GraphQL is used up, read and write through REST:
   `gh api repos/<owner>/<repo>/pulls -f title=... -f head=... -f base=... -F body=@<file>`
 
 Completion: the pull request or comment exists on GitHub, its URL is recorded,
-and the text names the problem, the proof, and the model.
+and the text names the problem, the proof, and the model, unless the project
+forbids attribution.
