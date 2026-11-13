@@ -14,7 +14,7 @@ export const WORKTRUNK_CONFIG = ".config/wt.toml";
  * @returns {string | null}
  */
 export function findOnPath(name, { env = process.env, platform = process.platform } = {}) {
-  const dirs = String(env.PATH ?? env.Path ?? "").split(platform === "win32" ? ";" : ":").filter(Boolean);
+  const dirs = pathDirs(env, platform);
   const exts = platform === "win32" ? String(env.PATHEXT || ".EXE;.CMD;.BAT").split(";").filter(Boolean) : [""];
   for (const dir of dirs) {
     for (const ext of exts) {
@@ -28,6 +28,17 @@ export function findOnPath(name, { env = process.env, platform = process.platfor
 }
 
 /**
+ * PATH entries, unquoted. A plain env object may spell the key `Path` (Windows).
+ * @param {NodeJS.ProcessEnv} env
+ * @param {NodeJS.Platform} platform
+ * @returns {string[]}
+ */
+function pathDirs(env, platform) {
+  const raw = env.PATH || env.Path || "";
+  return raw.split(platform === "win32" ? ";" : ":").map((dir) => dir.trim().replace(/^"(.*)"$/, "$1")).filter(Boolean);
+}
+
+/**
  * Resolve the Worktrunk command. On Windows `wt` is normally the Windows
  * Terminal app alias (under WindowsApps), so Worktrunk installs as `git-wt`.
  * @param {{ env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform }} [options]
@@ -38,7 +49,7 @@ export function worktrunkCommand(options = {}) {
   if (platform === "win32") {
     if (findOnPath("git-wt", options)) return "git-wt";
     const env = options.env ?? process.env;
-    const path = String(env.PATH ?? env.Path ?? "").split(";").filter((dir) => !/[\\/]WindowsApps[\\/]?$/i.test(dir)).join(";");
+    const path = pathDirs(env, platform).filter((dir) => !/[\\/]WindowsApps[\\/]?$/i.test(dir)).join(";");
     return findOnPath("wt", { platform, env: { ...env, PATH: path } }) ? "wt" : null;
   }
   if (findOnPath("wt", options)) return "wt";

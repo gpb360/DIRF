@@ -677,7 +677,8 @@ function cmdStatus(args) {
   }
   const aheadBehind = gitOutput(target, ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"]).split(/\s+/).map(Number);
   const hasUpstream = aheadBehind.length === 2 && aheadBehind.every(Number.isFinite);
-  const worktreeTool = isGit ? detectWorktreeTool(target) : null;
+  // Worktrunk reads its project config at the top of the current checkout.
+  const worktreeTool = isGit ? detectWorktreeTool(checkoutRoot(target)) : null;
   const mostRecentlyUpdated = attempts.length
     ? attempts.reduce((latest, attempt) => (String(attempt.updated_at ?? attempt.created_at ?? "") > String(latest.updated_at ?? latest.created_at ?? "") ? attempt : latest), attempts[0]).id
     : null;
@@ -695,7 +696,7 @@ function cmdStatus(args) {
         changed_paths: changes?.length ?? null,
         ahead: hasUpstream ? aheadBehind[0] : null,
         behind: hasUpstream ? aheadBehind[1] : null,
-        worktree_tool: isGit ? worktreeTool : null,
+        worktree_tool: worktreeTool,
       },
     };
     console.log(JSON.stringify(status, null, 2));
@@ -716,7 +717,7 @@ function cmdStatus(args) {
   if (hasUpstream) {
     console.log(`Upstream: ${aheadBehind[0]} ahead, ${aheadBehind[1]} behind`);
   }
-  if (worktreeTool) {
+  if (worktreeTool?.configured) {
     const how = worktreeTool.tool === "worktrunk" ? `Worktrunk (\`${worktreeTool.command} switch --create <branch>\`)` : "git worktree add";
     console.log(`New worktrees: ${how}; ${worktreeTool.reason}`);
   }
