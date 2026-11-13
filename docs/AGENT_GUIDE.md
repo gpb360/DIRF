@@ -116,7 +116,8 @@ the login bug, full stop" routes to `bug-fix`. The workflow policy, which
 every built task carries, tells the agent to apply the bundled
 `unattended-delivery` skill (`skills/unattended-delivery/README.md`) to the
 routed playbook when the user says either phrase or says that nobody watches
-the thread.
+the thread. `dirf doctor` prints the CLI path that locates the skill. When the
+skill cannot be read, the policy treats the request as "full stop".
 
 An entrypoint alone does not prove that a skill is runnable. See
 [Declare required skill resources](writing-great-playbooks.md#declare-required-skill-resources)

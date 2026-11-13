@@ -2430,7 +2430,7 @@
       },
       "output": "a pull request that is green and ready on its latest commit, or a plain statement of what blocks it; a merge happens only when the user asked for it",
       "validation": "required checks pass on the latest commit, review bots finished, no review conversation is open, and the branch is not behind its base",
-      "recovery": "if the watcher stops or GitHub is unreachable, check the rate limit and start one watcher again; if another pull request makes this one obsolete, stop and ask before closing it"
+      "recovery": "if no open pull request exists for this branch, say so and stop; if the watcher stops or GitHub is unreachable, check the rate limit and start one watcher again; if another pull request makes this one obsolete, stop and ask before closing it"
     },
     "questions": [
       "Which pull request should be watched?",
@@ -2468,7 +2468,7 @@
     }
   },
   "pr-modernize": {
-    "description": "Bring an old pull request up to date and decide whether it still belongs: modernize, rework, or close.",
+    "description": "Bring an old, stale, or outdated pull request up to date and decide whether it still belongs: modernize, rework, or close.",
     "keywords": [
       "modernize pr",
       "modernize this pr",
@@ -2478,7 +2478,10 @@
       "rebase this pr",
       "stale pr",
       "old pr",
-      "outdated pr"
+      "outdated pr",
+      "stale pull request",
+      "outdated pull request",
+      "old pull request"
     ],
     "agents": [
       "agent-organizer",

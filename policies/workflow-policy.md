@@ -127,10 +127,14 @@ Use this policy in every generated workflow prompt.
   attribution win.
 - When the user says "full stop" or "full send", or says that nobody watches
   the thread, the user is absent. Whatever playbook the task routed to, also
-  apply the bundled `unattended-delivery` skill of DIRF, with the
-  `pr-communication` and `pr-watching` skills it names. A "full stop" that
-  only stresses a sentence, or that names the punctuation mark, is not that
-  request.
+  apply DIRF's bundled `unattended-delivery` skill and the skills it names.
+  `dirf doctor` prints the CLI path; the skill is
+  `skills/unattended-delivery/README.md` in that DIRF folder. A "full stop"
+  that only stresses a sentence, or that names the punctuation mark, is not
+  that request.
+- If you cannot read that skill, treat the request as "full stop": take the
+  work to a ready pull request, never merge it, and ask questions through the
+  question tool of the host.
 - Pull requests created during the workflow carry a description: what
   changed, why, and how it was verified — never a title-only PR.
 

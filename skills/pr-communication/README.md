@@ -15,7 +15,8 @@ Several agents and models can work on one pull request, and their comments
 post under the user's own account. A reader must be able to tell what the
 change is for, how it was proved, and which model wrote each part.
 
-Project instructions win. If the project forbids model attribution, leave the
+Project instructions win, including a rule to open draft pull requests. If
+the project forbids model attribution, leave the
 attribution lines out and keep the rest.
 
 ## Before you file

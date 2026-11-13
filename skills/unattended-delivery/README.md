@@ -31,21 +31,26 @@ skill does not apply.
   the workflow policy asks.
 
 In both modes you may commit, push, rebase, fix conflicts, and update the
-branch of this task with `git push --force-with-lease`.
+branch of this task. Push a rebased branch with a lease tied to the head you recorded before the
+rebase: `git push --force-with-lease=<branch>:<recorded-commit>`. When the
+lease fails, someone else pushed. Fetch, keep their commits, and push again.
+Never use a plain force push or a bare `--force-with-lease`.
 
 In stop mode, never merge, enable auto-merge, enter a merge queue, or push to
-the base branch. Before work begins and before each push, turn off auto-merge
-and leave any merge queue. Report that you did. If you cannot prevent an
-automatic merge, report that before you continue.
+the base branch. When a person already set auto-merge or a merge queue on
+the pull request, leave it as it is and report it. Their setting is their
+decision to merge.
 
 ## What the request permits
 
-The request permits the test methods that proof needs, even when a project
-file says to ask first. That covers browser automation, a running app or
-development server, simulators, screenshots, and visual checks.
+The request permits the test methods that proof needs: browser automation, a
+running app or development server, simulators, screenshots, and visual
+checks.
 
-- Rules about how to test still apply. Use the command, fixture, or check the
-  project names.
+- Project rules about testing still apply, including a rule to ask first.
+  When a project rule says to ask, ask through the question tool. See
+  "Questions".
+- Use the command, fixture, or check the project names.
 - The permission covers only the tests this task needs.
 - It does not cover production changes, data deletion, or work outside the
   repository.
@@ -60,8 +65,10 @@ development server, simulators, screenshots, and visual checks.
 3. **File the pull request** with the `pr-communication` skill. Rebase onto
    the latest base branch first.
 4. **Review it.** Follow the Review Ladder of the workflow policy with the
-   `code-review` skill, on the latest commit of the pull request. Prefer a reviewer on a different model
-   than the author when the host can run one.
+   `code-review` skill, on the latest commit of the pull request. Prefer a
+   reviewer on a different model than the author when the host can run one.
+   When the ladder stops for a person, readiness cannot pass. Ask, and with no
+   answer leave the pull request open and unmerged.
 5. **Watch it** with the `pr-watching` skill. Fix real findings and failed
    checks. Prove each fix before the push.
 6. **Check readiness** on the latest commit. See "Readiness".
@@ -92,8 +99,10 @@ confidence. Ask the user.
 All of these are true on the latest commit:
 
 - Proof covers every change in the diff.
-- The review covers this commit: `dirf review ready review.json` passes. A
-  push after the review needs a new review of the new commit.
+- The review covers this commit: `dirf review ready review.json` passes.
+  A commit pushed to answer a CI or bot finding gets one reviewer pass on
+  that commit, the same as step 1 of the ladder. That pass counts toward the
+  Loop Limit. It does not start the ladder again.
 - Required checks passed. When the base branch requires none, every check
   passed.
 - Review bots finished. Each finding has a fix, and each other item has a

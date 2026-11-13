@@ -53,8 +53,7 @@ say "still waiting".
    pull request changes. Fix it with the smallest change. Prove the fix
    before you push it.
 5. A style preference, a risk with no reachable failure, and an issue outside
-   the changed behavior are not findings, as the `code-review` skill states.
-   Answer each one with a written reason and list it as a follow-up.
+   the changed behavior are not findings. Answer each one with a written reason and list it as a follow-up.
 6. Prefer the fix that deletes or narrows code.
 
 Review loops grow a pull request one small fix at a time. Keep it at the size
@@ -73,8 +72,11 @@ conversation only after its reply is posted.
   while it is behind or in conflict.
 - When base commits that landed after the last passed run touch files in this
   pull request, rebase, push, and wait for the checks again.
-- Update the branch with `git push --force-with-lease` after a rebase. Never
-  use a plain force push.
+- After a rebase, push with a lease tied to the head you recorded before the
+  rebase: `git push --force-with-lease=<branch>:<recorded-commit>`. A bot or a
+  reviewer can push to the branch while you watch. When the lease fails,
+  fetch, keep their commits, and push again. Never use a plain force push or
+  a bare `--force-with-lease`.
 - When another pull request makes this one obsolete, stop the watch. Report
   it and ask before you close anything.
 
