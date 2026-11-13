@@ -13,6 +13,7 @@ Use this policy in every generated workflow prompt.
 - Operating instructions are host-neutral. The current host may be Claude, Codex, Cursor, Zcode, T3Code, another agent, or a person.
 - Resolve repository, skill, and tool paths at runtime. Never persist absolute host paths as workflow identity.
 - DIRF coordination state is canonical and central (~/.dirf/projects/<slug>/). Worktrees resolve to the same store entry automatically via git-common-dir, so no per-worktree setup is needed and worktrees share the same coordination store. Scratch isolation stays local to the current execution.
+- To create a worktree, use the repository's own worktree tool when it declares one and that tool is installed (`dirf status` reports it; for example Worktrunk with `.config/wt.toml`). Otherwise use `git worktree add`. Never install the tool for the user.
 - Select scratch space inside the active workspace. Never silently fall back to another drive or the operating-system temp directory.
 - Persist capability names and provider hints, not installation paths.
 
