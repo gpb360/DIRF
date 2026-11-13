@@ -391,7 +391,10 @@ function invokingRepoRoots(projectRoot, invokingRoot) {
   // worktree and its main checkout are the same repo.
   if (!invokingRoot) return [];
   const targetRoot = gitRoot(projectRoot) || resolve(projectRoot);
-  if (sameRepo(invokingRoot, targetRoot) || sameRepo(invokingRoot, gitRoot(ROOT) || ROOT)) return [];
+  // An npm-installed kit has no .git; walking up would mistake the host repo
+  // that contains node_modules for the kit.
+  const kitRoot = existsSync(join(ROOT, ".git")) ? ROOT : null;
+  if (sameRepo(invokingRoot, targetRoot) || (kitRoot && sameRepo(invokingRoot, kitRoot))) return [];
   return HOST_ROOT_NAMES
     .map((name) => join(invokingRoot, name))
     .filter(isDir);

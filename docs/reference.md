@@ -378,6 +378,10 @@ plugin cache) are still found.
 **Scoping with `--path`:** pass `--path <project>` to scan *that* project's
 local skill folders in addition to the global roots, so the instruction set
 reflects the target project's skills (e.g. a repo's own `.agents/skills/`).
+When you run DIRF from a different repository (a "home repo" of shared skills),
+its `.agents/skills/`, `.codex/skills/` and `.claude/skills/` are scanned too.
+They only add names the target and global roots lack; a plain `skills/` folder
+there is not scanned. A worktree of the target counts as the same repository.
 
 ### Agents follow the same contract
 
