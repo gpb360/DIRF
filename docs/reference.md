@@ -246,6 +246,11 @@ dirf review loop --pr N --reviewer CMD --fixer CMD [--check CMD] [--json]
 dirf ste check <file-or-dir>... [--words FILE] [--json]  check prose against the STE writing rules (exit 1 on findings)
 dirf ste rules                                          list the STE rules that the checker tests
 
+# board and cleanup (one project — see "Board and cleanup" below)
+dirf board [--path DIR] [--json]                     open attempts, linked PRs, review at head, checks, mergeability
+dirf cleanup [--path DIR] [--apply] [--yes] [--json] dry run by default; merge reviewed PRs, close shipped attempts, triage stale ones
+dirf attempt close <id> --outcome shipped [--prs N,...] [--commits SHA,...] [--evidence "note"]
+
 # portfolio (cross-project view — see "Portfolio" below)
 dirf portfolio [--json]                              classify every project: active/idle/stale/completed/archived/empty
 dirf project <complete|reopen|archive|status> [...]  explicit project status override
@@ -443,6 +448,65 @@ Existing per-target `.dirf/` directories migrate into the store when you run
 `HANDOFF.md` newer than the store's is never overwritten silently — run
 `dirf state import-handoff` to promote it (it backs up the canonical copy first).
 
+## Board and cleanup (one project's unfinished work)
+
+`dirf board` lists every open Attempt (planned, in progress, blocked) in the
+project at `--path` (default: the current checkout). Each row shows the name,
+id, phase, days since the last update, the next action, and a stale flag. Under
+each Attempt it shows the linked GitHub pull requests with the review result at
+the PR's current head, check status, and mergeability. Open PRs that no Attempt
+claims are listed at the end.
+
+```bash
+dirf board [--path DIR] [--json]
+dirf cleanup [--path DIR]                 # dry run: list proposed actions, change nothing
+dirf cleanup --apply                      # ask y/N for each proposed action
+dirf cleanup --apply --yes                # accept every proposed merge and close
+dirf settings set --stale-attempt-days 7  # idle days before an Attempt is stale (default 7)
+```
+
+**PR links.** An Attempt links a PR when its task handoff names it
+(`PR #12`, `.../pull/12`, `pr:12`), when its `review.json` targets it, when
+the PR's branch is the Attempt's recorded branch (a merged or closed PR must
+finish after the Attempt started), or when an open PR body contains the Attempt
+id. PR facts come from `gh pr list`/`gh pr view` in the checkout. When `gh` is
+missing, offline, or the checkout has no GitHub origin, the board still lists
+Attempts and states why the PR columns are empty.
+
+**Review at head.** The board reads the newest valid `review.json` for each open
+PR from `<checkout>/.scratch/dirf-review/pr-N/`,
+`<git-common-dir>/dirf-review-loop/pr-N/` (also under linked worktrees), and
+the Attempt folder. A review of an older head is shown but never qualifies.
+
+**Cleanup actions**, in this order:
+
+| Action | When | On `--apply` |
+|---|---|---|
+| `merge` | open, not draft, review at the current head with no fix-now findings, checks passing, mergeable | re-reads the PR, then `gh pr merge N --squash --match-head-commit SHA` |
+| `close` | every linked PR is merged (or merges earlier in this run), or the next action says `Done`/`Complete.` | `dirf attempt close` with outcome `shipped` and the merged PR numbers, URLs, and merge commits |
+| `stale` | idle longer than `stale_attempt_days` | asks keep / close as shipped / abandon; `--yes` keeps it |
+
+Nothing merges or closes without `--apply`. A close that depends on a merge in
+the same run is skipped when that merge was declined or failed. Abandon still
+requires `DIRF_ORCHESTRATOR_TOKEN`.
+
+**Closed (shipped) Attempts.** `closed` is a lifecycle state distinct from
+`done` and `abandoned`. It records that the work shipped outside the phase
+lifecycle. The evidence lives only in `closure` (`outcome`, `prs`, `commits`,
+`note`, `verified_by: gh|manual`, `phase_at_close`); no phase evidence or gate
+record is written. `dirf portfolio` counts it as `closed` and treats it as
+finished work for the project rollup; `dirf project status` shows it as
+`shipped`. `dirf attempt reopen` clears the closure.
+
+```bash
+dirf attempt close <id> --outcome shipped [--prs 12,13] [--commits SHA,...] [--evidence "note"]
+```
+
+When `dirf build`, `dirf plan`, or `dirf create` starts new work in a project
+with open Attempts or passing-but-unmerged PRs, it prints the top five on
+stderr with the hint `dirf board` / `dirf cleanup`, then continues. Set
+`DIRF_NO_UNFINISHED_NOTICE=1` to silence it.
+
 ## Portfolio (cross-project overview)
 
 `dirf portfolio` is the at-a-glance view of **every registered project**, from
@@ -452,7 +516,7 @@ anywhere on the machine. It derives a status for each project and its attempts:
 |---|---|
 | `active` | at least one Attempt has a fresh harness observation reporting active work |
 | `idle` | unfinished work exists, but no fresh harness observation says it is active |
-| `completed` | all tracked attempts done, or the handoff carries `## Status: Complete.` |
+| `completed` | all tracked attempts done or closed as shipped, or the handoff carries `## Status: Complete.` |
 | `stale` | no live work and no project activity past the threshold; abandonment is never inferred |
 | `archived` | explicitly archived (`dirf project archive`) |
 | `empty` | registered but no attempts yet |
