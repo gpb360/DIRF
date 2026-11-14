@@ -114,12 +114,13 @@ function fixture() {
   const planned = addAttempt(slug, "planned-only", { start: false });
   writeReview(root, 12, review(12, HEAD_12));
   writeReview(root, 13, review(13, OLD_HEAD));
+  const mergedAt = new Date(now.getTime() + 1000).toISOString();
   const prs = [
     { number: 12, title: "Ready", state: "OPEN", url: "https://github.com/example/repo/pull/12", headRefName: "feat/ready", headRefOid: HEAD_12, isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", statusCheckRollup: GREEN, body: "" },
     { number: 13, title: "Old review", state: "OPEN", url: "https://github.com/example/repo/pull/13", headRefName: "feat/other", headRefOid: HEAD_13, isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", statusCheckRollup: GREEN, body: "" },
-    { number: 10, title: "Shipped", state: "MERGED", url: "https://github.com/example/repo/pull/10", headRefName: "feat/shipped", mergedAt: "2026-11-13T00:00:00Z", mergeCommit: { oid: MERGE_10 } },
+    { number: 10, title: "Shipped", state: "MERGED", url: "https://github.com/example/repo/pull/10", headRefName: "feat/shipped", mergedAt, mergeCommit: { oid: MERGE_10 } },
   ];
-  return { root, slug, now, ready, shipped, done, stale, planned, ...fakeGh(prs) };
+  return { mergedAt, root, slug, now, ready, shipped, done, stale, planned, ...fakeGh(prs) };
 }
 
 test("checkStatus reads check runs and commit statuses", () => {
@@ -182,6 +183,42 @@ test("a fix-now finding or failing checks keep a PR out of the merge list", () =
   assert.equal(cleanupPlan(board).some((action) => action.kind === "merge"), false);
 });
 
+test("a CONDITIONAL review with no findings does not qualify for merge", () => {
+  const f = fixture();
+  const weak = review(12, HEAD_12);
+  weak.confidence = { quality: 20, evidence: 10 };
+  weak.completion.unresolved_threads = 4;
+  writeReview(f.root, 12, weak);
+  const board = boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false });
+  const pr = board.attempts.find((a) => a.id === f.ready.id).prs[0];
+  assert.equal(pr.review.verdict, "CONDITIONAL");
+  assert.equal(pr.review.blocking_findings, 0);
+  assert.equal(pr.ready_to_merge, false);
+  assert.match(pr.not_ready.join(","), /review CONDITIONAL/);
+  assert.equal(cleanupPlan(board).some((action) => action.kind === "merge"), false);
+});
+
+test("a merged PR that predates the attempt is context, not shipped work", () => {
+  const { root, slug } = setup();
+  const now = new Date();
+  const attempt = addAttempt(slug, "builds-on-old-work", { handoff: "## Objective\n\nBuilds on PR #10 (already merged).\n" });
+  const { gh } = fakeGh([{ number: 10, title: "Old", state: "MERGED", url: "u", headRefName: "feat/old", mergedAt: "2020-01-01T00:00:00Z", mergeCommit: { oid: MERGE_10 } }]);
+  const board = boardSnapshot(slug, { checkout: root, gh, now, requireOrigin: false });
+  assert.deepEqual(board.attempts.find((a) => a.id === attempt.id).prs, []);
+  assert.equal(cleanupPlan(board).some((action) => action.kind === "close"), false);
+});
+
+test("a review rewritten after the snapshot stops the merge", async () => {
+  const f = fixture();
+  const actions = cleanupPlan(boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false }));
+  const failing = review(12, HEAD_12);
+  failing.verification[0].status = "failed";
+  writeReview(f.root, 12, failing);
+  const [result] = await applyCleanup(f.slug, actions.slice(0, 1), { checkout: f.root, gh: f.gh, yes: true, log: () => {} });
+  assert.equal(result.result, "skipped");
+  assert.equal(f.calls.some((args) => args[1] === "merge"), false);
+});
+
 test("board degrades when gh is unavailable", () => {
   const { slug, root } = setup();
   addAttempt(slug, "offline-work", { handoff: "## Exact next action\n\nPush PR #4.\n" });
@@ -233,7 +270,7 @@ test("dry run changes nothing; apply --yes merges with the reviewed head and clo
   assert.equal(shipped.status, "closed");
   assert.equal(shipped.outcome, "shipped");
   assert.equal(shipped.closure.verified_by, "gh");
-  assert.deepEqual(shipped.closure.prs, [{ number: 10, url: "https://github.com/example/repo/pull/10", merge_commit: MERGE_10, merged_at: "2026-11-13T00:00:00Z" }]);
+  assert.deepEqual(shipped.closure.prs, [{ number: 10, url: "https://github.com/example/repo/pull/10", merge_commit: MERGE_10, merged_at: f.mergedAt }]);
   // No phase was pretended: no evidence, no gate records, phase unchanged.
   assert.equal(shipped.evidence, undefined);
   assert.equal(shipped.gates, undefined);
@@ -328,6 +365,9 @@ test("unfinished work notice lists the top items and points at board and cleanup
   assert.match(notice, /PR #12 ready to merge/);
   assert.match(notice, /… 3 more/);
   assert.match(notice, /dirf board · Close finished work: dirf cleanup/);
+  // The notice makes one open-PR list call: no merged list, no per-PR lookups.
+  const noticeCalls = f.calls.filter((args) => args[1] === "view" || args.includes("all"));
+  assert.deepEqual(noticeCalls, []);
   const { slug } = setup();
   assert.equal(unfinishedWorkNotice(slug, { gh: () => "[]" }), null);
 });

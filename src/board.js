@@ -21,6 +21,7 @@ import { blockingFindings, deriveVerdict, validateReview } from "../skills/code-
 const DAY_MS = 86_400_000;
 const OPEN_STATES = new Set(["planned", "in_progress", "blocked"]);
 const GH_TIMEOUT_MS = 20_000;
+const NOTICE_GH_TIMEOUT_MS = 5_000;
 const PR_LIST_LIMIT = "200";
 const CLOSED_PR_LIST_LIMIT = "1000";
 const OPEN_PR_FIELDS = "number,title,state,url,headRefName,headRefOid,isDraft,mergeable,mergeStateStatus,statusCheckRollup,body";
@@ -35,7 +36,7 @@ const DONE_NEXT_ACTION = /^\s*[*_`]*\s*(?:done|complete|completed)[*_`]*\s*(?:$|
 
 // DIRF_GH points tests (or unusual installs) at another gh executable. A .js
 // or .mjs path runs through this Node binary so fixtures work on Windows too.
-export function defaultGh(args, { cwd } = {}) {
+export function defaultGh(args, { cwd, timeout = GH_TIMEOUT_MS } = {}) {
   const override = process.env.DIRF_GH;
   const [command, prefix] = override
     ? /\.(?:c|m)?js$/i.test(override) ? [process.execPath, [override]] : [override, []]
@@ -43,7 +44,7 @@ export function defaultGh(args, { cwd } = {}) {
   return execFileSync(command, [...prefix, ...args], {
     cwd,
     encoding: "utf8",
-    timeout: GH_TIMEOUT_MS,
+    timeout,
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -171,7 +172,9 @@ export function latestReview(prNumber, headSha, locations, { slug = null } = {})
     } catch {
       continue;
     }
-    reviews.push({ path, review, mtime: statSync(path).mtimeMs });
+    let mtime;
+    try { mtime = statSync(path).mtimeMs; } catch { continue; }
+    reviews.push({ path, review, mtime });
   }
   if (!reviews.length) return null;
   reviews.sort((left, right) => right.mtime - left.mtime);
@@ -254,6 +257,9 @@ function prView(pr, review) {
     else {
       if (!review.at_current_head) reasons.push("review is not at the current head");
       if (review.blocking_findings > 0) reasons.push(`${review.blocking_findings} fix-now finding(s)`);
+      // Only a PASS qualifies: CONDITIONAL also covers low confidence, failed
+      // verification, limitations, and unresolved threads with no findings.
+      else if (review.verdict !== "PASS") reasons.push(`review ${review.verdict}`);
     }
     if (checks !== "passing") reasons.push(`checks ${checks}`);
     if (pr.mergeable !== "MERGEABLE") reasons.push(`mergeable ${String(pr.mergeable || "unknown").toLowerCase()}`);
@@ -280,7 +286,7 @@ function prView(pr, review) {
 
 // Board for one project: every open attempt (planned, in progress, blocked)
 // with its linked PRs, plus open PRs no attempt claims.
-export function boardSnapshot(slug, { checkout, now = new Date(), gh = defaultGh, includeClosedPrs = true, requireOrigin = true } = {}) {
+export function boardSnapshot(slug, { checkout, now = new Date(), gh = defaultGh, includeClosedPrs = true, requireOrigin = true, lookupMissing = includeClosedPrs } = {}) {
   const work = projectWorkSnapshot(slug, now);
   const staleDays = staleAttemptDays();
   const openAttempts = work.attempts.filter((attempt) => attempt.tracked && OPEN_STATES.has(attempt.lifecycle_status));
@@ -314,21 +320,28 @@ export function boardSnapshot(slug, { checkout, now = new Date(), gh = defaultGh
   // A number GitHub says is no PR (often an issue named as "#N") is dropped;
   // any other lookup failure stays UNKNOWN so cleanup never closes on it.
   const notPullRequests = new Set();
-  if (github.available) {
+  if (github.available && lookupMissing) {
     const missing = [...new Set(linked.flatMap(({ numbers }) => [...numbers]))].filter((number) => !prsByNumber.has(number));
     for (const number of missing.slice(0, MAX_EXTRA_PR_LOOKUPS)) {
       try {
         const pr = JSON.parse(gh(["pr", "view", String(number), "--json", `${OPEN_PR_FIELDS},mergedAt,closedAt,mergeCommit`], { cwd: base }));
         if (pr?.number === number) prsByNumber.set(number, pr);
       } catch (error) {
-        if (/could not resolve to a pullrequest|no pull requests? found|not found/i.test(String(error?.stderr || error?.message || ""))) notPullRequests.add(number);
+        if (/could not resolve to a pullrequest|no pull requests? found/i.test(String(error?.stderr || error?.message || ""))) notPullRequests.add(number);
       }
     }
   }
 
   const claimed = new Set();
   const attempts = linked.map(({ attempt, folder, numbers }) => {
-    const prs = [...numbers].filter((number) => !notPullRequests.has(number)).sort((a, b) => a - b).map((number) => {
+    // A PR that merged or closed before this attempt existed is context the
+    // handoff mentions ("builds on PR #10"), not this attempt's shipped work.
+    const createdAt = Date.parse(attempt.created_at || 0) || 0;
+    const predates = (number) => {
+      const pr = prsByNumber.get(number);
+      return Boolean(pr) && pr.state !== "OPEN" && (Date.parse(pr.mergedAt || pr.closedAt || 0) || 0) < createdAt;
+    };
+    const prs = [...numbers].filter((number) => !notPullRequests.has(number) && !predates(number)).sort((a, b) => a - b).map((number) => {
       const pr = prsByNumber.get(number);
       if (!pr) return { number, state: github.available ? "UNKNOWN" : null, review: null, ready_to_merge: false, not_ready: [github.available ? "not found on GitHub" : "GitHub unavailable"] };
       claimed.add(number);
@@ -438,6 +451,7 @@ export function cleanupPlan(board) {
       kind: "merge",
       pr: pr.number,
       head_sha: pr.head_sha,
+      review_path: pr.review.path,
       attempts: owners,
       summary: `Squash-merge PR #${pr.number} (review ${pr.review.verdict} at head ${pr.head_sha.slice(0, 7)}, checks passing, mergeable)`,
     });
@@ -497,6 +511,15 @@ function closeNote(action) {
 // Apply with per-item confirmation. `ask(question)` resolves to the answer
 // text. With `yes`, merges and closes are accepted and stale attempts are kept:
 // a stale attempt needs a person to choose between close and abandon.
+function reviewStillPasses(action) {
+  try {
+    const review = JSON.parse(readFileSync(action.review_path, "utf8"));
+    return review.target.head_sha.toLowerCase() === action.head_sha && deriveVerdict(review) === "PASS";
+  } catch {
+    return false;
+  }
+}
+
 export async function applyCleanup(slug, actions, { checkout, gh = defaultGh, ask, yes = false, authorityToken, log = console.log, now = new Date() } = {}) {
   const results = [];
   const merged = new Map();
@@ -508,9 +531,11 @@ export async function applyCleanup(slug, actions, { checkout, gh = defaultGh, as
       if (action.kind === "merge") {
         if (!(await confirm(`Merge PR #${action.pr}?`))) { results.push({ ...action, result: "skipped" }); continue; }
         // Re-read the PR so a push since the board snapshot cannot be merged unreviewed.
-        const live = ghJson(["pr", "view", String(action.pr), "--json", "state,headRefOid,mergeable,statusCheckRollup"]);
-        if (live.state !== "OPEN" || String(live.headRefOid).toLowerCase() !== action.head_sha
-          || live.mergeable !== "MERGEABLE" || checkStatus(live.statusCheckRollup) !== "passing") {
+        // The review file is re-read too, so a newer verdict there stops the merge.
+        const live = ghJson(["pr", "view", String(action.pr), "--json", "state,headRefOid,isDraft,mergeable,mergeStateStatus,statusCheckRollup"]);
+        if (live.state !== "OPEN" || String(live.headRefOid).toLowerCase() !== action.head_sha || live.isDraft
+          || live.mergeable !== "MERGEABLE" || BLOCKED_MERGE_STATES.has(live.mergeStateStatus)
+          || checkStatus(live.statusCheckRollup) !== "passing" || !reviewStillPasses(action)) {
           results.push({ ...action, result: "skipped", reason: "PR changed since the board snapshot" });
           log(`  PR #${action.pr}: skipped — PR changed since the board snapshot`);
           continue;
@@ -579,7 +604,9 @@ export async function applyCleanup(slug, actions, { checkout, gh = defaultGh, as
 export function unfinishedWorkNotice(slug, { checkout, gh = defaultGh, limit = 5, now = new Date(), requireOrigin = true } = {}) {
   let board;
   try {
-    board = boardSnapshot(slug, { checkout, gh, now, includeClosedPrs: false, requireOrigin });
+    // One open-PR list with a short timeout: the notice must not slow new work.
+    const quickGh = (args, options = {}) => gh(args, { ...options, timeout: NOTICE_GH_TIMEOUT_MS });
+    board = boardSnapshot(slug, { checkout, gh: quickGh, now, includeClosedPrs: false, lookupMissing: false, requireOrigin });
   } catch {
     return null;
   }

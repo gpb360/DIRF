@@ -469,7 +469,9 @@ dirf settings set --stale-attempt-days 7  # idle days before an Attempt is stale
 (`PR #12`, `.../pull/12`, `pr:12`), when its `review.json` targets it, when
 the PR's branch is the Attempt's recorded branch (a merged or closed PR must
 finish after the Attempt started), or when an open PR body contains the Attempt
-id. PR facts come from `gh pr list`/`gh pr view` in the checkout. When `gh` is
+id. A bare `#N` counts only on a handoff line that mentions a PR, merge, or
+review. A PR that merged or closed before the Attempt was created is context,
+not shipped work, so it is not linked. PR facts come from `gh pr list`/`gh pr view` in the checkout. When `gh` is
 missing, offline, or the checkout has no GitHub origin, the board still lists
 Attempts and states why the PR columns are empty.
 
@@ -482,7 +484,7 @@ the Attempt folder. A review of an older head is shown but never qualifies.
 
 | Action | When | On `--apply` |
 |---|---|---|
-| `merge` | open, not draft, review at the current head with no fix-now findings, checks passing, mergeable | re-reads the PR, then `gh pr merge N --squash --match-head-commit SHA` |
+| `merge` | open, not draft, review verdict `PASS` at the current head, checks passing, mergeable | re-reads the PR and the review file, then `gh pr merge N --squash --match-head-commit SHA` |
 | `close` | every linked PR is merged (or merges earlier in this run), or the next action says `Done`/`Complete.` | `dirf attempt close` with outcome `shipped` and the merged PR numbers, URLs, and merge commits |
 | `stale` | idle longer than `stale_attempt_days` | asks keep / close as shipped / abandon; `--yes` keeps it |
 

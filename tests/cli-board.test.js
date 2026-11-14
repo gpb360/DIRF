@@ -28,7 +28,7 @@ if (verb === "list") {
   console.log(JSON.stringify(pr));
 } else if (verb === "merge") {
   const pr = prs.find((item) => item.number === Number(rest[0]));
-  Object.assign(pr, { state: "MERGED", mergedAt: "2026-11-14T00:00:00Z", mergeCommit: { oid: "f".repeat(40) } });
+  Object.assign(pr, { state: "MERGED", mergedAt: new Date().toISOString(), mergeCommit: { oid: "f".repeat(40) } });
   writeFileSync(statePath, JSON.stringify(prs));
 }
 `;
