@@ -471,7 +471,11 @@ the PR's branch is the Attempt's recorded branch (a merged or closed PR must
 finish after the Attempt started), or when an open PR body contains the Attempt
 id. A bare `#N` counts only on a handoff line that mentions a PR, merge, or
 review. A PR that merged or closed before the Attempt was created is context,
-not shipped work, so it is not linked. PR facts come from `gh pr list`/`gh pr view` in the checkout. When `gh` is
+not shipped work, so it is not linked. A PR counts as the Attempt's own shipped
+work only when the branch, the PR body, or the Attempt's `review.json` links
+it, or when the handoff names it and it was opened after the Attempt started.
+An older PR that the handoff only mentions (for example a dependency) is shown
+but never closes the Attempt. PR facts come from `gh pr list`/`gh pr view` in the checkout. When `gh` is
 missing, offline, or the checkout has no GitHub origin, the board still lists
 Attempts and states why the PR columns are empty.
 
@@ -484,8 +488,8 @@ the Attempt folder. A review of an older head is shown but never qualifies.
 
 | Action | When | On `--apply` |
 |---|---|---|
-| `merge` | open, not draft, review verdict `PASS` at the current head, checks passing, mergeable | re-reads the PR and the review file, then `gh pr merge N --squash --match-head-commit SHA` |
-| `close` | every linked PR is merged (or merges earlier in this run), or the next action says `Done`/`Complete.` | `dirf attempt close` with outcome `shipped` and the merged PR numbers, URLs, and merge commits |
+| `merge` | open, not draft, checks passing, mergeable, and a review that `dirf review ready` would accept: schema 2, mode `full`, this repository, base equal to the PR merge base, no findings, verdict `PASS`, at the current head | re-reads the PR and the review file, then `gh pr merge N --squash --match-head-commit SHA` |
+| `close` | no linked PR is still open and at least one strongly linked PR merged (or merges earlier in this run), or the next action says `Done`/`Complete.` | `dirf attempt close` with outcome `shipped` and the merged PR numbers, URLs, and merge commits |
 | `stale` | idle longer than `stale_attempt_days` | asks keep / close as shipped / abandon; `--yes` keeps it |
 
 Nothing merges or closes without `--apply`. A close that depends on a merge in

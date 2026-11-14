@@ -37,6 +37,7 @@ function setup() {
   process.env.DIRF_HOME = mkdtempSync(join(tmpdir(), "dirf-board-"));
   const root = mkdtempSync(join(tmpdir(), "dirf-board-repo-"));
   execFileSync("git", ["init", "-q"], { cwd: root });
+  execFileSync("git", ["remote", "add", "origin", "https://github.com/example/repo.git"], { cwd: root });
   const { slug } = registerProject(root);
   bindExecutionAuthority(slug, TOKEN);
   return { root, slug };
@@ -115,10 +116,11 @@ function fixture() {
   writeReview(root, 12, review(12, HEAD_12));
   writeReview(root, 13, review(13, OLD_HEAD));
   const mergedAt = new Date(now.getTime() + 1000).toISOString();
+  const createdAt = mergedAt;
   const prs = [
-    { number: 12, title: "Ready", state: "OPEN", url: "https://github.com/example/repo/pull/12", headRefName: "feat/ready", headRefOid: HEAD_12, isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", statusCheckRollup: GREEN, body: "" },
-    { number: 13, title: "Old review", state: "OPEN", url: "https://github.com/example/repo/pull/13", headRefName: "feat/other", headRefOid: HEAD_13, isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", statusCheckRollup: GREEN, body: "" },
-    { number: 10, title: "Shipped", state: "MERGED", url: "https://github.com/example/repo/pull/10", headRefName: "feat/shipped", mergedAt, mergeCommit: { oid: MERGE_10 } },
+    { number: 12, title: "Ready", state: "OPEN", url: "https://github.com/example/repo/pull/12", headRefName: "feat/ready", headRefOid: HEAD_12, baseRefOid: BASE, createdAt, isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", statusCheckRollup: GREEN, body: "" },
+    { number: 13, title: "Old review", state: "OPEN", url: "https://github.com/example/repo/pull/13", headRefName: "feat/other", headRefOid: HEAD_13, baseRefOid: BASE, createdAt, isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", statusCheckRollup: GREEN, body: "" },
+    { number: 10, title: "Shipped", state: "MERGED", url: "https://github.com/example/repo/pull/10", headRefName: "feat/shipped", createdAt, mergedAt, mergeCommit: { oid: MERGE_10 } },
   ];
   return { mergedAt, root, slug, now, ready, shipped, done, stale, planned, ...fakeGh(prs) };
 }
@@ -139,7 +141,7 @@ test("handoffPullRequests reads PR forms and bare #N only on PR, merge, or revie
 
 test("board lists open attempts with linked PRs, review at head, checks, and mergeability", () => {
   const f = fixture();
-  const board = boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false });
+  const board = boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false, mergeBase: () => BASE });
   assert.equal(board.github.available, true);
   assert.deepEqual(board.attempts.map((a) => a.name).sort(), ["done-by-handoff", "old-idea", "planned-only", "ready-feature", "shipped-feature"]);
   const ready = board.attempts.find((a) => a.id === f.ready.id);
@@ -176,7 +178,7 @@ test("a fix-now finding or failing checks keep a PR out of the merge list", () =
   }]);
   withFinding.axes.correctness.status = "finding";
   writeReview(f.root, 12, withFinding);
-  const board = boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false });
+  const board = boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false, mergeBase: () => BASE });
   const pr = board.attempts.find((a) => a.id === f.ready.id).prs[0];
   assert.equal(pr.ready_to_merge, false);
   assert.match(pr.not_ready.join(","), /1 fix-now finding/);
@@ -189,7 +191,7 @@ test("a CONDITIONAL review with no findings does not qualify for merge", () => {
   weak.confidence = { quality: 20, evidence: 10 };
   weak.completion.unresolved_threads = 4;
   writeReview(f.root, 12, weak);
-  const board = boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false });
+  const board = boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false, mergeBase: () => BASE });
   const pr = board.attempts.find((a) => a.id === f.ready.id).prs[0];
   assert.equal(pr.review.verdict, "CONDITIONAL");
   assert.equal(pr.review.blocking_findings, 0);
@@ -198,19 +200,57 @@ test("a CONDITIONAL review with no findings does not qualify for merge", () => {
   assert.equal(cleanupPlan(board).some((action) => action.kind === "merge"), false);
 });
 
+test("only a full v2 review of this repository at the PR merge base qualifies for merge", () => {
+  const cases = [
+    ["incremental", (r) => { r.target.mode = "incremental"; r.target.previous_head_sha = OLD_HEAD; }, /review mode is incremental, not full/],
+    ["other repository", (r) => { r.target.repository = "https://github.com/someone/else.git"; }, /different repository/],
+    ["pre-existing follow-up", (r) => {
+      r.findings = [{ id: "F1", priority: "P3", title: "Old nit", file: "src/board.js", line: 1, axis: "standards", origin: "pre_existing", base_evidence: "present at base", confidence: 90, body: "Old.", evidence: ["src/board.js:1"] }];
+      r.axes.standards.status = "finding";
+    }, /1 open finding/],
+  ];
+  for (const [label, mutate, reason] of cases) {
+    const f = fixture();
+    const body = review(12, HEAD_12);
+    mutate(body);
+    writeReview(f.root, 12, body);
+    const board = boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false, mergeBase: () => BASE });
+    const pr = board.attempts.find((a) => a.id === f.ready.id).prs[0];
+    assert.equal(pr.ready_to_merge, false, label);
+    assert.match(pr.not_ready.join(","), reason, label);
+  }
+  const f = fixture();
+  const board = boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false, mergeBase: () => OLD_HEAD });
+  assert.match(board.attempts.find((a) => a.id === f.ready.id).prs[0].not_ready.join(","), /base does not match/);
+});
+
+test("a PR the handoff only mentions as a dependency is not the attempt's shipped work", () => {
+  const { root, slug } = setup();
+  const now = new Date();
+  const attempt = addAttempt(slug, "dependent", { handoff: "## Exact next action\n\nWait for PR #50 to merge, then start the build.\n" });
+  const before = new Date(now.getTime() - DAY).toISOString();
+  const after = new Date(now.getTime() + 1000).toISOString();
+  // PR 50 was opened before the attempt and merged after it: a dependency.
+  const { gh } = fakeGh([{ number: 50, title: "Dependency", state: "MERGED", url: "u", headRefName: "feat/api", createdAt: before, mergedAt: after, mergeCommit: { oid: MERGE_10 } }]);
+  const board = boardSnapshot(slug, { checkout: root, gh, now, requireOrigin: false, mergeBase: () => BASE });
+  const pr = board.attempts.find((a) => a.id === attempt.id).prs[0];
+  assert.equal(pr.link, "handoff");
+  assert.equal(cleanupPlan(board).some((action) => action.kind === "close"), false);
+});
+
 test("a merged PR that predates the attempt is context, not shipped work", () => {
   const { root, slug } = setup();
   const now = new Date();
   const attempt = addAttempt(slug, "builds-on-old-work", { handoff: "## Objective\n\nBuilds on PR #10 (already merged).\n" });
   const { gh } = fakeGh([{ number: 10, title: "Old", state: "MERGED", url: "u", headRefName: "feat/old", mergedAt: "2020-01-01T00:00:00Z", mergeCommit: { oid: MERGE_10 } }]);
-  const board = boardSnapshot(slug, { checkout: root, gh, now, requireOrigin: false });
+  const board = boardSnapshot(slug, { checkout: root, gh, now, requireOrigin: false, mergeBase: () => BASE });
   assert.deepEqual(board.attempts.find((a) => a.id === attempt.id).prs, []);
   assert.equal(cleanupPlan(board).some((action) => action.kind === "close"), false);
 });
 
 test("a review rewritten after the snapshot stops the merge", async () => {
   const f = fixture();
-  const actions = cleanupPlan(boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false }));
+  const actions = cleanupPlan(boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false, mergeBase: () => BASE }));
   const failing = review(12, HEAD_12);
   failing.verification[0].status = "failed";
   writeReview(f.root, 12, failing);
@@ -223,7 +263,7 @@ test("board degrades when gh is unavailable", () => {
   const { slug, root } = setup();
   addAttempt(slug, "offline-work", { handoff: "## Exact next action\n\nPush PR #4.\n" });
   const gh = () => { throw Object.assign(new Error("spawn gh ENOENT"), { code: "ENOENT" }); };
-  const board = boardSnapshot(slug, { checkout: root, gh, requireOrigin: false });
+  const board = boardSnapshot(slug, { checkout: root, gh, requireOrigin: false, mergeBase: () => BASE });
   assert.equal(board.github.available, false);
   assert.equal(board.github.reason, "gh is not installed");
   assert.equal(board.attempts.length, 1);
@@ -236,6 +276,7 @@ test("board degrades when gh is unavailable", () => {
 test("board skips gh when the checkout has no GitHub origin", () => {
   const { slug, root } = setup();
   addAttempt(slug, "local-only");
+  execFileSync("git", ["remote", "remove", "origin"], { cwd: root });
   const gh = () => { throw new Error("gh must not run"); };
   const board = boardSnapshot(slug, { checkout: root, gh });
   assert.equal(board.github.available, false);
@@ -244,7 +285,7 @@ test("board skips gh when the checkout has no GitHub origin", () => {
 
 test("cleanup plan merges first, closes shipped and done attempts, and asks about stale ones", () => {
   const f = fixture();
-  const actions = cleanupPlan(boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false }));
+  const actions = cleanupPlan(boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false, mergeBase: () => BASE }));
   assert.deepEqual(actions.map((a) => a.kind), ["merge", "close", "close", "close", "stale"]);
   assert.equal(actions[0].pr, 12);
   const byName = Object.fromEntries(actions.filter((a) => a.name).map((a) => [a.name, a]));
@@ -256,7 +297,7 @@ test("cleanup plan merges first, closes shipped and done attempts, and asks abou
 
 test("dry run changes nothing; apply --yes merges with the reviewed head and closes as shipped", async () => {
   const f = fixture();
-  const board = boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false });
+  const board = boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false, mergeBase: () => BASE });
   const actions = cleanupPlan(board);
   assert.equal(f.calls.some((args) => args[1] === "merge"), false);
   assert.equal(getAttempt(f.slug, f.shipped.id).status, "in_progress");
@@ -284,7 +325,7 @@ test("dry run changes nothing; apply --yes merges with the reviewed head and clo
 
 test("apply asks per item; no means skip, and a close waits for its merge", async () => {
   const f = fixture();
-  const actions = cleanupPlan(boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false }));
+  const actions = cleanupPlan(boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false, mergeBase: () => BASE }));
   const asked = [];
   const answer = (question) => {
     asked.push(question);
@@ -313,7 +354,7 @@ test("apply asks per item; no means skip, and a close waits for its merge", asyn
 
 test("abandon from cleanup still needs the orchestrator token", async () => {
   const f = fixture();
-  const actions = cleanupPlan(boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false }))
+  const actions = cleanupPlan(boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false, mergeBase: () => BASE }))
     .filter((action) => action.kind === "stale");
   const [result] = await applyCleanup(f.slug, actions, { checkout: f.root, gh: f.gh, log: () => {}, ask: async () => "a" });
   assert.equal(result.result, "failed");
@@ -322,7 +363,7 @@ test("abandon from cleanup still needs the orchestrator token", async () => {
 
 test("a PR pushed after the board snapshot is not merged", async () => {
   const f = fixture();
-  const actions = cleanupPlan(boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false }));
+  const actions = cleanupPlan(boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false, mergeBase: () => BASE }));
   const pushed = (args) => args[1] === "view" && args[2] === "12" ? JSON.stringify({ state: "OPEN", headRefOid: "9".repeat(40), mergeable: "MERGEABLE", statusCheckRollup: GREEN }) : f.gh(args);
   const dependent = actions.filter((action) => action.kind === "merge" || action.requires_merge?.length);
   const results = await applyCleanup(f.slug, dependent, { checkout: f.root, gh: pushed, yes: true, log: () => {} });
@@ -342,7 +383,7 @@ test("closed attempts count as finished work in project status and the portfolio
   const project = portfolioSnapshot().projects.find((p) => p.slug === slug);
   assert.equal(project.attempts.closed, 1);
   assert.equal(project.status, "completed");
-  assert.equal(boardSnapshot(slug, { gh: () => "[]", requireOrigin: false }).attempts.length, 0);
+  assert.equal(boardSnapshot(slug, { gh: () => "[]", requireOrigin: false, mergeBase: () => BASE }).attempts.length, 0);
   assert.throws(() => updateAttemptLifecycle(slug, attempt.id, "close", { outcome: "shipped", note: "again" }), /Only planned, in-progress, or blocked/);
   const reopened = updateAttemptLifecycle(slug, attempt.id, "reopen");
   assert.equal(reopened.status, "in_progress");
@@ -352,7 +393,7 @@ test("closed attempts count as finished work in project status and the portfolio
 test("stale_attempt_days is configurable", () => {
   const f = fixture();
   writeSettings({ stale_attempt_days: 30 });
-  const board = boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false });
+  const board = boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false, mergeBase: () => BASE });
   assert.equal(board.stale_attempt_days, 30);
   assert.equal(board.attempts.some((a) => a.stale), false);
   assert.throws(() => writeSettings({ stale_attempt_days: 0 }), /stale_attempt_days must be a positive integer/);
@@ -360,7 +401,7 @@ test("stale_attempt_days is configurable", () => {
 
 test("unfinished work notice lists the top items and points at board and cleanup", () => {
   const f = fixture();
-  const notice = unfinishedWorkNotice(f.slug, { checkout: f.root, gh: f.gh, now: f.now, limit: 3, requireOrigin: false });
+  const notice = unfinishedWorkNotice(f.slug, { checkout: f.root, gh: f.gh, now: f.now, limit: 3, requireOrigin: false, mergeBase: () => BASE });
   assert.match(notice, /Unfinished work in this project: 5 open attempt\(s\), 1 PR\(s\) passing review but not merged\./);
   assert.match(notice, /PR #12 ready to merge/);
   assert.match(notice, /… 3 more/);

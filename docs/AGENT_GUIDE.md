@@ -531,8 +531,10 @@ set `DIRF_HARNESS`, `DIRF_SESSION_ID`, `DIRF_ORCHESTRATOR_TOKEN`, and optional
 Before you start new work, run `dirf board` to see what is still open in this
 project, and `dirf cleanup` to list what can close. `dirf build`, `dirf plan`,
 and `dirf create` print the top five unfinished items on stderr. Cleanup is a
-dry run unless you pass `--apply`; it squash-merges only PRs whose review verdict is
-`PASS` at the current head, with green checks and a mergeable state,
+dry run unless you pass `--apply`; it squash-merges only PRs whose review passes the
+`dirf review ready` rules at the current head (full schema 2 review, same
+repository and merge base, no findings, `PASS`), with green checks and a
+mergeable state,
 and it closes an Attempt as `closed` with outcome `shipped` only when its linked
 PRs merged or its next action says Done. Do not advance phases with invented
 evidence to finish shipped work, and do not abandon shipped work: use

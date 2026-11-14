@@ -6,7 +6,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const CLI = join(process.cwd(), "src", "cli.js");
-const HEAD = "a".repeat(40);
 const GREEN = [{ __typename: "CheckRun", name: "test", status: "COMPLETED", conclusion: "SUCCESS" }];
 
 // A fake gh executable: reads PRs from FAKE_GH_STATE, logs every call, and
@@ -33,11 +32,11 @@ if (verb === "list") {
 }
 `;
 
-function review(prNumber, head) {
+function review(prNumber, head, base) {
   const axes = ["spec", "correctness", "concurrency", "security", "data", "frontend", "testing", "standards"];
   return {
     schema_version: 2,
-    target: { repository: "https://github.com/example/repo.git", pr_number: prNumber, base_sha: "d".repeat(40), head_sha: head, mode: "full" },
+    target: { repository: "https://github.com/example/repo.git", pr_number: prNumber, base_sha: base, head_sha: head, mode: "full" },
     walkthrough: [{ area: "board", summary: "Board fixture", files: ["src/board.js"] }],
     axes: Object.fromEntries(axes.map((axis) => [axis, { status: "checked", evidence: `${axis} checked` }])),
     confidence: { quality: 95, evidence: 91 },
@@ -55,16 +54,22 @@ function fixture() {
   const ghScript = join(tools, "gh.mjs");
   writeFileSync(ghScript, FAKE_GH);
   const ghState = join(tools, "prs.json");
-  writeFileSync(ghState, JSON.stringify([
-    { number: 12, title: "Ready", state: "OPEN", url: "https://github.com/example/repo/pull/12", headRefName: "feat/ready", headRefOid: HEAD, isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", statusCheckRollup: GREEN, body: "" },
-  ]));
   const env = { DIRF_HOME: home, DIRF_GH: ghScript, FAKE_GH_STATE: ghState, DIRF_ORCHESTRATOR_TOKEN: "" };
   const run = (args, input) => spawnSync(process.execPath, [CLI, ...args], {
     cwd: dir, encoding: "utf8", timeout: 30_000, input, env: { ...process.env, ...env },
   });
+  const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8" }).trim();
   for (const args of [["init", "-q"], ["config", "user.name", "DIRF Test"], ["config", "user.email", "dirf@example.invalid"], ["commit", "--allow-empty", "-q", "-m", "init"], ["remote", "add", "origin", "https://github.com/example/repo.git"]]) {
-    execFileSync("git", args, { cwd: dir });
+    git(...args);
   }
+  // Real commits, so the board can verify the review base is the PR merge base.
+  const base = git("rev-parse", "HEAD");
+  git("commit", "--allow-empty", "-q", "-m", "head");
+  const head = git("rev-parse", "HEAD");
+  const createdAt = new Date(Date.now() + 60_000).toISOString();
+  writeFileSync(ghState, JSON.stringify([
+    { number: 12, title: "Ready", state: "OPEN", url: "https://github.com/example/repo/pull/12", headRefName: "feat/ready", headRefOid: head, baseRefOid: base, createdAt, isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", statusCheckRollup: GREEN, body: "" },
+  ]));
   assert.equal(run(["setup", dir]).status, 0);
   const built = run(["build", "ready-feature", "add a small cli flag", "--json"]);
   assert.equal(built.status, 0, built.stderr);
@@ -73,11 +78,11 @@ function fixture() {
   assert.equal(progress.status, 0, progress.stderr);
   const reviewDir = join(dir, ".scratch", "dirf-review", "pr-12");
   mkdirSync(reviewDir, { recursive: true });
-  writeFileSync(join(reviewDir, "review.json"), JSON.stringify(review(12, HEAD)));
+  writeFileSync(join(reviewDir, "review.json"), JSON.stringify(review(12, head, base)));
   const calls = () => existsSync(`${ghState}.log`)
     ? readFileSync(`${ghState}.log`, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))
     : [];
-  return { dir, home, run, attemptId, calls, env };
+  return { dir, home, run, attemptId, calls, env, head };
 }
 
 test("dirf board --json shows the attempt, its PR, and review confidence at the current head", () => {
@@ -143,7 +148,7 @@ test("dirf cleanup --apply merges with the reviewed head and closes the attempt 
   assert.match(result.stdout, /PR #12: merged \(fffffff\)/);
   assert.match(result.stdout, /ready-feature: closed \(shipped\)/);
   const merge = f.calls().find((args) => args[1] === "merge");
-  assert.deepEqual(merge, ["pr", "merge", "12", "--squash", "--match-head-commit", HEAD]);
+  assert.deepEqual(merge, ["pr", "merge", "12", "--squash", "--match-head-commit", f.head]);
   const attempt = JSON.parse(f.run(["state", "get-attempt", f.attemptId, "--json"]).stdout);
   assert.equal(attempt.status, "closed");
   assert.equal(attempt.outcome, "shipped");

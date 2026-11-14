@@ -16,7 +16,7 @@ import {
   storeAttemptDir,
   updateAttemptLifecycle,
 } from "./state.js";
-import { blockingFindings, deriveVerdict, validateReview } from "../skills/code-review/scripts/review-report.mjs";
+import { blockingFindings, deriveVerdict, normalizeRepository, validateReview } from "../skills/code-review/scripts/review-report.mjs";
 
 const DAY_MS = 86_400_000;
 const OPEN_STATES = new Set(["planned", "in_progress", "blocked"]);
@@ -24,8 +24,8 @@ const GH_TIMEOUT_MS = 20_000;
 const NOTICE_GH_TIMEOUT_MS = 5_000;
 const PR_LIST_LIMIT = "200";
 const CLOSED_PR_LIST_LIMIT = "1000";
-const OPEN_PR_FIELDS = "number,title,state,url,headRefName,headRefOid,isDraft,mergeable,mergeStateStatus,statusCheckRollup,body";
-const CLOSED_PR_FIELDS = "number,title,state,url,headRefName,mergedAt,closedAt,mergeCommit";
+const OPEN_PR_FIELDS = "number,title,state,url,headRefName,headRefOid,baseRefOid,createdAt,isDraft,mergeable,mergeStateStatus,statusCheckRollup,body";
+const CLOSED_PR_FIELDS = "number,title,state,url,headRefName,createdAt,mergedAt,closedAt,mergeCommit";
 const MAX_EXTRA_PR_LOOKUPS = 20;
 const PASSING_CONCLUSIONS = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
 const BLOCKED_MERGE_STATES = new Set(["BLOCKED", "DIRTY", "BEHIND", "DRAFT"]);
@@ -54,6 +54,16 @@ function ghFailure(error) {
   if (error?.code === "ENOENT") return "gh is not installed";
   const detail = String(error?.stderr || error?.message || error || "").trim().split(/\r?\n/)[0];
   return detail ? `gh failed: ${detail}` : "gh failed";
+}
+
+function readOrigin(checkout) {
+  try {
+    return execFileSync("git", ["-C", checkout, "remote", "get-url", "origin"], {
+      encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"],
+    }).trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 function githubOrigin(checkout) {
@@ -195,6 +205,11 @@ export function latestReview(prNumber, headSha, locations, { slug = null } = {})
     at_current_head: Boolean(head) && chosen.review.target.head_sha.toLowerCase() === head,
     verdict: deriveVerdict(chosen.review),
     blocking_findings: blocking.length,
+    findings: chosen.review.findings.length,
+    schema_version: chosen.review.schema_version,
+    mode: chosen.review.target.mode,
+    repository: chosen.review.target.repository,
+    base_sha: chosen.review.target.base_sha.toLowerCase(),
     confidence: { quality: chosen.review.confidence.quality, evidence: chosen.review.confidence.evidence },
     ledger_action: ledger,
     reviewed_at: new Date(chosen.mtime).toISOString(),
@@ -247,7 +262,38 @@ function staleAttemptDays() {
   return Number.isInteger(days) && days > 0 ? days : 7;
 }
 
-function prView(pr, review) {
+function defaultMergeBase(checkout) {
+  return (base, head) => {
+    try {
+      return execFileSync("git", ["-C", checkout, "merge-base", base, head], {
+        encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"],
+      }).trim().toLowerCase() || null;
+    } catch {
+      return null;
+    }
+  };
+}
+
+// The same review rules `dirf review ready` applies before a merge request:
+// a schema v2 full review of this repository, at the PR head, against the
+// PR's current merge base, with no findings and a PASS verdict.
+function reviewMergeReasons(review, { headSha, origin, mergeBase }) {
+  const reasons = [];
+  if (review.head_sha !== headSha) reasons.push("review is not at the current head");
+  if (review.schema_version !== 2) reasons.push("review is not schema version 2");
+  if (review.mode !== "full") reasons.push(`review mode is ${review.mode}, not full`);
+  if (review.blocking_findings > 0) reasons.push(`${review.blocking_findings} fix-now finding(s)`);
+  else if (review.findings > 0) reasons.push(`${review.findings} open finding(s)`);
+  // CONDITIONAL also covers low confidence, failed verification,
+  // limitations, and unresolved threads with no findings.
+  else if (review.verdict !== "PASS") reasons.push(`review ${review.verdict}`);
+  if (!origin) reasons.push("repository not verified (no origin)");
+  else if (normalizeRepository(review.repository) !== normalizeRepository(origin)) reasons.push("review names a different repository");
+  if (!mergeBase || mergeBase !== review.base_sha) reasons.push("review base does not match the PR merge base");
+  return reasons;
+}
+
+function prView(pr, review, { origin = null, mergeBase = () => null, link = null } = {}) {
   const open = pr.state === "OPEN";
   const checks = open ? checkStatus(pr.statusCheckRollup) : null;
   const reasons = [];
@@ -255,11 +301,9 @@ function prView(pr, review) {
     if (pr.isDraft) reasons.push("draft");
     if (!review) reasons.push("no review found");
     else {
-      if (!review.at_current_head) reasons.push("review is not at the current head");
-      if (review.blocking_findings > 0) reasons.push(`${review.blocking_findings} fix-now finding(s)`);
-      // Only a PASS qualifies: CONDITIONAL also covers low confidence, failed
-      // verification, limitations, and unresolved threads with no findings.
-      else if (review.verdict !== "PASS") reasons.push(`review ${review.verdict}`);
+      const head = String(pr.headRefOid || "").toLowerCase();
+      const base = pr.baseRefOid && head ? mergeBase(pr.baseRefOid, head) : null;
+      reasons.push(...reviewMergeReasons(review, { headSha: head, origin, mergeBase: base }));
     }
     if (checks !== "passing") reasons.push(`checks ${checks}`);
     if (pr.mergeable !== "MERGEABLE") reasons.push(`mergeable ${String(pr.mergeable || "unknown").toLowerCase()}`);
@@ -272,6 +316,8 @@ function prView(pr, review) {
     state: pr.state,
     branch: pr.headRefName || null,
     head_sha: pr.headRefOid ? String(pr.headRefOid).toLowerCase() : null,
+    base_ref_oid: pr.baseRefOid ? String(pr.baseRefOid).toLowerCase() : null,
+    link,
     draft: Boolean(pr.isDraft),
     checks,
     mergeable: open ? pr.mergeable || "UNKNOWN" : null,
@@ -286,7 +332,7 @@ function prView(pr, review) {
 
 // Board for one project: every open attempt (planned, in progress, blocked)
 // with its linked PRs, plus open PRs no attempt claims.
-export function boardSnapshot(slug, { checkout, now = new Date(), gh = defaultGh, includeClosedPrs = true, requireOrigin = true, lookupMissing = includeClosedPrs } = {}) {
+export function boardSnapshot(slug, { checkout, now = new Date(), gh = defaultGh, includeClosedPrs = true, requireOrigin = true, lookupMissing = includeClosedPrs, mergeBase } = {}) {
   const work = projectWorkSnapshot(slug, now);
   const staleDays = staleAttemptDays();
   const openAttempts = work.attempts.filter((attempt) => attempt.tracked && OPEN_STATES.has(attempt.lifecycle_status));
@@ -295,6 +341,8 @@ export function boardSnapshot(slug, { checkout, now = new Date(), gh = defaultGh
     ? readPullRequests(base, { gh, includeClosed: includeClosedPrs, requireOrigin })
     : { available: false, reason: "no local checkout", prs: [] };
   const prsByNumber = new Map(github.prs.map((pr) => [pr.number, pr]));
+  const origin = base ? readOrigin(base) : null;
+  const viewContext = { origin, mergeBase: mergeBase || (base ? defaultMergeBase(base) : () => null) };
   const checkouts = [...new Set([base, work.project.main_path, ...openAttempts.map((attempt) => attempt.worktree_path)]
     .filter((path) => path && existsSync(path)))];
   const reviewFor = (pr, attemptFolders) => pr.state === "OPEN"
@@ -303,25 +351,27 @@ export function boardSnapshot(slug, { checkout, now = new Date(), gh = defaultGh
 
   const linked = openAttempts.map((attempt) => {
     const folder = storeAttemptDir(slug, attempt.id);
-    const numbers = handoffPullRequests(readText(attempt.handoff_path));
+    // strong: the branch, the PR body, or the attempt's review.json names it.
+    // handoff: only the handoff prose names it (it may be a dependency).
+    const links = new Map([...handoffPullRequests(readText(attempt.handoff_path))].map((number) => [number, "handoff"]));
     const reviewPr = attemptReviewPr(folder);
-    if (reviewPr) numbers.add(reviewPr);
+    if (reviewPr) links.set(reviewPr, "strong");
     const branches = new Set([attempt.responsibility_branch, attempt.execution?.branch].filter(Boolean));
     const createdAt = Date.parse(attempt.created_at || 0) || 0;
     for (const pr of github.prs) {
       // A reused branch name must not link an older attempt's finished PR.
       const finishedAt = Date.parse(pr.mergedAt || pr.closedAt || 0) || 0;
-      if (branches.has(pr.headRefName) && (pr.state === "OPEN" || finishedAt >= createdAt)) numbers.add(pr.number);
-      else if (pr.state === "OPEN" && String(pr.body || "").includes(attempt.id)) numbers.add(pr.number);
+      if (branches.has(pr.headRefName) && (pr.state === "OPEN" || finishedAt >= createdAt)) links.set(pr.number, "strong");
+      else if (pr.state === "OPEN" && String(pr.body || "").includes(attempt.id)) links.set(pr.number, "strong");
     }
-    return { attempt, folder, numbers };
+    return { attempt, folder, links };
   });
   // PRs an attempt names that fell outside the list window: look them up one by one.
   // A number GitHub says is no PR (often an issue named as "#N") is dropped;
   // any other lookup failure stays UNKNOWN so cleanup never closes on it.
   const notPullRequests = new Set();
   if (github.available && lookupMissing) {
-    const missing = [...new Set(linked.flatMap(({ numbers }) => [...numbers]))].filter((number) => !prsByNumber.has(number));
+    const missing = [...new Set(linked.flatMap(({ links }) => [...links.keys()]))].filter((number) => !prsByNumber.has(number));
     for (const number of missing.slice(0, MAX_EXTRA_PR_LOOKUPS)) {
       try {
         const pr = JSON.parse(gh(["pr", "view", String(number), "--json", `${OPEN_PR_FIELDS},mergedAt,closedAt,mergeCommit`], { cwd: base }));
@@ -333,7 +383,7 @@ export function boardSnapshot(slug, { checkout, now = new Date(), gh = defaultGh
   }
 
   const claimed = new Set();
-  const attempts = linked.map(({ attempt, folder, numbers }) => {
+  const attempts = linked.map(({ attempt, folder, links }) => {
     // A PR that merged or closed before this attempt existed is context the
     // handoff mentions ("builds on PR #10"), not this attempt's shipped work.
     const createdAt = Date.parse(attempt.created_at || 0) || 0;
@@ -341,11 +391,15 @@ export function boardSnapshot(slug, { checkout, now = new Date(), gh = defaultGh
       const pr = prsByNumber.get(number);
       return Boolean(pr) && pr.state !== "OPEN" && (Date.parse(pr.mergedAt || pr.closedAt || 0) || 0) < createdAt;
     };
-    const prs = [...numbers].filter((number) => !notPullRequests.has(number) && !predates(number)).sort((a, b) => a - b).map((number) => {
+    const prs = [...links.keys()].filter((number) => !notPullRequests.has(number) && !predates(number)).sort((a, b) => a - b).map((number) => {
       const pr = prsByNumber.get(number);
-      if (!pr) return { number, state: github.available ? "UNKNOWN" : null, review: null, ready_to_merge: false, not_ready: [github.available ? "not found on GitHub" : "GitHub unavailable"] };
+      if (!pr) return { number, state: github.available ? "UNKNOWN" : null, link: links.get(number), review: null, ready_to_merge: false, not_ready: [github.available ? "not found on GitHub" : "GitHub unavailable"] };
       claimed.add(number);
-      return prView(pr, reviewFor(pr, [folder]));
+      // A PR opened after the attempt started and named in its handoff is
+      // treated as the attempt's own work; an older one is only context.
+      const opened = Date.parse(pr.createdAt || 0) || 0;
+      const link = links.get(number) === "strong" || (opened && opened >= createdAt) ? "strong" : "handoff";
+      return prView(pr, reviewFor(pr, [folder]), { ...viewContext, link });
     });
     const activity = lastActivity(attempt);
     const idleDays = activity ? Math.max(0, Math.floor((now.getTime() - activity) / DAY_MS)) : null;
@@ -369,7 +423,7 @@ export function boardSnapshot(slug, { checkout, now = new Date(), gh = defaultGh
   const unlinked = github.prs
     .filter((pr) => pr.state === "OPEN" && !claimed.has(pr.number))
     .sort((a, b) => a.number - b.number)
-    .map((pr) => prView(pr, reviewFor(pr, [])));
+    .map((pr) => prView(pr, reviewFor(pr, []), viewContext));
 
   return {
     generated_at: now.toISOString(),
@@ -452,6 +506,7 @@ export function cleanupPlan(board) {
       pr: pr.number,
       head_sha: pr.head_sha,
       review_path: pr.review.path,
+      base_ref_oid: pr.base_ref_oid,
       attempts: owners,
       summary: `Squash-merge PR #${pr.number} (review ${pr.review.verdict} at head ${pr.head_sha.slice(0, 7)}, checks passing, mergeable)`,
     });
@@ -459,8 +514,10 @@ export function cleanupPlan(board) {
   const closing = new Set();
   for (const attempt of board.attempts) {
     const known = attempt.prs.filter((pr) => pr.state);
-    const merged = known.filter((pr) => pr.state === "MERGED").map((pr) => pr.number);
-    const pendingMerge = known.filter((pr) => pr.state === "OPEN" && merging.has(pr.number)).map((pr) => pr.number);
+    // Only strongly linked PRs count as this attempt's shipped work.
+    const merged = known.filter((pr) => pr.state === "MERGED" && pr.link === "strong").map((pr) => pr.number);
+    const pendingMerge = known.filter((pr) => pr.state === "OPEN" && merging.has(pr.number) && pr.link === "strong").map((pr) => pr.number);
+    const pendingAny = known.filter((pr) => pr.state === "OPEN" && merging.has(pr.number)).map((pr) => pr.number);
     const stillOpen = known.filter((pr) => pr.state === "OPEN" && !merging.has(pr.number));
     const unresolved = attempt.prs.some((pr) => !pr.state || pr.state === "UNKNOWN");
     const shippedByPrs = !unresolved && attempt.prs.length > 0 && stillOpen.length === 0 && merged.length + pendingMerge.length > 0;
@@ -475,7 +532,7 @@ export function cleanupPlan(board) {
         name: attempt.name,
         outcome: "shipped",
         prs: [...merged, ...pendingMerge],
-        requires_merge: pendingMerge,
+        requires_merge: pendingAny,
         next_action: attempt.next_action,
         summary: `Close ${attempt.name} as shipped (${why})`,
       });
@@ -514,7 +571,9 @@ function closeNote(action) {
 function reviewStillPasses(action) {
   try {
     const review = JSON.parse(readFileSync(action.review_path, "utf8"));
-    return review.target.head_sha.toLowerCase() === action.head_sha && deriveVerdict(review) === "PASS";
+    validateReview(review);
+    return review.schema_version === 2 && review.target.mode === "full" && review.findings.length === 0
+      && review.target.head_sha.toLowerCase() === action.head_sha && deriveVerdict(review) === "PASS";
   } catch {
     return false;
   }
@@ -532,8 +591,9 @@ export async function applyCleanup(slug, actions, { checkout, gh = defaultGh, as
         if (!(await confirm(`Merge PR #${action.pr}?`))) { results.push({ ...action, result: "skipped" }); continue; }
         // Re-read the PR so a push since the board snapshot cannot be merged unreviewed.
         // The review file is re-read too, so a newer verdict there stops the merge.
-        const live = ghJson(["pr", "view", String(action.pr), "--json", "state,headRefOid,isDraft,mergeable,mergeStateStatus,statusCheckRollup"]);
+        const live = ghJson(["pr", "view", String(action.pr), "--json", "state,headRefOid,baseRefOid,isDraft,mergeable,mergeStateStatus,statusCheckRollup"]);
         if (live.state !== "OPEN" || String(live.headRefOid).toLowerCase() !== action.head_sha || live.isDraft
+          || String(live.baseRefOid || "").toLowerCase() !== action.base_ref_oid
           || live.mergeable !== "MERGEABLE" || BLOCKED_MERGE_STATES.has(live.mergeStateStatus)
           || checkStatus(live.statusCheckRollup) !== "passing" || !reviewStillPasses(action)) {
           results.push({ ...action, result: "skipped", reason: "PR changed since the board snapshot" });
@@ -601,12 +661,12 @@ export async function applyCleanup(slug, actions, { checkout, gh = defaultGh, as
 
 // Short "unfinished work" notice for build/plan/create. Never prompts, never
 // throws: a failure here must not stop new work from starting.
-export function unfinishedWorkNotice(slug, { checkout, gh = defaultGh, limit = 5, now = new Date(), requireOrigin = true } = {}) {
+export function unfinishedWorkNotice(slug, { checkout, gh = defaultGh, limit = 5, now = new Date(), requireOrigin = true, mergeBase } = {}) {
   let board;
   try {
     // One open-PR list with a short timeout: the notice must not slow new work.
     const quickGh = (args, options = {}) => gh(args, { ...options, timeout: NOTICE_GH_TIMEOUT_MS });
-    board = boardSnapshot(slug, { checkout, gh: quickGh, now, includeClosedPrs: false, lookupMissing: false, requireOrigin });
+    board = boardSnapshot(slug, { checkout, gh: quickGh, now, includeClosedPrs: false, lookupMissing: false, requireOrigin, mergeBase });
   } catch {
     return null;
   }
