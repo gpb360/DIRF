@@ -585,3 +585,75 @@ test("dirf review next refuses a checkout that moved outside the ladder", () => 
   assert.match(moved.stderr, /moved .* outside the ladder.*--reset/s);
   assert.equal(run(work, ["review", "next", "--pr", "9", "--reset"]).status, 0);
 });
+
+function hostRepo(prefix) {
+  const work = mkdtempSync(join(tmpdir(), prefix));
+  git(work, ["init", "-q"]);
+  git(work, ["config", "user.email", "dirf@example.invalid"]);
+  git(work, ["config", "user.name", "DIRF Test"]);
+  writeFileSync(join(work, "a.txt"), "a");
+  git(work, ["add", "a.txt"]);
+  git(work, ["commit", "-q", "-m", "a"]);
+  assert.equal(run(work, ["state", "register"]).status, 0);
+  return work;
+}
+
+const ladderState = (work, pr) => readFileSync(join(work, ".git", "dirf-review-loop", `pr-${pr}`, "loop-state.json"), "utf8");
+
+test("dirf review next refuses a finished run after the checkout moved past it", () => {
+  const work = hostRepo("dirf-review-host-finished-");
+  assert.equal(run(work, ["review", "next", "--pr", "9", "--check", "false"]).status, 0);
+  assert.equal(run(work, ["review", "record", "--pr", "9", "--step", "check-1", "--status", "failed"]).status, 1);
+  assert.equal(JSON.parse(run(work, ["review", "next", "--pr", "9", "--json"]).stdout).report.outcome, "check_failed");
+  git(work, ["commit", "-q", "--allow-empty", "-m", "moved"]);
+  const moved = run(work, ["review", "next", "--pr", "9", "--json"]);
+  assert.notEqual(moved.status, 0);
+  assert.equal(moved.stdout, "");
+  assert.match(moved.stderr, /moved .* outside the ladder.*--reset/s);
+  assert.equal(JSON.parse(run(work, ["review", "next", "--pr", "9", "--reset", "--check", "true", "--json"]).stdout).action.kind, "check");
+});
+
+test("dirf review record refuses a mismatched, premature, repeated, or late record and keeps the state", () => {
+  const work = hostRepo("dirf-review-host-step-");
+  const view = JSON.parse(run(work, ["review", "next", "--pr", "9", "--check", "true", "--json"]).stdout);
+  assert.equal(view.record_with, "dirf review record --pr 9 --step check-1 --status passed|failed");
+  const refuses = (args, pattern) => {
+    const before = ladderState(work, 9);
+    const result = run(work, ["review", "record", "--pr", "9", ...args]);
+    assert.notEqual(result.status, 0, args.join(" "));
+    assert.match(result.stderr, pattern);
+    assert.equal(ladderState(work, 9), before, `state changed by ${args.join(" ")}`);
+  };
+  refuses(["--step", "1", "--status", "passed"], /--step 1 is not the pending step check-1/);
+  assert.equal(run(work, ["review", "record", "--pr", "9", "--step", "check-1", "--status", "passed"]).status, 0);
+  // A repeated record of the check is not applied to review step 1.
+  refuses(["--step", "check-1", "--status", "passed"], /not the pending step 1/);
+  // Review step 1 has no review file yet: premature, with or without --step.
+  refuses(["--step", "1"], /has no review at .* yet/);
+  refuses([], /has no review at .* yet/);
+  const next = JSON.parse(run(work, ["review", "next", "--pr", "9", "--json"]).stdout);
+  assert.equal(next.action.kind, "review");
+  assert.equal(next.record_with, "dirf review record --pr 9 --step 1");
+  // A record after the run finished is refused too.
+  assert.equal(run(work, ["review", "record", "--pr", "9", "--step", "1", "--status", "failed"]).status, 1);
+  refuses(["--step", "1", "--status", "failed"], /is finished \(error\)/);
+});
+
+test("dirf review record refuses a check or review after the checkout moved", () => {
+  const work = hostRepo("dirf-review-host-record-moved-");
+  assert.equal(run(work, ["review", "next", "--pr", "9", "--check", "true"]).status, 0);
+  git(work, ["commit", "-q", "--allow-empty", "-m", "moved"]);
+  const before = ladderState(work, 9);
+  const moved = run(work, ["review", "record", "--pr", "9", "--step", "check-1", "--status", "passed"]);
+  assert.notEqual(moved.status, 0);
+  assert.match(moved.stderr, /moved .* outside the ladder.*--reset/s);
+  assert.equal(ladderState(work, 9), before);
+  git(work, ["reset", "-q", "--hard", "HEAD~1"]);
+  assert.equal(run(work, ["review", "record", "--pr", "9", "--step", "check-1", "--status", "passed"]).status, 0);
+  writeFileSync(join(work, "a.txt"), "b");
+  git(work, ["commit", "-q", "-am", "moved again"]);
+  const review = run(work, ["review", "record", "--pr", "9", "--step", "1", "--status", "failed"]);
+  assert.notEqual(review.status, 0);
+  assert.match(review.stderr, /moved .* outside the ladder/);
+  assert.equal(JSON.parse(ladderState(work, 9)).pending.kind, "review");
+});

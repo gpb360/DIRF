@@ -51,7 +51,7 @@ import { checkoutRoot as skillCheckoutRoot, materializeSkills, removeMaterialize
 import { binding as skillBinding } from "./skill-bindings.js";
 import { run as runReviewReport } from "../skills/code-review/scripts/review-report.mjs";
 import { run as runReviewLedger } from "../skills/code-review/scripts/review-ledger.mjs";
-import { LADDER_STATE_FILE, formatHostView, formatLoopReport, hostView, loopPassed, recordLadderResult, runReviewLadder, runShellCommand, startLadder } from "./review-loop.js";
+import { LADDER_STATE_FILE, formatHostView, formatLoopReport, hostView, loopPassed, recordCommand, recordLadderResult, runReviewLadder, runShellCommand, startLadder, stepId } from "./review-loop.js";
 import { bindingsFromPlan, refreshSkillBindings } from "./skill-bindings.js";
 import { runSteCheck } from "./ste.js";
 
@@ -2027,6 +2027,12 @@ function parse(argv) {
     if (a === "--now") { out.now = rest[++i]; continue; }
     if (a === "--strict") { out.strict = true; continue; }
     if (a === "--reset") { out.reset = true; continue; }
+    if (a === "--step") {
+      const value = rest[++i];
+      if (!value || value.startsWith("--")) throw new Error("--step requires the step from record_with, for example 1, check-1, or fix");
+      out.step = value;
+      continue;
+    }
     if (a === "--status") {
       const value = rest[++i];
       if (value !== "passed" && value !== "failed") throw new Error("--status requires passed or failed");
@@ -2108,7 +2114,7 @@ Usage:
   dirf review trigger review.json                    record the review round and emit the next action
   dirf review reset-rounds <pr> --reason "..."       restart the round count after a person decides
   dirf review next --pr N [--check CMD] [--reset] [--json]  print the next Review Ladder step for the host to run with its own visible agent
-  dirf review record --pr N [--status passed|failed] [--output TEXT] [--json]  record the finished step and print the next one
+  dirf review record --pr N --step ID [--status passed|failed] [--output TEXT] [--json]  record the finished step and print the next one
   dirf review loop --pr N --reviewer CMD --fixer CMD [--check CMD] [--json]
                                                       run the Review Ladder once for this checkout, then report
   dirf review verify-update request.json updated-review.json  compare the report targets
@@ -2349,21 +2355,39 @@ function cmdReviewNext(args) {
   if (!state) {
     state = startLadder({ pr: args.pr, check: args.check, outDir: context.outDir }, context.deps);
     writeFileSync(context.statePath, JSON.stringify(state, null, 2) + "\n");
-  } else if (state.pending && state.pending.kind !== "fix") {
-    const head = context.deps.head().toLowerCase();
-    if (head !== state.head) {
-      throw new Error(`The checkout moved from ${state.head} to ${head} outside the ladder. Run dirf review next --pr ${args.pr} --reset to start a new run.`);
-    }
+  } else if (!state.pending || state.pending.kind !== "fix") {
+    // A finished run is for its own head too: a later commit was never reviewed.
+    assertLadderHead(context, state, args.pr);
   }
   printHostView(state, args);
+}
+
+// Only a fix step may move the checkout. Any other move happened outside the ladder.
+function assertLadderHead(context, state, pr) {
+  const head = context.deps.head().toLowerCase();
+  if (head !== state.head) {
+    throw new Error(`The checkout moved from ${state.head} to ${head} outside the ladder. Run dirf review next --pr ${pr} --reset to start a new run.`);
+  }
 }
 
 function cmdReviewRecord(args) {
   const context = reviewLadderContext(args);
   const state = readLadderState(context.statePath);
   if (!state) throw new Error(`No review ladder run exists for PR #${args.pr}. Run dirf review next --pr ${args.pr} first.`);
-  if (!state.pending) { printHostView(state, args); return; }
-  if (state.pending.kind === "check" && !args.status) throw new Error("A check step needs --status passed or --status failed");
+  // Every refusal below leaves the state unchanged, so the host can correct
+  // the call and record again.
+  if (!state.pending) {
+    throw new Error(`The review ladder run for PR #${args.pr} is finished (${state.outcome}). Nothing was recorded. Run dirf review next --pr ${args.pr} to see the outcome.`);
+  }
+  const pending = state.pending;
+  if (args.step !== undefined && args.step !== stepId(pending)) {
+    throw new Error(`--step ${args.step} is not the pending step ${stepId(pending)}. Nothing was recorded. Run dirf review next --pr ${args.pr} to see the pending step.`);
+  }
+  if (pending.kind !== "fix") assertLadderHead(context, state, args.pr);
+  if (pending.kind === "check" && !args.status) throw new Error("A check step needs --status passed or --status failed");
+  if (pending.kind === "review" && args.status !== "failed" && !existsSync(pending.write_to)) {
+    throw new Error(`Review step ${pending.step} has no review at ${pending.write_to} yet. Nothing was recorded. Write the review there, then run ${recordCommand(state, pending)}.`);
+  }
   const result = args.status ? { status: args.status === "passed" ? 0 : 1, output: args.output || "" } : {};
   recordLadderResult(state, result, context.deps);
   writeFileSync(context.statePath, JSON.stringify(state, null, 2) + "\n");
@@ -2382,7 +2406,7 @@ function cmdReview(args) {
     console.error("       dirf review verify-update request.json updated-review.json");
     console.error('       dirf review reset-rounds <pr> --reason "..."');
     console.error("       dirf review next --pr N [--check CMD] [--reset] [--json]");
-    console.error("       dirf review record --pr N [--status passed|failed] [--json]");
+    console.error("       dirf review record --pr N --step ID [--status passed|failed] [--json]");
     console.error("       dirf review loop --pr N --reviewer CMD --fixer CMD [--check CMD] [--json]");
     process.exitCode = 2;
     return;

@@ -358,8 +358,16 @@ export function stepBrief(state, pending) {
   ].filter(Boolean).join("\n");
 }
 
-function recordCommand(state, pending) {
-  const base = `dirf review record --pr ${state.pr}`;
+// The identity a host passes to `dirf review record --step`: the review step
+// number, check-N for the check before review step N, or fix.
+export function stepId(pending) {
+  if (pending.kind === "review") return String(pending.step);
+  if (pending.kind === "check") return `check-${String(pending.before).replace(/^step /, "")}`;
+  return "fix";
+}
+
+export function recordCommand(state, pending) {
+  const base = `dirf review record --pr ${state.pr} --step ${stepId(pending)}`;
   if (pending.kind === "check") return `${base} --status passed|failed`;
   if (pending.kind === "fix") return `${base} [--status failed]`;
   return base;

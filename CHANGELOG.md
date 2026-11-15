@@ -12,8 +12,11 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   prints the next ladder step (check, review, or fix) as JSON or text with a
   paste-ready brief, the review output path, the same `DIRF_REVIEW_*` values the
   shell mode passes, and the record command. `dirf review record --pr N
-  [--status passed|failed]` stores the result and prints the next step or the
-  outcome. The host runs each step with its own visible agent feature (T3
+  --step ID [--status passed|failed]` stores the result and prints the next step
+  or the outcome. It refuses a record for another step, a review step with no
+  review file, a finished run, or a checkout that moved, without changing the
+  state; `dirf review next` refuses a run, finished or not, whose head the
+  checkout moved past. The host runs each step with its own visible agent feature (T3
   `delegate_task`, Codex `spawn_agent`, the Claude Code Agent tool, or any
   other host); DIRF never starts an agent, and host detection only chooses the
   hint text. `dirf review loop` keeps its shell mode for CI and now runs on the

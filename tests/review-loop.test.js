@@ -327,7 +327,7 @@ test("the host action carries a brief, the output path, and the record command",
   assert.equal(view.action.env.DIRF_REVIEW_OUTPUT, view.action.write_to);
   assert.ok(view.brief.includes(view.action.write_to));
   assert.match(view.brief, /Do not push, merge/);
-  assert.equal(view.record_with, "dirf review record --pr 7");
+  assert.equal(view.record_with, "dirf review record --pr 7 --step 1");
   assert.equal(view.guardrails.merge_is_not_authorized, true);
   assert.match(formatHostView(view), /next step is review step 1/);
 });
