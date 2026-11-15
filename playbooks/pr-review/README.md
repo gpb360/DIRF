@@ -50,11 +50,13 @@ with a brief, the review output path, and the record command, and it never
 starts an agent. Run each step with the host's own visible agent feature: one
 new agent per review or fix. Then run the `record_with` command, `dirf review
 record --pr N --step ID` (with `--status passed|failed` for a check, or
-`--status failed` for a failed fix). The step ID binds the record to the issued
-step: DIRF refuses a record for another step, a review step whose review file is
-missing, a finished run, or a checkout that moved (only a fix may add a commit),
-and it keeps the state. `dirf review next` also refuses a finished run when the
-checkout moved past it; run `dirf review next --pr N --reset` to start over.
+`--status failed` for a failed fix). The step ID is required and binds the
+record to the issued step: DIRF refuses a record with no `--step` or for another
+step, a review step whose review file is missing, a finished run, or a checkout
+that moved (only a fix may add a commit), and it keeps the state. `dirf review
+next` also refuses a finished run when the checkout moved past it, and a
+`--check` that differs from the check the run started with; run `dirf review
+next --pr N --reset` to start over.
 Repeat until `dirf review next` reports the outcome. Do not wrap an agent CLI in
 a shell command for the host to run: the host cannot see or stop that agent.
 

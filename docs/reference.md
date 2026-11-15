@@ -239,11 +239,12 @@ dirf review trigger <review.json>                       record the review round 
 dirf review reset-rounds <pr> --reason "..."            restart the round count after a person decides
 dirf review next --pr N [--check CMD] [--reset] [--json] host mode: print the next ladder step (check, review, fix)
                                                         with a brief, output path, and record command; never starts an agent
+                                                        a --check that differs from the run's check is refused (use --reset)
 dirf review record --pr N --step ID [--status passed|failed] [--output TEXT] [--json]
                                                         host mode: record the finished step and print the next one
-                                                        --step: 1-4 (review), check-1 / check-4 (check before that review), fix;
-                                                        a wrong step, a missing review file, or a moved checkout is refused
-                                                        and the state stays unchanged
+                                                        --step (required): 1-4 (review), check-1 / check-4 (check before
+                                                        that review), fix; a missing or wrong step, a missing review file,
+                                                        or a moved checkout is refused and the state stays unchanged
 dirf review loop --pr N --reviewer CMD --fixer CMD [--check CMD] [--json]
                                                         CI mode: run the Review Ladder once with shell commands, then report
                                                         reviewer env: DIRF_REVIEW_OUTPUT, _PR, _HEAD, _STEP, _PRIOR, _REQUEST

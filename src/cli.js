@@ -2113,8 +2113,8 @@ Usage:
   dirf review <validate|render|ready> review.json     validate, render, or prove a PR review is ready
   dirf review trigger review.json                    record the review round and emit the next action
   dirf review reset-rounds <pr> --reason "..."       restart the round count after a person decides
-  dirf review next --pr N [--check CMD] [--reset] [--json]  print the next Review Ladder step for the host to run with its own visible agent
-  dirf review record --pr N --step ID [--status passed|failed] [--output TEXT] [--json]  record the finished step and print the next one
+  dirf review next --pr N [--check CMD] [--reset] [--json]  print the next Review Ladder step for the host to run with its own visible agent (a run keeps its --check)
+  dirf review record --pr N --step ID [--status passed|failed] [--output TEXT] [--json]  record the finished step (--step is required) and print the next one
   dirf review loop --pr N --reviewer CMD --fixer CMD [--check CMD] [--json]
                                                       run the Review Ladder once for this checkout, then report
   dirf review verify-update request.json updated-review.json  compare the report targets
@@ -2355,9 +2355,14 @@ function cmdReviewNext(args) {
   if (!state) {
     state = startLadder({ pr: args.pr, check: args.check, outDir: context.outDir }, context.deps);
     writeFileSync(context.statePath, JSON.stringify(state, null, 2) + "\n");
-  } else if (!state.pending || state.pending.kind !== "fix") {
+  } else {
+    // A run keeps the check it started with; a different --check is never dropped silently.
+    if (args.check !== undefined && args.check !== state.check) {
+      const started = state.check ? `with --check ${JSON.stringify(state.check)}` : "without --check";
+      throw new Error(`The review ladder run for PR #${args.pr} was started ${started}. Nothing changed. Run dirf review next --pr ${args.pr} --reset --check ${JSON.stringify(args.check)} to start a new run with this check.`);
+    }
     // A finished run is for its own head too: a later commit was never reviewed.
-    assertLadderHead(context, state, args.pr);
+    if (!state.pending || state.pending.kind !== "fix") assertLadderHead(context, state, args.pr);
   }
   printHostView(state, args);
 }
@@ -2381,7 +2386,11 @@ function cmdReviewRecord(args) {
     throw new Error(`The review ladder run for PR #${args.pr} is finished (${state.outcome}). Nothing was recorded. Run dirf review next --pr ${args.pr} to see the outcome.`);
   }
   const pending = state.pending;
-  if (args.step !== undefined && args.step !== stepId(pending)) {
+  // --step is required: a retried record without it could otherwise land on the next step.
+  if (args.step === undefined) {
+    throw new Error(`dirf review record needs --step; the pending step is ${stepId(pending)}. Nothing was recorded. Run ${recordCommand(state, pending)}.`);
+  }
+  if (args.step !== stepId(pending)) {
     throw new Error(`--step ${args.step} is not the pending step ${stepId(pending)}. Nothing was recorded. Run dirf review next --pr ${args.pr} to see the pending step.`);
   }
   if (pending.kind !== "fix") assertLadderHead(context, state, args.pr);
