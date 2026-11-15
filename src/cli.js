@@ -16,7 +16,7 @@
 //   dirf skills scan [--path DIR]                        scan host, print installed skills + resolved refs
 //   dirf review trigger|verify-update ...                 hand off findings to a same-PR fixer
 //   dirf validate|graph|run|render <folder>               operate an Eve-style folder DAG
-import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, isAbsolute, resolve } from "node:path";
 import { homedir } from "node:os";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
@@ -51,7 +51,7 @@ import { checkoutRoot as skillCheckoutRoot, materializeSkills, removeMaterialize
 import { binding as skillBinding } from "./skill-bindings.js";
 import { run as runReviewReport } from "../skills/code-review/scripts/review-report.mjs";
 import { run as runReviewLedger } from "../skills/code-review/scripts/review-ledger.mjs";
-import { formatLoopReport, loopPassed, runReviewLadder, runShellCommand } from "./review-loop.js";
+import { LADDER_STATE_FILE, formatHostView, formatLoopReport, hostView, loopPassed, recordCommand, recordLadderResult, runReviewLadder, runShellCommand, startLadder, stepId } from "./review-loop.js";
 import { bindingsFromPlan, refreshSkillBindings } from "./skill-bindings.js";
 import { runSteCheck } from "./ste.js";
 import { applyCleanup, boardSnapshot, cleanupPlan, formatBoard, formatCleanupPlan, unfinishedWorkNotice } from "./board.js";
@@ -2127,6 +2127,19 @@ function parse(argv) {
     if (a === "--ledger") { out.ledger = rest[++i]; continue; }
     if (a === "--now") { out.now = rest[++i]; continue; }
     if (a === "--strict") { out.strict = true; continue; }
+    if (a === "--reset") { out.reset = true; continue; }
+    if (a === "--step") {
+      const value = rest[++i];
+      if (!value || value.startsWith("--")) throw new Error("--step requires the step from record_with, for example 1, check-1, or fix");
+      out.step = value;
+      continue;
+    }
+    if (a === "--status") {
+      const value = rest[++i];
+      if (value !== "passed" && value !== "failed") throw new Error("--status requires passed or failed");
+      out.status = value;
+      continue;
+    }
     if (a === "--auto") { out.auto = true; continue; }
     if (a === "--wait") { out.wait = rest[++i]; continue; }
     if (a === "--comment") { out.comment = rest[++i]; continue; }
@@ -2204,6 +2217,8 @@ Usage:
   dirf review <validate|render|ready> review.json     validate, render, or prove a PR review is ready
   dirf review trigger review.json                    record the review round and emit the next action
   dirf review reset-rounds <pr> --reason "..."       restart the round count after a person decides
+  dirf review next --pr N [--check CMD] [--reset] [--json]  print the next Review Ladder step for the host to run with its own visible agent (a run keeps its --check)
+  dirf review record --pr N --step ID [--status passed|failed] [--output TEXT] [--json]  record the finished step (--step is required) and print the next one
   dirf review loop --pr N --reviewer CMD --fixer CMD [--check CMD] [--json]
                                                       run the Review Ladder once for this checkout, then report
   dirf review verify-update request.json updated-review.json  compare the report targets
@@ -2382,39 +2397,130 @@ function cmdGovern(args) {
   process.exitCode = 2;
 }
 
-function cmdReviewLoop(args) {
+// The checkout, store project, loop folder, and git/ledger operations that
+// both ladder drivers share.
+function reviewLadderContext(args) {
+  if (!Number.isInteger(args.pr) || args.pr < 1) throw new Error("dirf review requires --pr with a pull-request number");
   const checkout = args.path ? resolve(args.path) : process.cwd();
   const git = (...gitArgs) => execFileSync("git", ["-C", checkout, ...gitArgs], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   const gitDir = git("rev-parse", "--absolute-git-dir");
   const project = resolveProject(checkout, { migrate: false });
   // Fail before any check or reviewer runs: every review must reach the ledger.
   if (!project) throw new Error("This checkout has no DIRF project, so dirf review loop cannot record reviews. Run dirf state register from the main checkout, or dirf state link for a shared store.");
+  const outDir = join(gitDir, "dirf-review-loop", `pr-${args.pr}`);
+  return {
+    checkout,
+    outDir,
+    statePath: join(outDir, LADDER_STATE_FILE),
+    deps: {
+      run: (command, env) => runShellCommand(command, env, checkout),
+      head: () => git("rev-parse", "HEAD"),
+      descends: (ancestor, descendant) => spawnSync("git", ["-C", checkout, "merge-base", "--is-ancestor", ancestor, descendant], { stdio: "ignore" }).status === 0,
+      trigger: (review) => recordReviewRound(resolveReviewProject(checkout, review), review),
+      recorded: (pr, head) => recordedReviewEntries(project.slug, pr, head),
+    },
+  };
+}
+
+function cmdReviewLoop(args) {
+  const context = reviewLadderContext(args);
   const report = runReviewLadder({
     pr: args.pr,
     reviewer: args.reviewer,
     fixer: args.fixer,
     check: args.check,
-    outDir: join(gitDir, "dirf-review-loop", `pr-${args.pr}`),
-  }, {
-    run: (command, env) => runShellCommand(command, env, checkout),
-    head: () => git("rev-parse", "HEAD"),
-    descends: (ancestor, descendant) => spawnSync("git", ["-C", checkout, "merge-base", "--is-ancestor", ancestor, descendant], { stdio: "ignore" }).status === 0,
-    trigger: (review) => recordReviewRound(resolveReviewProject(checkout, review), review),
-    recorded: (pr, head) => recordedReviewEntries(project.slug, pr, head),
-  });
+    outDir: context.outDir,
+  }, context.deps);
   console.log(args.json ? JSON.stringify(report, null, 2) : formatLoopReport(report));
   if (!loopPassed(report)) process.exitCode = 1;
+}
+
+function readLadderState(path) {
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    throw new Error(`The review ladder state is damaged: ${path}. Run dirf review next --reset to start a new run.`);
+  }
+}
+
+function printHostView(state, args) {
+  const view = hostView(state);
+  console.log(args.json ? JSON.stringify(view, null, 2) : formatHostView(view));
+  if (view.done && !loopPassed(view.report)) process.exitCode = 1;
+}
+
+// Host mode: DIRF chooses the step, the host runs it with its own visible
+// agent feature, and `dirf review record` stores the result.
+function cmdReviewNext(args) {
+  const context = reviewLadderContext(args);
+  if (args.reset) rmSync(context.statePath, { force: true });
+  let state = readLadderState(context.statePath);
+  if (!state) {
+    state = startLadder({ pr: args.pr, check: args.check, outDir: context.outDir }, context.deps);
+    writeFileSync(context.statePath, JSON.stringify(state, null, 2) + "\n");
+  } else {
+    // A run keeps the check it started with; a different --check is never dropped silently.
+    if (args.check !== undefined && args.check !== state.check) {
+      const started = state.check ? `with --check ${JSON.stringify(state.check)}` : "without --check";
+      throw new Error(`The review ladder run for PR #${args.pr} was started ${started}. Nothing changed. Run dirf review next --pr ${args.pr} --reset --check ${JSON.stringify(args.check)} to start a new run with this check.`);
+    }
+    // A finished run is for its own head too: a later commit was never reviewed.
+    if (!state.pending || state.pending.kind !== "fix") assertLadderHead(context, state, args.pr);
+  }
+  printHostView(state, args);
+}
+
+// Only a fix step may move the checkout. Any other move happened outside the ladder.
+function assertLadderHead(context, state, pr) {
+  const head = context.deps.head().toLowerCase();
+  const expected = state.observed_head || state.head;
+  if (head !== expected) {
+    throw new Error(`The checkout moved from ${expected} to ${head} outside the ladder. Run dirf review next --pr ${pr} --reset to start a new run.`);
+  }
+}
+
+function cmdReviewRecord(args) {
+  const context = reviewLadderContext(args);
+  const state = readLadderState(context.statePath);
+  if (!state) throw new Error(`No review ladder run exists for PR #${args.pr}. Run dirf review next --pr ${args.pr} first.`);
+  // Every refusal below leaves the state unchanged, so the host can correct
+  // the call and record again.
+  if (!state.pending) {
+    throw new Error(`The review ladder run for PR #${args.pr} is finished (${state.outcome}). Nothing was recorded. Run dirf review next --pr ${args.pr} to see the outcome.`);
+  }
+  const pending = state.pending;
+  // --step is required: a retried record without it could otherwise land on the next step.
+  if (args.step === undefined) {
+    throw new Error(`dirf review record needs --step; the pending step is ${stepId(pending)}. Nothing was recorded. Run ${recordCommand(state, pending)}.`);
+  }
+  if (args.step !== stepId(pending)) {
+    throw new Error(`--step ${args.step} is not the pending step ${stepId(pending)}. Nothing was recorded. Run dirf review next --pr ${args.pr} to see the pending step.`);
+  }
+  if (pending.kind !== "fix") assertLadderHead(context, state, args.pr);
+  if (pending.kind === "check" && !args.status) throw new Error("A check step needs --status passed or --status failed");
+  if (pending.kind === "review" && args.status !== "failed" && !existsSync(pending.write_to)) {
+    throw new Error(`Review step ${pending.step} has no review at ${pending.write_to} yet. Nothing was recorded. Write the review there, then run ${recordCommand(state, pending)}.`);
+  }
+  const result = args.status ? { status: args.status === "passed" ? 0 : 1, output: args.output || "" } : {};
+  recordLadderResult(state, result, context.deps);
+  writeFileSync(context.statePath, JSON.stringify(state, null, 2) + "\n");
+  printHostView(state, args);
 }
 
 function cmdReview(args) {
   const subcommand = args._[0];
   if (subcommand === "loop") { cmdReviewLoop(args); return; }
+  if (subcommand === "next") { cmdReviewNext(args); return; }
+  if (subcommand === "record" && args.pr !== undefined) { cmdReviewRecord(args); return; }
   const files = args._.slice(1);
   if (!subcommand || !files.length) {
     console.error("usage: dirf review <validate|render|ready> review.json");
     console.error("       dirf review trigger review.json");
     console.error("       dirf review verify-update request.json updated-review.json");
     console.error('       dirf review reset-rounds <pr> --reason "..."');
+    console.error("       dirf review next --pr N [--check CMD] [--reset] [--json]");
+    console.error("       dirf review record --pr N --step ID [--status passed|failed] [--json]");
     console.error("       dirf review loop --pr N --reviewer CMD --fixer CMD [--check CMD] [--json]");
     process.exitCode = 2;
     return;
