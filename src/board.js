@@ -239,16 +239,15 @@ export function handoffPullRequests(markdown) {
   return numbers;
 }
 
-// Handoff PR numbers with link strength. "strong": the handoff claims the PR
-// as this attempt's own (Work item pr:N, or opened/created/pushed PR #N).
-// "handoff": any other mention, which may be a dependency or a sibling.
+// Handoff PR numbers with link strength. "strong": only the structured
+// `## Work item` line (pr:N) claims a PR as this attempt's own. Prose is never
+// parsed for ownership ("opened PR #N" and "waiting on the open PR #N" read
+// alike), so every other mention is "handoff": shown, but never shipped work.
 export function handoffPullRequestLinks(markdown) {
   const text = String(markdown || "");
   const links = new Map([...handoffPullRequests(text)].map((number) => [number, "handoff"]));
   const workItem = text.match(/^##\s*Work item\s*\r?\n+([^\n]*)/im)?.[1] || "";
   for (const match of workItem.matchAll(/\bpr:(\d+)\b/gi)) links.set(Number(match[1]), "strong");
-  const owned = /\b(?:opened|open|created|create|raised|submitted|pushed|filed)\b(?:[^.\n]|\.(?=\S)){0,60}?(?:\bPR\s*#?\s*|\bpull request\s*#|\/pull\/)(\d+)\b/gi;
-  for (const match of text.matchAll(owned)) links.set(Number(match[1]), "strong");
   return links;
 }
 

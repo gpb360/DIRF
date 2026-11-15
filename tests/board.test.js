@@ -112,8 +112,8 @@ function fakeGh(prs, { threads = [] } = {}) {
 function fixture() {
   const { root, slug } = setup();
   const now = new Date();
-  const ready = addAttempt(slug, "ready-feature", { handoff: "## Completed\n\n- Opened PR #12.\n\n## Exact next action\n\nMerge PR #12 after review.\n" });
-  const shipped = addAttempt(slug, "shipped-feature", { handoff: "## Completed\n\n- Opened https://github.com/example/repo/pull/10\n\n## Exact next action\n\nWait for merge.\n" });
+  const ready = addAttempt(slug, "ready-feature", { handoff: "## Work item\n\nready pr:12\n\n## Completed\n\n- Opened PR #12.\n\n## Exact next action\n\nMerge PR #12 after review.\n" });
+  const shipped = addAttempt(slug, "shipped-feature", { handoff: "## Work item\n\nshipped pr:10\n\n## Completed\n\n- Opened https://github.com/example/repo/pull/10\n\n## Exact next action\n\nWait for merge.\n" });
   const done = addAttempt(slug, "done-by-handoff", { handoff: "## Exact next action\n\nDone.\n" });
   const stale = addAttempt(slug, "old-idea", { date: new Date(now.getTime() - 20 * DAY) });
   const planned = addAttempt(slug, "planned-only", { start: false });
@@ -246,7 +246,7 @@ test("a PR the handoff only mentions as a dependency is not the attempt's shippe
 test("a dependency PR opened after the attempt started still is not shipped work", () => {
   const { root, slug } = setup();
   const now = new Date();
-  const attempt = addAttempt(slug, "consumer", { handoff: "## Exact next action\n\nWait for PR #20 to merge, then start the build.\n" });
+  const attempt = addAttempt(slug, "consumer", { handoff: "## Completed\n\n- Created the branch; pushed fixes.\n\n## Blockers\n\nWaiting on the open PR #20 from the API team.\n\n## Exact next action\n\nWait for PR #20 to merge, then open our PR.\n" });
   const later = new Date(now.getTime() + 1000).toISOString();
   const { gh } = fakeGh([{ number: 20, title: "Parallel dependency", state: "MERGED", url: "u", headRefName: "feat/api", createdAt: later, mergedAt: later, mergeCommit: { oid: MERGE_10 } }]);
   const board = boardSnapshot(slug, { checkout: root, gh, now, requireOrigin: false, mergeBase: () => BASE });
@@ -257,7 +257,7 @@ test("a dependency PR opened after the attempt started still is not shipped work
 test("a review with no clean ledger round does not qualify for merge", () => {
   const { root, slug } = setup();
   const now = new Date();
-  const attempt = addAttempt(slug, "unrecorded", { handoff: "## Completed\n\n- Opened PR #30.\n" });
+  const attempt = addAttempt(slug, "unrecorded", { handoff: "## Work item\n\nunrecorded pr:30\n" });
   writeReview(root, 30, review(30, HEAD_12));
   const { gh } = fakeGh([{ number: 30, title: "Unrecorded", state: "OPEN", url: "u", headRefName: "feat/x", headRefOid: HEAD_12, baseRefOid: BASE, createdAt: now.toISOString(), isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", statusCheckRollup: GREEN, body: "" }]);
   const pr = boardSnapshot(slug, { checkout: root, gh, now, requireOrigin: false, mergeBase: () => BASE }).attempts.find((a) => a.id === attempt.id).prs[0];
@@ -275,10 +275,21 @@ test("an unresolved review conversation stops the merge at apply time", async ()
   assert.equal(calls.some((args) => args[1] === "merge"), false);
 });
 
-test("handoffPullRequestLinks marks owned PRs strong and mentions weak", async () => {
+test("handoffPullRequestLinks marks only the Work item PR strong; prose mentions stay weak", async () => {
   const { handoffPullRequestLinks } = await import("../src/board.js");
   const links = handoffPullRequestLinks("## Work item\n\npr:7\n\n## Completed\n\n- Opened PR #8.\n- Pushed https://github.com/o/r/pull/9\n\n## Exact next action\n\nWait for PR #10 to merge.\n");
-  assert.deepEqual(Object.fromEntries(links), { 7: "strong", 8: "strong", 9: "strong", 10: "handoff" });
+  assert.deepEqual(Object.fromEntries(links), { 7: "strong", 8: "handoff", 9: "handoff", 10: "handoff" });
+  // Dependency prose that reads like ownership must never become shipped work.
+  for (const prose of [
+    "Blocker: Waiting on the open PR #20 from the API team.",
+    "Blocked: waiting on the open PR #20 from the API team to merge.",
+    "Created the branch; waiting for PR #20 to merge.",
+    "Pushed fixes, then blocked on PR #20 merging.",
+    "Next: open our PR once PR #20 merges.",
+  ]) {
+    const handoff = `## Work item\n\nconsumer\n\n## Blockers\n\n${prose}\n`;
+    assert.deepEqual(Object.fromEntries(handoffPullRequestLinks(handoff)), { 20: "handoff" }, prose);
+  }
 });
 
 test("a merged PR that predates the attempt is context, not shipped work", () => {

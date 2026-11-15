@@ -78,6 +78,10 @@ function fixture() {
   const built = run(["build", "ready-feature", "add a small cli flag", "--json"]);
   assert.equal(built.status, 0, built.stderr);
   const attemptId = JSON.parse(built.stdout).attempt.id;
+  // The PR body names the attempt: a structured, strong link (handoff prose is not).
+  const prs = JSON.parse(readFileSync(ghState, "utf8"));
+  prs[0].body = `DIRF attempt: ${attemptId}`;
+  writeFileSync(ghState, JSON.stringify(prs));
   const progress = run(["record-progress", "Opened PR #12", "--attempt", attemptId, "--next", "Merge PR #12 after review"]);
   assert.equal(progress.status, 0, progress.stderr);
   const reviewDir = join(dir, ".scratch", "dirf-review", "pr-12");

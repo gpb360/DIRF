@@ -473,8 +473,9 @@ id. A bare `#N` counts only on a handoff line that mentions a PR, merge, or
 review. A PR that merged or closed before the Attempt was created is context,
 not shipped work, so it is not linked. A PR counts as the Attempt's own shipped
 work only when the branch, the PR body, or the Attempt's `review.json` links
-it, or when the handoff claims it (`Work item: pr:N`, or "opened/created/pushed
-PR #N"). Any other PR the handoff mentions (for example a dependency) is shown
+it, or when the handoff's `## Work item` line names it (`pr:N`). Handoff prose
+is never read for ownership, so any other PR the handoff mentions (for example
+"opened PR #8" or a dependency such as "waiting on the open PR #20") is shown
 but never closes the Attempt. PR facts come from `gh pr list`/`gh pr view` in the checkout. When `gh` is
 missing, offline, or the checkout has no GitHub origin, the board still lists
 Attempts and states why the PR columns are empty.

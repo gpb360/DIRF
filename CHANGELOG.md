@@ -15,7 +15,8 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   mergeability. `dirf cleanup` is a dry run by default; `--apply` asks per item
   (`--yes` accepts every merge and close) to squash-merge green, mergeable PRs
   whose review verdict is PASS at the current head, with `--match-head-commit`, close Attempts whose PRs merged or
-  whose next action says Done, and keep, close, or abandon stale Attempts.
+  whose next action says Done (a PR the handoff only mentions in prose, such as a
+  dependency, never closes an Attempt), and keep, close, or abandon stale Attempts.
   `gh` is optional: without it the board still lists Attempts.
 - **`closed` lifecycle state with outcome `shipped`** — `dirf attempt close <id>
   --outcome shipped` records shipped work with its merged PRs and commits in
