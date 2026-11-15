@@ -26,6 +26,7 @@ import { createHash } from "node:crypto";
 import { ROOT, REGISTRY, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, fileHash, folderHash, loadJson } from "./paths.js";
 import { collectRoutingFacts, loadPlaybooks, recommend } from "./router.js";
 import { detectWorktreeTool } from "./worktree-tool.js";
+import { applyJanitor, formatBinReport, formatJanitorReport, formatPurgeReport, listBin, planJanitor, purgeBin, restoreFromBin } from "./worktree-janitor.js";
 import { bundledSkills, detectHarnesses, discover, discoverAgents, enrichDiscovered, lintSkillMetadata, loadRegistry, loadTrustedSources, missingSkillFiles, providerForPath, resolveAgentSkills, skillIsIncomplete, tokenBudget } from "./skills.js";
 import { FOCUSED_OUTPUT_RULES, buildInstructions, buildHtml } from "./renderer.js";
 import { main as validateMain, validateSnapshot } from "./validate.js";
@@ -1787,11 +1788,34 @@ function cmdWorktree(args) {
   const action = args._[0];
   const path = args.worktree || args._[1];
   let result;
+  const binStore = join(storeProjectDir(slug), "worktree-bin");
+  const print = (value, text) => console.log(args.json ? JSON.stringify(value, null, 2) : text);
+  if (action === "janitor") {
+    const plan = planJanitor(inspectProjectWorktrees(slug), { shedDays: args.shedDays, removeDays: args.removeDays, sizes: args.sizes !== false, branches: args.branches !== false });
+    if (args.apply) plan.applied = applyJanitor(plan, { store: binStore, only: args.only });
+    print(plan, formatJanitorReport(plan));
+    if (plan.applied?.errors.length) process.exitCode = 1;
+    return;
+  }
+  if (action === "bin") {
+    const receipts = listBin(binStore);
+    return print(receipts, formatBinReport(receipts));
+  }
+  if (action === "restore") {
+    const receipt = restoreFromBin(binStore, args._[1]);
+    return print(receipt, `Restored ${receipt.path} on ${receipt.restored_as}. Its dependencies were deleted when it was binned; install them again.`);
+  }
+  if (action === "purge") {
+    const purge = purgeBin(binStore, { keepDays: args.keepDays, apply: args.apply });
+    print(purge, formatPurgeReport(purge));
+    if (purge.errors.length) process.exitCode = 1;
+    return;
+  }
   if (action === "list") result = inspectProjectWorktrees(slug);
   else if (action === "archive") result = archiveWorktree(slug, path);
   else if (action === "remind") result = remindArchivedWorktree(slug, path);
   else if (action === "remove") result = removeArchivedWorktree(slug, path, { approved: args.approved });
-  else throw new Error("usage: dirf worktree <list|archive|remind|remove> [path]");
+  else throw new Error("usage: dirf worktree <list|janitor|bin|restore|purge|archive|remind|remove> [path|id]");
   console.log(JSON.stringify(result, null, 2));
 }
 
@@ -2186,6 +2210,12 @@ function parse(argv) {
     if (a === "--skip-render") { out.skipRender = true; continue; }
     if (a === "--confirm") { out.confirm = true; continue; }
     if (a === "--approved") { out.approved = true; continue; }
+    if (a === "--no-sizes") { out.sizes = false; continue; }
+    if (a === "--no-branches") { out.branches = false; continue; }
+    if (a === "--shed-days") { out.shedDays = Number(rest[++i]); continue; }
+    if (a === "--remove-days") { out.removeDays = Number(rest[++i]); continue; }
+    if (a === "--keep-days") { out.keepDays = Number(rest[++i]); continue; }
+    if (a === "--only") { out.only = rest[++i]; continue; }
     if (a === "--json") { out.json = true; continue; }
     if (a === "--full") { out.full = true; continue; }
     if (a === "--summary") { out.summary = true; continue; }
@@ -2281,6 +2311,11 @@ Usage:
   dirf artifact record <attempt> --file FILE [--json] record one metadata JSON object (add is an alias)
   dirf artifact accept <attempt> <artifact-id> [--json] explicitly accept a recorded artifact
   dirf worktree <list|archive|remind|remove> [path]   inspect or clean worktrees
+  dirf worktree janitor [--apply [--only remove|shed|orphans|branches]] [--shed-days N] [--remove-days N] [--no-sizes] [--no-branches] [--json]
+                                                      report idle worktrees and merged branches; --apply sheds node_modules and moves clean, pushed worktrees and merged branches to the recycle bin
+  dirf worktree bin [--json]                           list binned worktrees and branches with the proof that their work is kept
+  dirf worktree restore <id>                           put a binned worktree or branch back where it was
+  dirf worktree purge [--keep-days N] [--apply]        delete bin entries older than N days (default 14) for good
   dirf settings <get|set>                              read or update cleanup settings (--stale-attempt-days N for board/cleanup)
   dirf migrate [<name>]                                remove runtime paths from saved snapshots
   dirf validate                                        validate registries

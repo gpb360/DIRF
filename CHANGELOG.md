@@ -47,6 +47,37 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   opt-in PreToolUse edit guard (`dirf state guard --hook`) that denies
   Edit/Write in a configured checkout that no attempt owns and fails open on
   bad input.
+- **Worktree janitor** — `dirf worktree janitor` reports the worktrees of a
+  project that are safe to clean, whichever tool created them. It labels each
+  worktree with its owner tool from the path (T3 Code, Codex, Claude, Archon,
+  repo-local, sibling). A worktree idle for 1 day can lose `node_modules`. A
+  worktree idle for 3 days is removable only when it is clean, its commits are
+  on a remote, and its ignored files are copies of the main checkout's. A dirty
+  worktree, unpushed commits, or a live attempt always block removal. The
+  command also lists folders in a worktree root that git does not list. It is a
+  dry run by default; `--apply` carries out the plan and keeps every branch.
+  `--shed-days`, `--remove-days`, `--no-sizes` and `--json` adjust the run.
+- **Worktree recycle bin** — `dirf worktree janitor --apply` moves a removable
+  worktree into a `.dirf-trash` folder beside its old location instead of
+  deleting it. The move uses `git worktree move`, so git keeps the worktree's
+  index, its reflog and the commits only that reflog holds. Each move writes a
+  receipt: the commit, the remote ref that holds it, whether the default branch
+  contains it, and the checks made after the move. `dirf worktree bin` lists
+  the bin and `dirf worktree restore <id>` moves a worktree back unchanged.
+  `dirf worktree purge` deletes entries older than 14 days with
+  `git worktree remove`, and only while a branch or remote still holds their
+  commit. Receipts and a journal of every change are kept after a purge.
+  `--apply --only remove|shed|orphans|branches` runs one step.
+- **Branch sweep** — `dirf worktree janitor` also reports local branches. A
+  branch is removable only when the remote's default branch holds its work:
+  either the branch is merged, or its remote branch is gone and the default
+  branch holds the same change as one squashed commit. A branch that was never
+  pushed, has unpushed commits, is checked out in a worktree, or is `main` or
+  `master` is always kept, and the report gives the reason. `--apply` renames a
+  removable branch to `dirf-trash/<id>`, which keeps its reflog and its
+  upstream setting; `dirf worktree restore <id>` renames it back. Purge deletes
+  it only while the default branch still holds its work. Remote branches are
+  never touched. `--no-branches` leaves branches out of the report.
 - **Pull request lifecycle playbooks** — four playbooks cover the work around a
   pull request that the Review Ladder does not: `pr-watch` (watch checks and
   review bots, fix the real findings, stop when ready), `pr-modernize` (bring an
