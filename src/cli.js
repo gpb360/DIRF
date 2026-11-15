@@ -2365,8 +2365,9 @@ function cmdReviewNext(args) {
 // Only a fix step may move the checkout. Any other move happened outside the ladder.
 function assertLadderHead(context, state, pr) {
   const head = context.deps.head().toLowerCase();
-  if (head !== state.head) {
-    throw new Error(`The checkout moved from ${state.head} to ${head} outside the ladder. Run dirf review next --pr ${pr} --reset to start a new run.`);
+  const expected = state.observed_head || state.head;
+  if (head !== expected) {
+    throw new Error(`The checkout moved from ${expected} to ${head} outside the ladder. Run dirf review next --pr ${pr} --reset to start a new run.`);
   }
 }
 

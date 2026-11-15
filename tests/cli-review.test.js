@@ -657,3 +657,41 @@ test("dirf review record refuses a check or review after the checkout moved", ()
   assert.match(review.stderr, /moved .* outside the ladder/);
   assert.equal(JSON.parse(ladderState(work, 9)).pending.kind, "review");
 });
+
+test("dirf review next keeps showing fixer_failed after a fixer committed and then failed", () => {
+  const root = mkdtempSync(join(tmpdir(), "dirf-review-host-fixfail-"));
+  const origin = join(root, "origin.git");
+  const work = join(root, "work");
+  mkdirSync(work);
+  git(root, ["init", "--bare", "-q", origin]);
+  git(work, ["init", "-q"]);
+  git(work, ["config", "user.email", "dirf@example.invalid"]);
+  git(work, ["config", "user.name", "DIRF Test"]);
+  git(work, ["remote", "add", "origin", origin]);
+  writeFileSync(join(work, "change.txt"), "base\n");
+  git(work, ["add", "change.txt"]);
+  git(work, ["commit", "-q", "-m", "base"]);
+  const base = git(work, ["rev-parse", "HEAD"]);
+  writeFileSync(join(work, "change.txt"), "head\n");
+  git(work, ["commit", "-q", "-am", "head"]);
+  const head = git(work, ["rev-parse", "HEAD"]);
+  assert.equal(run(work, ["state", "register"]).status, 0);
+  const step = (args) => JSON.parse(run(work, [...args, "--json"]).stdout);
+  let view = step(["review", "next", "--pr", "6"]);
+  while (view.action?.kind === "review") {
+    const review = reviewFor(pathToFileURL(origin).href, base, head, 6);
+    review.axes.correctness = { status: "finding", evidence: "P2-001" };
+    review.findings = [{ id: "P2-001", priority: "P2", confidence: 92, axis: "correctness", title: "Fix the text",
+      file: "change.txt", line: 1, body: "The text is wrong.", evidence: ["change.txt says head"] }];
+    writeFileSync(view.action.write_to, JSON.stringify(review));
+    view = step(["review", "record", "--pr", "6", "--step", String(view.action.step)]);
+  }
+  assert.equal(view.action.kind, "fix");
+  writeFileSync(join(work, "change.txt"), "half fixed\n");
+  git(work, ["commit", "-q", "-am", "half fix"]);
+  view = step(["review", "record", "--pr", "6", "--step", "fix", "--status", "failed"]);
+  assert.equal(view.report.outcome, "fixer_failed");
+  const again = run(work, ["review", "next", "--pr", "6", "--json"]);
+  assert.equal(again.status, 1, again.stderr);
+  assert.equal(JSON.parse(again.stdout).report.outcome, "fixer_failed");
+});

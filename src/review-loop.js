@@ -140,7 +140,14 @@ export function startLadder(options, deps) {
     outcome: null,
     detail: {},
   };
-  if (recordedCommitQualified(deps.recorded(pr, head) || [])) return finishState(state, "already_qualified");
+  // A damaged ledger ends the run with an error report, as it always did.
+  let recorded;
+  try {
+    recorded = deps.recorded(pr, head) || [];
+  } catch (error) {
+    return finishState(state, "error", { error: error.message });
+  }
+  if (recordedCommitQualified(recorded)) return finishState(state, "already_qualified");
   state.pending = check ? checkStep(state, "step 1") : reviewStep(state, 1);
   return state;
 }
@@ -218,7 +225,12 @@ function recordReview(state, result, deps) {
 function recordFix(state, result, deps) {
   const passed = result.status === undefined || result.status === 0;
   state.steps.push({ kind: "fix", head: state.head, status: passed ? "passed" : "failed" });
-  if (!passed) return finishState(state, "fixer_failed", { output: result.output });
+  if (!passed) {
+    // A fixer can commit and still fail. Keep the head it left so a host can
+    // read this outcome later; the report keeps the reviewed head.
+    state.observed_head = String(deps.head()).toLowerCase();
+    return finishState(state, "fixer_failed", { output: result.output });
+  }
   const fixedHead = String(deps.head()).toLowerCase();
   if (fixedHead === state.head) return finishState(state, "fixer_made_no_commit");
   if (!deps.descends(state.head, fixedHead)) {

@@ -358,3 +358,24 @@ test("a fix step asks for a new agent when the ledger wants a new approach", () 
   assert.equal(view.action.env.DIRF_REVIEW_NEW_AGENT, "1");
   assert.match(view.brief, /new approach/);
 });
+
+test("a damaged review ledger still ends the shell run with an error report", () => {
+  const h = harness();
+  h.deps.recorded = () => { throw new Error("The review rounds file is damaged: pr-7.json. Repair or delete it."); };
+  const report = runReviewLadder(h.options, h.deps);
+  assert.equal(report.outcome, "error");
+  assert.match(report.error, /damaged: pr-7\.json/);
+  assert.deepEqual(h.commands(), []);
+});
+
+test("a fixer that commits and then fails keeps its outcome readable", () => {
+  const h = harness({ reviews: [true, true, true], fixStatus: 1 });
+  h.deps.run = ((run) => (command, env) => {
+    const result = run(command, env);
+    if (command === "fix") h.deps.head = () => SHA_C; // committed, then failed
+    return result;
+  })(h.deps.run);
+  const host = walkAsHost(h);
+  assert.equal(host.report.outcome, "fixer_failed");
+  assert.equal(host.report.head, SHA_B, "the report keeps the reviewed head");
+});
