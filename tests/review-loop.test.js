@@ -339,6 +339,8 @@ test("host hints name the host's own visible agent feature and never start one",
   assert.match(hostHint({ CLAUDECODE: "1" }).how, /Agent tool/);
   assert.equal(hostHint({ DIRF_HARNESS: "zed" }).host, "zed");
   assert.match(hostHint({}).how, /Do not start hidden background agents/);
+  const h = harness();
+  assert.match(hostView(startLadder(h.options, h.deps), { T3CODE_THREAD_ID: "t" }).hint.how, /yourself. It needs no agent/);
 });
 
 test("a fix step asks for a new agent when the ledger wants a new approach", () => {

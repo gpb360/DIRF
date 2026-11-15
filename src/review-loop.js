@@ -377,7 +377,10 @@ export function hostView(state, env = process.env) {
     action: { ...pending, env: stepEnv(state, pending) },
     brief: stepBrief(state, pending),
     record_with: recordCommand(state, pending),
-    hint: hostHint(env),
+    // A check is a plain command, not agent work: run it directly.
+    hint: pending.kind === "check"
+      ? { host: hostHint(env).host, how: "Run the check command in the PR checkout yourself. It needs no agent." }
+      : hostHint(env),
     guardrails: { merge_is_not_authorized: true, push_is_not_performed: true },
   };
 }

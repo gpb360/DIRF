@@ -528,7 +528,7 @@ test("dirf review next and record let the host run every ladder step itself", ()
   assert.equal(view.mode, "host");
   assert.equal(view.action.kind, "check");
   assert.equal(view.action.command, "npm test");
-  assert.match(view.hint.how, /visible|subagent|delegate_task|spawn_agent|Agent tool/);
+  assert.match(view.hint.how, /needs no agent/);
   assert.notEqual(run(work, ["review", "record", "--pr", "5"]).status, 0, "a check needs --status");
   // next again returns the same pending step: nothing ran.
   assert.equal(step(["review", "next", "--pr", "5"]).action.kind, "check");
