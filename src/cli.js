@@ -1042,13 +1042,14 @@ function installHook(settingsPath, { guard = false } = {}) {
     const present = list.some((existing) => Array.isArray(existing?.hooks) && existing.hooks.some((entry) => entry?.type === "command" && entry?.command === command));
     if (!present) { list.push(group); added += 1; }
   }
-  if (!added) return { installed: false, enabledChanged: false };
+  const guardSkipped = guard && eventsShape;
+  if (!added) return { installed: false, enabledChanged: false, guardSkipped };
   let enabledChanged = false;
   if (eventsShape && hooks.enabled !== true) { hooks.enabled = true; enabledChanged = true; }
   const backup = `${settingsPath}.dirf-bak`;
   if (!existsSync(backup)) writeFileSync(backup, original, "utf8");
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf8");
-  return { installed: true, enabledChanged };
+  return { installed: true, enabledChanged, guardSkipped };
 }
 
 function installHostSkill(skillDir, force = false) {
@@ -1085,6 +1086,7 @@ function cmdHost(args) {
         } else {
           console.log(`Hook already present in ${settingsPath}; nothing changed.`);
         }
+        if (result.guardSkipped) console.error("Edit guard not installed: the ZCode hooks.events schema supports only the SessionStart hook.");
       } catch (error) {
         console.error(`Hook install failed: ${error.message}`);
         process.exitCode = 1;
@@ -1390,6 +1392,21 @@ function hookEvent(args) {
   return event;
 }
 
+// A git checkout resolves from its top level. A configured non-git folder is
+// found by walking up, so a file in a subfolder still belongs to it.
+function guardProject(dir) {
+  const top = gitOutput(dir, ["rev-parse", "--show-toplevel"]);
+  if (top) {
+    const project = resolveProject(top, { touch: false, migrate: false });
+    return project ? { project, checkout: top } : null;
+  }
+  for (let current = dir; ; current = dirname(current)) {
+    const project = resolveProject(current, { touch: false, migrate: false });
+    if (project) return { project, checkout: current };
+    if (dirname(current) === current) return null;
+  }
+}
+
 // PreToolUse edit guard. It denies edits in a configured checkout that no attempt
 // owns. It never blocks on its own failure: bad input or an error allows the edit.
 function cmdStateGuard(args) {
@@ -1399,12 +1416,12 @@ function cmdStateGuard(args) {
   try {
     const file = payload?.tool_input?.file_path || payload?.tool_input?.notebook_path;
     const base = typeof payload?.cwd === "string" && payload.cwd ? payload.cwd : process.cwd();
-    const dir = typeof file === "string" && file ? dirname(resolve(base, file)) : base;
-    if (!existsSync(dir)) return;
-    const target = projectRoot(dir);
-    const project = resolveProject(target, { touch: false, migrate: false });
-    if (!project) return;
-    const state = checkoutSummary(project.slug, checkoutRoot(target)).responsibility.state;
+    let dir = projectRoot(typeof file === "string" && file ? dirname(resolve(base, file)) : base);
+    // A Write may create new folders: judge the edit by the nearest folder that exists.
+    while (!existsSync(dir) && dirname(dir) !== dir) dir = dirname(dir);
+    const located = guardProject(dir);
+    if (!located) return;
+    const state = checkoutSummary(located.project.slug, located.checkout).responsibility.state;
     if (state === "active") return;
     const reason = state === "conflict"
       ? "DIRF: more than one attempt claims this checkout. Ask the user which attempt owns it, then run `dirf resume <id>`."

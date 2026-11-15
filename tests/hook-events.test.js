@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -127,4 +127,46 @@ test("state guard fails open on unreadable hook input", () => {
   const out = run(["state", "guard", "--hook"], { DIRF_HOME: home }, repo, "not json");
   assert.equal(out.status, 0);
   assert.equal(out.stdout.trim(), "", "a broken payload never blocks the host");
+});
+
+test("state guard judges new folders, patch payloads, and non-git subfolders", () => {
+  const env = (home) => ({ DIRF_HOME: home });
+  const deny = (out) => JSON.parse(out.stdout).hookSpecificOutput.permissionDecision;
+  const { home, repo } = repoWithHome("guardedge-");
+  run(["setup", repo], env(home), repo);
+  const newFolder = run(["state", "guard", "--hook"], env(home), repo,
+    JSON.stringify({ cwd: repo, tool_name: "Write", tool_input: { file_path: join(repo, "newdir", "deep", "a.js") } }));
+  assert.equal(deny(newFolder), "deny", "a Write that creates folders is still guarded");
+  const patch = run(["state", "guard", "--hook"], env(home), repo,
+    JSON.stringify({ cwd: repo, tool_name: "apply_patch", tool_input: { input: "*** Begin Patch" } }));
+  assert.equal(deny(patch), "deny", "a payload without file_path falls back to cwd");
+
+  const plainHome = mkdtempSync(join(tmpdir(), "dirf-hookev-home-"));
+  const plain = mkdtempSync(join(tmpdir(), "guardplain-"));
+  const setup = run(["setup", plain], env(plainHome), plain);
+  assert.equal(setup.status, 0, setup.stderr);
+  const nested = run(["state", "guard", "--hook"], env(plainHome), plain,
+    JSON.stringify({ cwd: plain, tool_name: "Write", tool_input: { file_path: join(plain, "sub", "a.txt") } }));
+  assert.equal(deny(nested), "deny", "a subfolder of a configured non-git folder is guarded");
+});
+
+test("host setup --guard warns on the ZCode schema and keeps it SessionStart-only", () => {
+  const settings = join(mkdtempSync(join(tmpdir(), "hookev-zc-")), "settings.json");
+  writeFileSync(settings, JSON.stringify({ hooks: { enabled: true, events: {} } }, null, 2));
+  const out = run(["host", "setup", "--settings", settings, "--skip-skill", "--guard"], { DIRF_HOME: mkdtempSync(join(tmpdir(), "dirf-hookev-home-")) });
+  assert.equal(out.status, 0, out.stderr);
+  assert.match(out.stderr, /Edit guard not installed/);
+  assert.deepEqual(Object.keys(JSON.parse(readFileSync(settings, "utf8")).hooks.events), ["SessionStart"]);
+});
+
+test("host setup rejects a malformed event list without writing anything", () => {
+  const dir = mkdtempSync(join(tmpdir(), "hookev-bad-"));
+  const settings = join(dir, "settings.json");
+  const original = JSON.stringify({ hooks: { SubagentStart: {} } }, null, 2);
+  writeFileSync(settings, original);
+  const out = run(["host", "setup", "--settings", settings, "--skip-skill"], { DIRF_HOME: mkdtempSync(join(tmpdir(), "dirf-hookev-home-")) });
+  assert.equal(out.status, 1);
+  assert.match(out.stderr, /settings\.hooks\.SubagentStart must be an array or absent/);
+  assert.equal(readFileSync(settings, "utf8"), original);
+  assert.equal(existsSync(`${settings}.dirf-bak`), false, "no backup for a rejected file");
 });
