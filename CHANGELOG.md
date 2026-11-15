@@ -22,6 +22,23 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   other host); DIRF never starts an agent, and host detection only chooses the
   hint text. `dirf review loop` keeps its shell mode for CI and now runs on the
   same ladder state machine, so both modes reach the same outcomes.
+- **Project board and cleanup** — `dirf board [--path DIR] [--json]` lists every
+  open Attempt in one project with phase, idle days, next action, a stale flag
+  (`dirf settings set --stale-attempt-days N`, default 7), and its linked GitHub
+  PRs with review confidence at the current head, check status, and
+  mergeability. `dirf cleanup` is a dry run by default; `--apply` asks per item
+  (`--yes` accepts every merge and close) to squash-merge green, mergeable PRs
+  whose review verdict is PASS at the current head, with `--match-head-commit`, close Attempts whose PRs merged or
+  whose next action says Done (a PR the handoff only mentions in prose, such as a
+  dependency, never closes an Attempt), and keep, close, or abandon stale Attempts.
+  `gh` is optional: without it the board still lists Attempts.
+- **`closed` lifecycle state with outcome `shipped`** — `dirf attempt close <id>
+  --outcome shipped` records shipped work with its merged PRs and commits in
+  `closure`, without phase evidence or gate records. Portfolio and project
+  status count it as finished work, distinct from `done` and `abandoned`.
+- **Unfinished-work notice** — `dirf build`, `dirf plan`, and `dirf create`
+  print the top five open Attempts and passing-but-unmerged PRs on stderr with
+  a `dirf board` / `dirf cleanup` hint before they continue.
 - **Pull request lifecycle playbooks** — four playbooks cover the work around a
   pull request that the Review Ladder does not: `pr-watch` (watch checks and
   review bots, fix the real findings, stop when ready), `pr-modernize` (bring an

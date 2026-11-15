@@ -13,7 +13,7 @@ const STATUS_LABEL = { active: "Active", idle: "Idle", completed: "Completed", s
 const STATUS_ICON = { active: "🚀", idle: "⏸️", completed: "✅", stale: "🕰️", archived: "📦", empty: "📭" };
 const STATUS_ORDER = ["active", "idle", "completed", "stale", "archived", "empty"];
 const STATUS_COLOR = { active: "5", idle: "3", completed: "4", stale: "2", archived: "6", empty: "1" };
-const ATTEMPT_COLOR = { planned: "3", in_progress: "5", blocked: "1", abandoned: "2", done: "4", historical: "6" };
+const ATTEMPT_COLOR = { planned: "3", in_progress: "5", blocked: "1", abandoned: "2", done: "4", closed: "4", historical: "6" };
 
 function canvasId(value) {
   // JSON Canvas spec: ids are unique 16-char lowercase hex strings.
@@ -107,7 +107,7 @@ function projectNote(project) {
       `Live: ${registry.summary.active || 0} · blocked: ${registry.summary.blocked || 0} · resumable: ${registry.summary.resumable || 0} · stale: ${registry.summary.stale || 0} · abandoned: ${registry.summary.abandoned || 0}`,
       "",
       ...registry.attempts
-        .filter((attempt) => !["completed", "historical"].includes(attempt.live_state))
+        .filter((attempt) => !["completed", "shipped", "historical"].includes(attempt.live_state))
         .map((attempt) => {
           const owner = attempt.execution ? ` · ${attempt.execution.harness}:${attempt.execution.session_id}` : "";
           const location = attempt.worktree_path ? ` · ${attempt.worktree_path}` : "";

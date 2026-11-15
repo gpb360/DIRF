@@ -362,6 +362,7 @@ summary and have reconciled its existing owner and content.
 | `dirf attempt block <id> --reason R [--wait input\|blocker]` | block an attempt; `--wait input` marks it as awaiting user input |
 | `dirf attempt observe <id> [--execution-status active\|idle\|unknown] [--file SNAPSHOT]` | trusted harness adapter refreshes the orchestrator-owned execution snapshot; requires `DIRF_ORCHESTRATOR_TOKEN` |
 | `dirf attempt abandon <id> --reason "..."` | explicitly abandon an unfinished Attempt; requires the pre-bound `DIRF_ORCHESTRATOR_TOKEN` |
+| `dirf attempt close <id> --outcome shipped [--prs N,...] [--commits SHA,...] [--evidence "note"]` | close work that shipped outside the phase lifecycle; records the evidence in `closure` and never fakes phase evidence |
 | `dirf artifact record <id> --file F` | validate and record one typed artifact metadata object (`add` is an alias) |
 | `dirf artifact list <id> [--json]` | list artifacts and governing accepted versions |
 | `dirf artifact accept <id> <artifact-id>` | explicitly accept a recorded artifact |
@@ -378,6 +379,8 @@ summary and have reconciled its existing owner and content.
 | `dirf ste rules` | list the STE rules that the checker tests |
 | `dirf list` | list attempts (alias for state list-attempts scoped here) |
 | `dirf state list` | all registered projects (works from anywhere) |
+| `dirf board [--path DIR] [--json]` | this project's open attempts with phase, idle days, next action, stale flag, and linked PRs (review at head, checks, mergeable) |
+| `dirf cleanup [--path DIR] [--apply] [--yes]` | dry run by default; with `--apply`, asks per item to squash-merge reviewed PRs, close shipped attempts, and keep/close/abandon stale ones |
 | `dirf portfolio` | cross-project status view: every project + attempt classified active/idle/stale/completed/archived/empty |
 | `dirf project status [--json]` | reconciled project work view; JSON contains every attempt and continuation handoff |
 | `dirf project complete\|archive\|reopen` | explicit project status override (derived classification otherwise) |
@@ -525,6 +528,22 @@ Codex refreshes automatically when `CODEX_THREAD_ID` and
 set `DIRF_HARNESS`, `DIRF_SESSION_ID`, `DIRF_ORCHESTRATOR_TOKEN`, and optional
 `DIRF_EXECUTION_STATUS` before the same startup command.
 
+## Board and cleanup (one project)
+
+Before you start new work, run `dirf board` to see what is still open in this
+project, and `dirf cleanup` to list what can close. `dirf build`, `dirf plan`,
+and `dirf create` print the top five unfinished items on stderr. Cleanup is a
+dry run unless you pass `--apply`; it squash-merges only PRs whose review passes the
+`dirf review ready` rules at the current head (full schema 2 review, same
+repository and merge base, no findings, `PASS`, a clean round recorded with
+`dirf review trigger`, no unresolved conversations), with green checks and a
+mergeable state,
+and it closes an Attempt as `closed` with outcome `shipped` only when its linked
+PRs merged or its next action says Done. Do not advance phases with invented
+evidence to finish shipped work, and do not abandon shipped work: use
+`dirf attempt close <id> --outcome shipped`. Full reference:
+[docs/reference.md](reference.md#board-and-cleanup-one-projects-unfinished-work).
+
 ## Portfolio (cross-project overview)
 
 `dirf portfolio` shows **every registered project on the machine**, not just the
@@ -535,8 +554,8 @@ and what's finished:
   active work.
 - **idle** — unfinished work exists, but no fresh harness observation reports
   active work.
-- **completed** — all tracked attempts done, or the canonical handoff carries
-  `## Status: Complete.`
+- **completed** — all tracked attempts done or closed as shipped, or the
+  canonical handoff carries `## Status: Complete.`
 - **stale** — no live work and no project activity past the threshold;
   abandonment is never inferred.
 - **archived** / **empty** — explicitly parked, or registered with no attempts.

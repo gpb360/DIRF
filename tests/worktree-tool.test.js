@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -76,8 +76,19 @@ function gitRepo({ config }) {
 }
 
 // Only git, plus the fake tool when given: a real Worktrunk here must not win.
+// On POSIX git's own folder (often /usr/bin) can also hold a real `wt`, so git
+// gets a folder of its own. Windows keeps git's folder: there `wt` is the
+// Windows Terminal alias under WindowsApps, never beside git.
+function gitOnlyDir() {
+  const git = findOnPath("git");
+  if (process.platform === "win32") return dirname(git);
+  const dir = mkdtempSync(join(tmpdir(), "dirf-git-"));
+  symlinkSync(git, join(dir, "git"));
+  return dir;
+}
+
 function status(root, { tool, json }) {
-  const dirs = [dirname(findOnPath("git"))];
+  const dirs = [gitOnlyDir()];
   if (tool) dirs.unshift(bin(mkdtempSync(join(tmpdir(), "dirf-bin-")), process.platform === "win32" ? "git-wt.exe" : "git-wt"));
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^path$/i.test(key)));
   env.PATH = dirs.join(process.platform === "win32" ? ";" : ":");
