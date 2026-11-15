@@ -121,6 +121,14 @@ _Avoid_: Agent role, live process
 The selected phase from an Attempt's ordered Workflow. Starting selects the first phase and advancing selects the next; arbitrary phase names are not allowed.
 _Avoid_: Free-text stage
 
+**Shipped Attempt**:
+An Attempt explicitly closed with lifecycle state `closed` and outcome `shipped` because its work merged or otherwise shipped outside the phase lifecycle. Its closure records the merged pull requests, commits, or a note, and who verified them. It never records phase evidence or gate decisions, so it is not a Done Attempt, and it is not abandonment.
+_Avoid_: Done Attempt, Abandoned Attempt, faked phase evidence
+
+**Project Board**:
+The project-scoped view of every open Attempt with its phase, idle age, next action, stale flag, and linked pull requests with review at the current head, check status, and mergeability. Cleanup proposes merges and closures from it and changes nothing without explicit apply.
+_Avoid_: Portfolio View, automatic cleanup
+
 **Done Attempt**:
 An Attempt completed from its final Current Phase after explicit confirmation that the phase's done-when checks passed.
 _Avoid_: Closed, archived

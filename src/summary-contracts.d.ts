@@ -11,7 +11,7 @@ export interface RequirementReference {
 
 export type RequirementWorkState = "planned" | "in_progress" | "blocked" | "complete";
 export type VerificationState = "verified" | "unverified";
-export type AttemptLifecycleState = "planned" | "in_progress" | "blocked" | "abandoned" | "done" | "historical";
+export type AttemptLifecycleState = "planned" | "in_progress" | "blocked" | "abandoned" | "done" | "closed" | "historical";
 export type SummaryCollection = "requirements" | "unresolved_work";
 
 /** Every entry inherits the update's governing plan. Acceptance is resolved by state.js. */

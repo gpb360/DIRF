@@ -1160,7 +1160,7 @@ export function attemptSummary(slug, idOrName, options = {}) {
   assertSummaryReadable(slug);
   const attempts = readAttempts(slug);
   const attempt = resolveProgressAttempt(slug, idOrName, attempts);
-  if (!["planned", "in_progress", "blocked", "abandoned", "done", "historical"].includes(attempt.status)) {
+  if (!["planned", "in_progress", "blocked", "abandoned", "done", "closed", "historical"].includes(attempt.status)) {
     throw new Error("Invalid stored attempt lifecycle state");
   }
   const detail = (path, id = attempt.id) => ({ attempt_id: id, path });
@@ -1225,7 +1225,7 @@ export function attemptSummary(slug, idOrName, options = {}) {
     if (!entry.decision_valid) unresolved.push({ ...base, kind: "decision", summary: "Requirement decision has no valid accepted reference." });
     if (entry.work_state === "blocked") unresolved.push({ ...base, kind: "blocker", summary: "Requirement work is blocked. Read its current mapping." });
   }
-  if (!["done", "abandoned", "historical"].includes(attempt.status)) {
+  if (!["done", "closed", "abandoned", "historical"].includes(attempt.status)) {
     let gates;
     try { gates = attemptGateState(slug, attempt).gates; }
     catch (error) {
@@ -1579,7 +1579,7 @@ export function handoffHasCompletionEvidence(markdown) {
 // lies about where a status came from). Reading is cheap (one tiny file per
 // attempt) and the store itself is never mutated by this.
 export function effectiveAttemptStatus(slug, attempt) {
-  if (["done", "in_progress", "blocked", "abandoned"].includes(attempt.status)) {
+  if (["done", "closed", "in_progress", "blocked", "abandoned"].includes(attempt.status)) {
     return { status: attempt.status, status_source: "lifecycle" };
   }
   // An unreadable gate (for example an accepted artifact edited or deleted
@@ -1985,6 +1985,10 @@ export function startTrackingAttempt(slug, idOrName, now = new Date()) {
   return withProgressLock(slug, () => startTrackingAttemptLocked(slug, idOrName, now));
 }
 
+// Outcomes for attempts closed outside the phase lifecycle. Distinct from
+// abandonment: the work shipped, but its phases were not all recorded.
+export const CLOSE_OUTCOMES = new Set(["shipped"]);
+
 function updateAttemptLifecycleLocked(slug, idOrName, action, options = {}, now = new Date()) {
   let attempt = getAttempt(slug, idOrName);
   if (!attempt.tracked) throw new Error(`Attempt ${attempt.id} is historical. Start tracking it first.`);
@@ -2046,7 +2050,7 @@ function updateAttemptLifecycleLocked(slug, idOrName, action, options = {}, now 
     };
     attempt = { ...attempt, gates };
   } else if (action === "reopen") {
-    if (!new Set(["blocked", "done", "abandoned"]).has(attempt.status)) throw new Error("Only blocked, done, or abandoned attempts can reopen");
+    if (!new Set(["blocked", "done", "closed", "abandoned"]).has(attempt.status)) throw new Error("Only blocked, done, closed, or abandoned attempts can reopen");
     attempt = {
       ...attempt,
       status: "in_progress",
@@ -2057,6 +2061,9 @@ function updateAttemptLifecycleLocked(slug, idOrName, action, options = {}, now 
       completed_at: null,
       abandoned_at: null,
       abandonment_reason: null,
+      closed_at: null,
+      outcome: null,
+      closure: null,
     };
   } else if (action === "abandon") {
     projectExecutionAuthority(slug, executionAuthorityHash(options.authorityToken));
@@ -2073,6 +2080,51 @@ function updateAttemptLifecycleLocked(slug, idOrName, action, options = {}, now 
       current_execution: null,
       abandoned_at: timestamp,
       abandonment_reason: reason,
+    };
+  } else if (action === "close") {
+    // Closing records work that shipped outside the phase lifecycle (for
+    // example a merged pull request). It never writes phase evidence or gate
+    // records: the closure evidence lives only in `closure`, so a closed
+    // attempt is never mistaken for a Done Attempt whose phases ran.
+    const outcome = String(options.outcome || "").trim();
+    if (!CLOSE_OUTCOMES.has(outcome)) throw new Error(`close outcome must be one of: ${[...CLOSE_OUTCOMES].join(", ")}`);
+    if (!new Set(["planned", "in_progress", "blocked"]).has(attempt.status)) {
+      throw new Error("Only planned, in-progress, or blocked attempts can close");
+    }
+    const prs = (options.prs || []).map((pr) => {
+      const record = typeof pr === "object" && pr !== null ? pr : { number: pr };
+      const number = Number(record.number);
+      if (!Number.isInteger(number) || number < 1) throw new Error(`invalid pull-request number ${JSON.stringify(record.number)}`);
+      return {
+        number,
+        url: record.url ? String(record.url) : null,
+        merge_commit: record.merge_commit ? String(record.merge_commit) : null,
+        merged_at: record.merged_at ? String(record.merged_at) : null,
+      };
+    });
+    const commits = (options.commits || []).map((commit) => String(commit).trim()).filter(Boolean);
+    for (const commit of commits) {
+      if (!/^[0-9a-f]{7,40}$/i.test(commit)) throw new Error(`invalid commit ${JSON.stringify(commit)}`);
+    }
+    const note = String(options.note || "").trim() || null;
+    if (!prs.length && !commits.length && !note) throw new Error("close requires evidence: merged pull requests, commits, or a note");
+    attempt = {
+      ...attempt,
+      status: "closed",
+      outcome,
+      blocker: null,
+      wait: null,
+      current_execution: null,
+      closed_at: timestamp,
+      closure: {
+        outcome,
+        prs,
+        commits,
+        note,
+        verified_by: options.verifiedBy === "gh" ? "gh" : "manual",
+        phase_at_close: attempt.current_phase || null,
+        at: timestamp,
+      },
     };
   } else if (action === "complete") {
     if (attempt.status !== "in_progress") throw new Error("Only an in-progress attempt can complete");
@@ -2339,7 +2391,7 @@ function normalizeChildExecutions(children, harness) {
 function observeAttemptLocked(slug, idOrName, options, now) {
   const attempt = getAttempt(slug, idOrName);
   if (!attempt.tracked) throw new Error(`Attempt ${attempt.id} is historical. Start tracking it first.`);
-  if (attempt.status === "done" || attempt.status === "abandoned") throw new Error(`Attempt ${attempt.id} is ${attempt.status} and cannot be observed`);
+  if (["done", "closed", "abandoned"].includes(attempt.status)) throw new Error(`Attempt ${attempt.id} is ${attempt.status} and cannot be observed`);
   const harness = requiredBoundedText(options.harness, "execution harness", 100);
   const sessionId = requiredBoundedText(options.sessionId, "execution session id", 200);
   const status = requiredBoundedText(options.status, "execution status", 20);
@@ -2389,7 +2441,7 @@ function observeAttemptLocked(slug, idOrName, options, now) {
   if (worktreePath) {
     const worktreeKey = normalizeIdentityKey(worktreePath);
     const otherOwner = listAttempts(slug).find((candidate) => {
-      if (candidate.id === attempt.id || ["done", "abandoned", "historical"].includes(candidate.status)) return false;
+      if (candidate.id === attempt.id || ["done", "closed", "abandoned", "historical"].includes(candidate.status)) return false;
       const owner = candidate.current_execution;
       const ownerPath = owner?.worktree_path || candidate.responsibility_path || candidate.worktree_path;
       const sameWorktree = ownerPath && normalizeIdentityKey(ownerPath) === worktreeKey;
@@ -2446,9 +2498,9 @@ export function observeAttempt(slug, idOrName, options = {}, now = new Date()) {
 function syncAttemptFromHandoffLocked(slug, idOrName) {
   const attempt = getAttempt(slug, idOrName);
   if (attempt.status === "done") return { ...attempt, changed: false, reason: "already done" };
-  if (["in_progress", "blocked", "abandoned"].includes(attempt.status)) {
-    const reason = attempt.status === "abandoned"
-      ? "status is abandoned — explicit lifecycle state wins"
+  if (["in_progress", "blocked", "abandoned", "closed"].includes(attempt.status)) {
+    const reason = attempt.status === "abandoned" || attempt.status === "closed"
+      ? `status is ${attempt.status} — explicit lifecycle state wins`
       : `status is ${attempt.status} — open work wins`;
     return { ...attempt, changed: false, reason };
   }
@@ -2554,7 +2606,7 @@ export function syncLifecycleFromProgress(slug, idOrName, phase, now = new Date(
   return withProgressLock(slug, () => syncLifecycleFromProgressLocked(slug, idOrName, phase, now));
 }
 
-const DEFAULT_SETTINGS = Object.freeze({ schema_version: 1, dirf_cli_path: null, stale_worktree_days: 14, archive_reminder_days: 30, stale_project_days: 30 });
+const DEFAULT_SETTINGS = Object.freeze({ schema_version: 1, dirf_cli_path: null, stale_worktree_days: 14, archive_reminder_days: 30, stale_project_days: 30, stale_attempt_days: 7 });
 
 export function readSettings() {
   const path = join(storeHome(), "settings.json");
@@ -2566,7 +2618,7 @@ export function readSettings() {
 
 export function writeSettings(patch) {
   const settings = { ...readSettings(), ...patch, schema_version: 1 };
-  for (const key of ["stale_worktree_days", "archive_reminder_days", "stale_project_days"]) {
+  for (const key of ["stale_worktree_days", "archive_reminder_days", "stale_project_days", "stale_attempt_days"]) {
     if (!Number.isInteger(settings[key]) || settings[key] < 1) throw new Error(`${key} must be a positive integer`);
   }
   if (settings.dirf_cli_path !== null && (typeof settings.dirf_cli_path !== "string" || !settings.dirf_cli_path.trim())) {
@@ -2628,7 +2680,7 @@ export function inspectProjectWorktrees(slug, now = new Date()) {
     const lastCommitRaw = git(path, ["log", "-1", "--format=%cI"], { allowFailure: true });
     const lastCommitAt = lastCommitRaw || null;
     const activity = Math.max(Date.parse(attempt?.updated_at || attempt?.created_at || 0) || 0, Date.parse(lastCommitAt || 0) || 0);
-    const stale = !attempt?.status || !["done", "abandoned"].includes(attempt.status) ? now.getTime() - activity >= settings.stale_worktree_days * 86_400_000 : false;
+    const stale = !attempt?.status || !["done", "closed", "abandoned"].includes(attempt.status) ? now.getTime() - activity >= settings.stale_worktree_days * 86_400_000 : false;
     const archived = archives.find((item) => normalizeIdentityKey(item.path) === key) || null;
     const archiveDue = archived ? now.getTime() >= Date.parse(archived.next_prompt_at) : false;
     let cleanup_state = "active";
@@ -2636,7 +2688,7 @@ export function inspectProjectWorktrees(slug, now = new Date()) {
     else if (archived && archiveDue) cleanup_state = "archive_due";
     else if (archived) cleanup_state = "archived";
     else if (!attempt) cleanup_state = "unlinked";
-    else if (attempt.status === "done") cleanup_state = "completed";
+    else if (attempt.status === "done" || attempt.status === "closed") cleanup_state = "completed";
     else if (attempt.status === "abandoned") cleanup_state = "abandoned";
     else if (stale) cleanup_state = "stale";
     return {
@@ -3012,8 +3064,8 @@ function recordProgressLocked(slug, { message, timestamp, phase, next, files, at
     const attemptBase = attempt ? attemptHandoff || canonicalBase : null;
     const canonicalDecision = progressAcceptance(slug, canonicalBase, draftUpdate);
     const attemptDecision = attempt
-      ? attempt.status === "abandoned"
-        ? { accepted: false, reason: "attempt_abandoned" }
+      ? attempt.status === "abandoned" || attempt.status === "closed"
+        ? { accepted: false, reason: `attempt_${attempt.status}` }
         : attemptProgressAcceptance(slug, attemptBase, draftUpdate, recordedAttemptContext.workItem)
       : null;
     // An explicit attempt is the assignment authority for its checkpoint. If
@@ -3363,14 +3415,14 @@ export function portfolioSnapshot(now = new Date()) {
   const projects = listProjects().map((project) => {
     const workRegistry = projectWorkSnapshot(project.slug, now);
     const attempts = workRegistry.attempts;
-    const counts = { planned: 0, in_progress: 0, blocked: 0, abandoned: 0, done: 0, historical: 0 };
+    const counts = { planned: 0, in_progress: 0, blocked: 0, abandoned: 0, done: 0, closed: 0, historical: 0 };
     let evidenceDone = 0;
     let lastActivity = Date.parse(project.last_seen || 0) || 0;
     for (const attempt of attempts) {
       const status = attempt.lifecycle_status;
       const source = attempt.status_source;
       if (status === "done" && source === "handoff") evidenceDone += 1;
-      const key = ["planned", "in_progress", "blocked", "abandoned", "done", "historical"].includes(status) ? status : "historical";
+      const key = ["planned", "in_progress", "blocked", "abandoned", "done", "closed", "historical"].includes(status) ? status : "historical";
       counts[key] += 1;
       const ts = Date.parse(attempt.updated_at || attempt.created_at || 0) || 0;
       if (ts > lastActivity) lastActivity = ts;
@@ -3384,7 +3436,9 @@ export function portfolioSnapshot(now = new Date()) {
     if (handoff !== null) lastActivity = Math.max(lastActivity, statSync(handoffPath).mtimeMs);
     const handoffComplete = handoff !== null && HANDOFF_COMPLETE_RE.test(handoff);
     const hasOpenWork = counts.in_progress > 0 || counts.blocked > 0;
-    const allTrackedDone = tracked.length > 0 && tracked.every((attempt) => attempt.lifecycle_status === "done");
+    // A shipped closure finishes work as surely as a Done Attempt for the
+    // project rollup; abandoned work still keeps the project open.
+    const allTrackedDone = tracked.length > 0 && tracked.every((attempt) => ["done", "closed"].includes(attempt.lifecycle_status));
     const hasLiveWork = (workRegistry.summary.active || 0) > 0;
 
     let status;
@@ -3444,7 +3498,7 @@ export function projectWorkSnapshot(slug, now = new Date()) {
   const project = getProject(slug);
   if (!project) throw new Error(`Unknown DIRF project ${slug}`);
   const staleMs = readSettings().stale_worktree_days * 86_400_000;
-  const stateOrder = ["active", "blocked", "resumable", "stale", "abandoned", "planned", "completed", "historical", "unknown"];
+  const stateOrder = ["active", "blocked", "resumable", "stale", "abandoned", "planned", "completed", "shipped", "historical", "unknown"];
   const storedAttempts = listAttempts(slug);
   const attempts = storedAttempts.map((attempt) => {
     const effective = effectiveAttemptStatus(slug, attempt);
@@ -3461,6 +3515,7 @@ export function projectWorkSnapshot(slug, now = new Date()) {
 
     let liveState = "unknown";
     if (effective.status === "done") liveState = "completed";
+    else if (effective.status === "closed") liveState = "shipped";
     else if (effective.status === "abandoned") liveState = "abandoned";
     else if (observationIsActive) liveState = "active";
     else if (attempt.status === "blocked" || hasBlockingChild) liveState = "blocked";
@@ -3493,6 +3548,9 @@ export function projectWorkSnapshot(slug, now = new Date()) {
       worker: attempt.worker || null,
       blocker: attempt.blocker || null,
       abandonment_reason: attempt.abandonment_reason || null,
+      outcome: attempt.outcome || null,
+      closure: attempt.closure || null,
+      responsibility_branch: attempt.responsibility_branch || null,
       updated_at: attempt.updated_at || attempt.created_at,
       execution: executionView,
       worktree_path: worktreePath,

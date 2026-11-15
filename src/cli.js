@@ -54,6 +54,7 @@ import { run as runReviewLedger } from "../skills/code-review/scripts/review-led
 import { formatLoopReport, loopPassed, runReviewLadder, runShellCommand } from "./review-loop.js";
 import { bindingsFromPlan, refreshSkillBindings } from "./skill-bindings.js";
 import { runSteCheck } from "./ste.js";
+import { applyCleanup, boardSnapshot, cleanupPlan, formatBoard, formatCleanupPlan, unfinishedWorkNotice } from "./board.js";
 
 const MERGED_REVIEW_NEXT = "Confirm the merged work is complete, then record completion or a new next step.";
 
@@ -428,9 +429,22 @@ function openBrowserAt(filePath) {
   console.log(`Opened: ${url}`);
 }
 
+// Starting new work first shows what is still open, so unfinished attempts
+// and passing-but-unmerged PRs stay visible. It never prompts or blocks, and
+// it writes to stderr so --json stdout stays machine-readable.
+function surfaceUnfinishedWork(target) {
+  if (process.env.DIRF_NO_UNFINISHED_NOTICE === "1") return;
+  let project = null;
+  try { project = resolveProject(target, { touch: false, migrate: false }); } catch { return; }
+  if (!project) return;
+  const notice = unfinishedWorkNotice(project.slug, { checkout: target });
+  if (notice) console.error(`${notice}\n`);
+}
+
 function cmdBuild(args) {
   const target = projectRoot(args.path);
   const config = loadProjectConfig(target);
+  surfaceUnfinishedWork(target);
   const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction, args.focusedOutput !== false, {
     projectPlaybooks: args.playbooks,
     profile: args.profile,
@@ -448,6 +462,7 @@ function cmdPlan(args) {
   if (!args.name || !args.task) throw new Error('usage: dirf plan <name> "<task>" [--path DIR] [--profile FILE] [--research]');
   const target = projectRoot(args.path);
   const config = loadProjectConfig(target);
+  surfaceUnfinishedWork(target);
   const branches = ["multi-session", ...(args.research ? ["research"] : [])];
   const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction, args.focusedOutput !== false, {
     playbook: "fullstack-feature",
@@ -468,6 +483,7 @@ function cmdPlan(args) {
 function cmdCreate(args) {
   const target = projectRoot(args.path);
   const config = loadProjectConfig(target);
+  surfaceUnfinishedWork(target);
   const plan = buildPlan(args.name, args.task, target, config.context.reserve_percent, config.compaction, args.focusedOutput !== false, {
     projectPlaybooks: args.playbooks,
     profile: args.profile,
@@ -623,6 +639,9 @@ function publicAttemptForSlug(slug, attempt, context = null) {
     blocker: attempt.blocker || null,
     abandonment_reason: attempt.abandonment_reason || null,
     abandoned_at: attempt.abandoned_at || null,
+    outcome: attempt.outcome || null,
+    closed_at: attempt.closed_at || null,
+    closure: attempt.closure || null,
     wait: attempt.wait || null,
     worktree_path: attempt.worktree_path || null,
     gates,
@@ -1572,7 +1591,7 @@ function cmdAttempt(args) {
   const slug = resolveStateSlug(args, { touch: false });
   const action = args._[0];
   const id = args._[1];
-  if (!action) throw new Error("usage: dirf attempt <start-tracking|start|assign|advance|block|abandon|reopen|complete|link|observe|gate|sync-from-handoff> <id> [options]");
+  if (!action) throw new Error("usage: dirf attempt <start-tracking|start|assign|advance|block|abandon|close|reopen|complete|link|observe|gate|sync-from-handoff> <id> [options]");
   if (action === "sync-from-handoff") {
     // One attempt, or the whole project when no id is given. Backfills
     // attempt.json status from completion evidence in HANDOFF.md.
@@ -1588,11 +1607,21 @@ function cmdAttempt(args) {
     console.log(`Backfilled ${outcomes.filter((o) => o.changed).length} of ${outcomes.length} attempt(s) from handoff evidence.`);
     return;
   }
-  if (!id) throw new Error("usage: dirf attempt <start-tracking|start|assign|advance|block|abandon|reopen|complete|link|observe|gate|sync-from-handoff> <id> [options]");
+  if (!id) throw new Error("usage: dirf attempt <start-tracking|start|assign|advance|block|abandon|close|reopen|complete|link|observe|gate|sync-from-handoff> <id> [options]");
   let result;
   let extra = null;
   if (action === "start-tracking") result = startTrackingAttempt(slug, id);
   else if (action === "link") result = linkAttemptWorktree(slug, id, args.worktree);
+  else if (action === "close") {
+    const list = (value) => String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
+    result = updateAttemptLifecycle(slug, id, "close", {
+      outcome: args.outcome || "shipped",
+      prs: list(args.prs).map((value) => Number(value.replace(/^#/, ""))),
+      commits: list(args.commits),
+      note: args.evidence || args.reason,
+      verifiedBy: "manual",
+    });
+  }
   else if (action === "observe") {
     const owner = currentExecutionFromEnv(process.env);
     if (!owner) throw new Error("attempt observe requires trusted harness identity in DIRF_HARNESS and DIRF_SESSION_ID (or CODEX_THREAD_ID)");
@@ -1668,6 +1697,7 @@ function cmdSettings(args) {
   const patch = {};
   if (args.staleDays !== undefined) patch.stale_worktree_days = args.staleDays;
   if (args.staleProjectDays !== undefined) patch.stale_project_days = args.staleProjectDays;
+  if (args.staleAttemptDays !== undefined) patch.stale_attempt_days = args.staleAttemptDays;
   if (args.archiveReminderDays !== undefined) patch.archive_reminder_days = args.archiveReminderDays;
   if (args.dirfCliPath !== undefined) patch.dirf_cli_path = args.dirfCliPath;
   console.log(JSON.stringify(writeSettings(patch), null, 2));
@@ -1745,6 +1775,68 @@ function cmdPortfolio(args) {
   console.log(`Summary: ${formatPortfolioSummary(snapshot)}`);
 }
 
+// ─── Board and cleanup (`dirf board`, `dirf cleanup`) ─────────────────────────
+// One project's open attempts and their PRs, and a dry-run-first cleanup that
+// merges reviewed PRs and closes shipped attempts only with --apply.
+
+function boardTarget(args) {
+  // Read-only: never registers, migrates, or touches the project.
+  const slug = resolveSummarySlug(args);
+  const checkout = args.path ? projectRoot(args.path) : (args.slug ? null : process.cwd());
+  return { slug, checkout };
+}
+
+function cmdBoard(args) {
+  const { slug, checkout } = boardTarget(args);
+  const board = boardSnapshot(slug, { checkout });
+  console.log(args.json ? JSON.stringify(board, null, 2) : formatBoard(board));
+}
+
+function lineReader() {
+  const rl = readline.createInterface({ input: process.stdin, terminal: false });
+  const lines = rl[Symbol.asyncIterator]();
+  return {
+    ask: async (question) => {
+      process.stdout.write(question);
+      const next = await lines.next();
+      if (!process.stdin.isTTY) process.stdout.write("\n");
+      return next.done ? "" : next.value;
+    },
+    close: () => rl.close(),
+  };
+}
+
+async function cmdCleanup(args) {
+  const { slug, checkout } = boardTarget(args);
+  const board = boardSnapshot(slug, { checkout });
+  const actions = cleanupPlan(board);
+  if (!args.apply) {
+    if (args.json) { console.log(JSON.stringify({ applied: false, github: board.github, actions }, null, 2)); return; }
+    if (!board.github.available) console.log(`GitHub: unavailable (${board.github.reason}); only attempt actions are listed.`);
+    console.log(formatCleanupPlan(actions));
+    return;
+  }
+  if (!actions.length) { console.log(args.json ? JSON.stringify({ applied: true, results: [] }, null, 2) : "Nothing to clean up."); return; }
+  if (!args.json) console.log(formatCleanupPlan(actions, { apply: true }));
+  const reader = args.yes ? null : lineReader();
+  try {
+    const results = await applyCleanup(slug, actions, {
+      checkout: checkout || board.project.main_path,
+      ask: reader ? reader.ask : async () => "",
+      yes: Boolean(args.yes),
+      authorityToken: process.env.DIRF_ORCHESTRATOR_TOKEN,
+      log: args.json ? () => {} : console.log,
+    });
+    if (args.json) { console.log(JSON.stringify({ applied: true, results }, null, 2)); return; }
+    const counts = {};
+    for (const result of results) counts[result.result] = (counts[result.result] || 0) + 1;
+    console.log(`Done: ${Object.entries(counts).map(([key, value]) => `${value} ${key}`).join(", ")}.`);
+    if (counts.failed) process.exitCode = 1;
+  } finally {
+    reader?.close();
+  }
+}
+
 function cmdProject(args) {
   const action = args._[0];
   if (!action) throw new Error("usage: dirf project <complete|reopen|archive|status> [--slug S|--path DIR]");
@@ -1756,7 +1848,7 @@ function cmdProject(args) {
     if (args.json) { console.log(JSON.stringify(work, null, 2)); return; }
     console.log(`status: ${entry.status}${entry.explicit_status ? ` (explicit ${entry.explicit_status})` : " (derived)"}`);
     console.log(`work: ${Object.entries(work.summary).filter(([key]) => key !== "total").map(([key, value]) => `${key}: ${value}`).join(", ")}`);
-    for (const attempt of work.attempts.filter(({ live_state }) => !["completed", "planned", "historical"].includes(live_state))) {
+    for (const attempt of work.attempts.filter(({ live_state }) => !["completed", "shipped", "planned", "historical"].includes(live_state))) {
       const owner = attempt.execution ? ` · ${attempt.execution.harness}:${attempt.execution.session_id}` : "";
       const location = attempt.worktree_path ? ` · ${attempt.worktree_path}${attempt.execution?.branch ? ` [${attempt.execution.branch}]` : ""}` : "";
       console.log(`  ${attempt.live_state.padEnd(10)} ${attempt.id}  ${attempt.name}${owner}${location}`);
@@ -1993,6 +2085,15 @@ function parse(argv) {
     if (a === "--transfer-reason") { out.transferReason = rest[++i]; continue; }
     if (a === "--stale-days") { out.staleDays = Number(rest[++i]); continue; }
     if (a === "--stale-project-days") { out.staleProjectDays = Number(rest[++i]); continue; }
+    if (a === "--stale-attempt-days") { out.staleAttemptDays = Number(rest[++i]); continue; }
+    if (a === "--apply") { out.apply = true; continue; }
+    if (a === "--yes" || a === "-y") { out.yes = true; continue; }
+    if (["--outcome", "--prs", "--commits"].includes(a)) {
+      const value = rest[++i];
+      if (!value || value.startsWith("--")) throw new Error(`${a} requires a value`);
+      out[a.slice(2)] = value;
+      continue;
+    }
     if (a === "--archive-reminder-days") { out.archiveReminderDays = Number(rest[++i]); continue; }
     if (a === "--dirf-cli") { out.dirfCliPath = rest[++i]; continue; }
     if (a === "--out") { out.out = rest[++i]; continue; }
@@ -2074,19 +2175,22 @@ Usage:
                                                       (advance: [--run "CMD" | --evidence "TEXT"] [--strict] [--auto] — gated attempts complete only with captured --run/built-in evidence and a synced handoff)
                                                       (complete: --confirm [--evidence "CMD" [--output F]] [--strict])
                                                       (gate <phase> accept|deny [--comment "..."]; block [--wait input|blocker])
+                                                      (close: --outcome shipped [--prs 12,13] [--commits SHA,...] [--evidence "note"] — shipped work without faked phase evidence)
                                                       (abandon: --reason "..." + DIRF_ORCHESTRATOR_TOKEN; observe: trusted harness env + DIRF_ORCHESTRATOR_TOKEN + active|idle|unknown [--file SNAPSHOT] [--transfer-reason "..."])
                                                       (sync-from-handoff: backfill done from handoff evidence; no id = all)
   dirf artifact list <attempt> [--json]                list typed artifacts and governing versions
   dirf artifact record <attempt> --file FILE [--json] record one metadata JSON object (add is an alias)
   dirf artifact accept <attempt> <artifact-id> [--json] explicitly accept a recorded artifact
   dirf worktree <list|archive|remind|remove> [path]   inspect or clean worktrees
-  dirf settings <get|set>                              read or update cleanup settings
+  dirf settings <get|set>                              read or update cleanup settings (--stale-attempt-days N for board/cleanup)
   dirf migrate [<name>]                                remove runtime paths from saved snapshots
   dirf validate                                        validate registries
   dirf skills scan [--path DIR]                        show installed skills
   dirf skills materialize --attempt ID --host HOST [--path DIR] [--include a,b] [--json]
                                                       copy an attempt's skills into a checkout for spawned agents
   dirf skills clean --host HOST [--path DIR]          remove only the copied skills
+  dirf board [--path DIR] [--json]                    this project's open attempts with linked PRs, review at head, checks, mergeability
+  dirf cleanup [--path DIR] [--apply] [--yes] [--json] dry run by default: merge reviewed PRs, close shipped attempts, triage stale ones
   dirf portfolio [--json]                             cross-project status view (active/stale/completed/...)
   dirf project <complete|reopen|archive|status> [...] explicit project status or reconciled --json view
   dirf export playbooks                                regenerate legacy playbooks JSON
@@ -2412,6 +2516,8 @@ async function main() {
   else if (cmd === "export" && args._[0] === "obsidian") cmdExportObsidian(args);
   else if (cmd === "export" && args._[0] === "graphify") cmdExportGraphify(args);
   else if (cmd === "portfolio") cmdPortfolio(args);
+  else if (cmd === "board") cmdBoard(args);
+  else if (cmd === "cleanup") await cmdCleanup(args);
   else if (cmd === "artifact") cmdArtifact(args);
   else if (cmd === "project") cmdProject(args);
   else if (cmd === "inspect") { args._ = args._.length ? args._ : [args.path]; cmdInspect(args); }
