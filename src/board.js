@@ -10,6 +10,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import {
+  assertReviewRoundRecorded,
   projectWorkSnapshot,
   readSettings,
   recordedReviewEntries,
@@ -192,12 +193,15 @@ export function latestReview(prNumber, headSha, locations, { slug = null } = {})
   const chosen = atHead || reviews[0];
   const blocking = blockingFindings(chosen.review);
   let ledger = null;
+  let ledgerReady = false;
   if (slug) {
     try {
       ledger = recordedReviewEntries(slug, prNumber, chosen.review.target.head_sha).at(-1)?.action || null;
     } catch {
       ledger = null;
     }
+    // The same round-ledger rule `dirf review ready` enforces.
+    try { assertReviewRoundRecorded(slug, chosen.review); ledgerReady = true; } catch { ledgerReady = false; }
   }
   return {
     path: chosen.path,
@@ -212,6 +216,7 @@ export function latestReview(prNumber, headSha, locations, { slug = null } = {})
     base_sha: chosen.review.target.base_sha.toLowerCase(),
     confidence: { quality: chosen.review.confidence.quality, evidence: chosen.review.confidence.evidence },
     ledger_action: ledger,
+    ledger_ready: ledgerReady,
     reviewed_at: new Date(chosen.mtime).toISOString(),
   };
 }
@@ -232,6 +237,19 @@ export function handoffPullRequests(markdown) {
     for (const match of line.matchAll(/(?:^|[\s(,;/-])#(\d+)\b/g)) numbers.add(Number(match[1]));
   }
   return numbers;
+}
+
+// Handoff PR numbers with link strength. "strong": the handoff claims the PR
+// as this attempt's own (Work item pr:N, or opened/created/pushed PR #N).
+// "handoff": any other mention, which may be a dependency or a sibling.
+export function handoffPullRequestLinks(markdown) {
+  const text = String(markdown || "");
+  const links = new Map([...handoffPullRequests(text)].map((number) => [number, "handoff"]));
+  const workItem = text.match(/^##\s*Work item\s*\r?\n+([^\n]*)/im)?.[1] || "";
+  for (const match of workItem.matchAll(/\bpr:(\d+)\b/gi)) links.set(Number(match[1]), "strong");
+  const owned = /\b(?:opened|open|created|create|raised|submitted|pushed|filed)\b(?:[^.\n]|\.(?=\S)){0,60}?(?:\bPR\s*#?\s*|\bpull request\s*#|\/pull\/)(\d+)\b/gi;
+  for (const match of text.matchAll(owned)) links.set(Number(match[1]), "strong");
+  return links;
 }
 
 function readText(path) {
@@ -290,6 +308,7 @@ function reviewMergeReasons(review, { headSha, origin, mergeBase }) {
   if (!origin) reasons.push("repository not verified (no origin)");
   else if (normalizeRepository(review.repository) !== normalizeRepository(origin)) reasons.push("review names a different repository");
   if (!mergeBase || mergeBase !== review.base_sha) reasons.push("review base does not match the PR merge base");
+  if (!review.ledger_ready) reasons.push("no clean review round recorded for this head (dirf review trigger)");
   return reasons;
 }
 
@@ -353,7 +372,7 @@ export function boardSnapshot(slug, { checkout, now = new Date(), gh = defaultGh
     const folder = storeAttemptDir(slug, attempt.id);
     // strong: the branch, the PR body, or the attempt's review.json names it.
     // handoff: only the handoff prose names it (it may be a dependency).
-    const links = new Map([...handoffPullRequests(readText(attempt.handoff_path))].map((number) => [number, "handoff"]));
+    const links = handoffPullRequestLinks(readText(attempt.handoff_path));
     const reviewPr = attemptReviewPr(folder);
     if (reviewPr) links.set(reviewPr, "strong");
     const branches = new Set([attempt.responsibility_branch, attempt.execution?.branch].filter(Boolean));
@@ -395,11 +414,7 @@ export function boardSnapshot(slug, { checkout, now = new Date(), gh = defaultGh
       const pr = prsByNumber.get(number);
       if (!pr) return { number, state: github.available ? "UNKNOWN" : null, link: links.get(number), review: null, ready_to_merge: false, not_ready: [github.available ? "not found on GitHub" : "GitHub unavailable"] };
       claimed.add(number);
-      // A PR opened after the attempt started and named in its handoff is
-      // treated as the attempt's own work; an older one is only context.
-      const opened = Date.parse(pr.createdAt || 0) || 0;
-      const link = links.get(number) === "strong" || (opened && opened >= createdAt) ? "strong" : "handoff";
-      return prView(pr, reviewFor(pr, [folder]), { ...viewContext, link });
+      return prView(pr, reviewFor(pr, [folder]), { ...viewContext, link: links.get(number) });
     });
     const activity = lastActivity(attempt);
     const idleDays = activity ? Math.max(0, Math.floor((now.getTime() - activity) / DAY_MS)) : null;
@@ -568,12 +583,28 @@ function closeNote(action) {
 // Apply with per-item confirmation. `ask(question)` resolves to the answer
 // text. With `yes`, merges and closes are accepted and stale attempts are kept:
 // a stale attempt needs a person to choose between close and abandon.
-function reviewStillPasses(action) {
+function reviewStillPasses(slug, action) {
   try {
     const review = JSON.parse(readFileSync(action.review_path, "utf8"));
     validateReview(review);
+    assertReviewRoundRecorded(slug, review);
     return review.schema_version === 2 && review.target.mode === "full" && review.findings.length === 0
       && review.target.head_sha.toLowerCase() === action.head_sha && deriveVerdict(review) === "PASS";
+  } catch {
+    return false;
+  }
+}
+
+const THREADS_QUERY = "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved} pageInfo{hasNextPage}}}}}";
+
+// Live review conversations, as `dirf review ready` checks them. Any doubt
+// (unreadable, more than one page) counts as unresolved.
+function liveThreadsResolved(ghJson, prNumber) {
+  try {
+    const graph = ghJson(["api", "graphql", "-f", `query=${THREADS_QUERY}`, "-F", "owner={owner}", "-F", "name={repo}", "-F", `number=${prNumber}`]);
+    const connection = graph?.data?.repository?.pullRequest?.reviewThreads;
+    return Array.isArray(connection?.nodes) && connection.pageInfo?.hasNextPage === false
+      && connection.nodes.every((thread) => thread.isResolved === true);
   } catch {
     return false;
   }
@@ -595,9 +626,10 @@ export async function applyCleanup(slug, actions, { checkout, gh = defaultGh, as
         if (live.state !== "OPEN" || String(live.headRefOid).toLowerCase() !== action.head_sha || live.isDraft
           || String(live.baseRefOid || "").toLowerCase() !== action.base_ref_oid
           || live.mergeable !== "MERGEABLE" || BLOCKED_MERGE_STATES.has(live.mergeStateStatus)
-          || checkStatus(live.statusCheckRollup) !== "passing" || !reviewStillPasses(action)) {
-          results.push({ ...action, result: "skipped", reason: "PR changed since the board snapshot" });
-          log(`  PR #${action.pr}: skipped — PR changed since the board snapshot`);
+          || checkStatus(live.statusCheckRollup) !== "passing" || !reviewStillPasses(slug, action)
+          || !liveThreadsResolved(ghJson, action.pr)) {
+          results.push({ ...action, result: "skipped", reason: "PR, review, or conversations no longer qualify" });
+          log(`  PR #${action.pr}: skipped — PR, review, or conversations no longer qualify`);
           continue;
         }
         gh(["pr", "merge", String(action.pr), "--squash", "--match-head-commit", action.head_sha], { cwd: checkout });

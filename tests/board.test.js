@@ -10,6 +10,7 @@ import {
   getAttempt,
   portfolioSnapshot,
   projectWorkSnapshot,
+  recordReviewRound,
   registerProject,
   startTrackingAttempt,
   updateAttemptLifecycle,
@@ -78,12 +79,15 @@ function writeReview(root, prNumber, body) {
 const GREEN = [{ __typename: "CheckRun", name: "test", status: "COMPLETED", conclusion: "SUCCESS" }];
 
 // A fake gh: canned PR lists, per-PR views, and a merge log.
-function fakeGh(prs) {
+function fakeGh(prs, { threads = [] } = {}) {
   const calls = [];
   const byNumber = new Map(prs.map((pr) => [pr.number, { ...pr }]));
   const gh = (args) => {
     calls.push(args);
     const [group, verb, ...rest] = args;
+    if (group === "api" && verb === "graphql") {
+      return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: threads, pageInfo: { hasNextPage: false } } } } } });
+    }
     if (group !== "pr") throw new Error(`unexpected gh ${args.join(" ")}`);
     if (verb === "list") {
       const state = rest[rest.indexOf("--state") + 1];
@@ -108,12 +112,13 @@ function fakeGh(prs) {
 function fixture() {
   const { root, slug } = setup();
   const now = new Date();
-  const ready = addAttempt(slug, "ready-feature", { handoff: "## Exact next action\n\nMerge PR #12 after review.\n" });
+  const ready = addAttempt(slug, "ready-feature", { handoff: "## Completed\n\n- Opened PR #12.\n\n## Exact next action\n\nMerge PR #12 after review.\n" });
   const shipped = addAttempt(slug, "shipped-feature", { handoff: "## Completed\n\n- Opened https://github.com/example/repo/pull/10\n\n## Exact next action\n\nWait for merge.\n" });
   const done = addAttempt(slug, "done-by-handoff", { handoff: "## Exact next action\n\nDone.\n" });
   const stale = addAttempt(slug, "old-idea", { date: new Date(now.getTime() - 20 * DAY) });
   const planned = addAttempt(slug, "planned-only", { start: false });
   writeReview(root, 12, review(12, HEAD_12));
+  recordReviewRound(slug, review(12, HEAD_12));
   writeReview(root, 13, review(13, OLD_HEAD));
   const mergedAt = new Date(now.getTime() + 1000).toISOString();
   const createdAt = mergedAt;
@@ -236,6 +241,44 @@ test("a PR the handoff only mentions as a dependency is not the attempt's shippe
   const pr = board.attempts.find((a) => a.id === attempt.id).prs[0];
   assert.equal(pr.link, "handoff");
   assert.equal(cleanupPlan(board).some((action) => action.kind === "close"), false);
+});
+
+test("a dependency PR opened after the attempt started still is not shipped work", () => {
+  const { root, slug } = setup();
+  const now = new Date();
+  const attempt = addAttempt(slug, "consumer", { handoff: "## Exact next action\n\nWait for PR #20 to merge, then start the build.\n" });
+  const later = new Date(now.getTime() + 1000).toISOString();
+  const { gh } = fakeGh([{ number: 20, title: "Parallel dependency", state: "MERGED", url: "u", headRefName: "feat/api", createdAt: later, mergedAt: later, mergeCommit: { oid: MERGE_10 } }]);
+  const board = boardSnapshot(slug, { checkout: root, gh, now, requireOrigin: false, mergeBase: () => BASE });
+  assert.equal(board.attempts.find((a) => a.id === attempt.id).prs[0].link, "handoff");
+  assert.equal(cleanupPlan(board).some((action) => action.kind === "close"), false);
+});
+
+test("a review with no clean ledger round does not qualify for merge", () => {
+  const { root, slug } = setup();
+  const now = new Date();
+  const attempt = addAttempt(slug, "unrecorded", { handoff: "## Completed\n\n- Opened PR #30.\n" });
+  writeReview(root, 30, review(30, HEAD_12));
+  const { gh } = fakeGh([{ number: 30, title: "Unrecorded", state: "OPEN", url: "u", headRefName: "feat/x", headRefOid: HEAD_12, baseRefOid: BASE, createdAt: now.toISOString(), isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", statusCheckRollup: GREEN, body: "" }]);
+  const pr = boardSnapshot(slug, { checkout: root, gh, now, requireOrigin: false, mergeBase: () => BASE }).attempts.find((a) => a.id === attempt.id).prs[0];
+  assert.equal(pr.review.ledger_ready, false);
+  assert.equal(pr.ready_to_merge, false);
+  assert.match(pr.not_ready.join(","), /no clean review round recorded/);
+});
+
+test("an unresolved review conversation stops the merge at apply time", async () => {
+  const f = fixture();
+  const actions = cleanupPlan(boardSnapshot(f.slug, { checkout: f.root, gh: f.gh, now: f.now, requireOrigin: false, mergeBase: () => BASE }));
+  const { gh: openThreads, calls } = fakeGh([{ number: 12, state: "OPEN", headRefOid: HEAD_12, baseRefOid: BASE, isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", statusCheckRollup: GREEN }], { threads: [{ isResolved: false }] });
+  const [result] = await applyCleanup(f.slug, actions.slice(0, 1), { checkout: f.root, gh: openThreads, yes: true, log: () => {} });
+  assert.equal(result.result, "skipped");
+  assert.equal(calls.some((args) => args[1] === "merge"), false);
+});
+
+test("handoffPullRequestLinks marks owned PRs strong and mentions weak", async () => {
+  const { handoffPullRequestLinks } = await import("../src/board.js");
+  const links = handoffPullRequestLinks("## Work item\n\npr:7\n\n## Completed\n\n- Opened PR #8.\n- Pushed https://github.com/o/r/pull/9\n\n## Exact next action\n\nWait for PR #10 to merge.\n");
+  assert.deepEqual(Object.fromEntries(links), { 7: "strong", 8: "strong", 9: "strong", 10: "handoff" });
 });
 
 test("a merged PR that predates the attempt is context, not shipped work", () => {

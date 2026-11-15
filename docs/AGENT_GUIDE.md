@@ -533,7 +533,8 @@ project, and `dirf cleanup` to list what can close. `dirf build`, `dirf plan`,
 and `dirf create` print the top five unfinished items on stderr. Cleanup is a
 dry run unless you pass `--apply`; it squash-merges only PRs whose review passes the
 `dirf review ready` rules at the current head (full schema 2 review, same
-repository and merge base, no findings, `PASS`), with green checks and a
+repository and merge base, no findings, `PASS`, a clean round recorded with
+`dirf review trigger`, no unresolved conversations), with green checks and a
 mergeable state,
 and it closes an Attempt as `closed` with outcome `shipped` only when its linked
 PRs merged or its next action says Done. Do not advance phases with invented

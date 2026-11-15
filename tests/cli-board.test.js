@@ -17,6 +17,10 @@ const args = process.argv.slice(2);
 appendFileSync(statePath + ".log", JSON.stringify(args) + "\\n");
 const prs = JSON.parse(readFileSync(statePath, "utf8"));
 const [group, verb, ...rest] = args;
+if (group === "api") {
+  console.log(JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: [], pageInfo: { hasNextPage: false } } } } } }));
+  process.exit(0);
+}
 if (group !== "pr") { console.error("unexpected"); process.exit(1); }
 if (verb === "list") {
   const state = rest[rest.indexOf("--state") + 1];
@@ -79,6 +83,8 @@ function fixture() {
   const reviewDir = join(dir, ".scratch", "dirf-review", "pr-12");
   mkdirSync(reviewDir, { recursive: true });
   writeFileSync(join(reviewDir, "review.json"), JSON.stringify(review(12, head, base)));
+  const trigger = run(["review", "trigger", join(reviewDir, "review.json")]);
+  assert.equal(trigger.status, 0, trigger.stderr);
   const calls = () => existsSync(`${ghState}.log`)
     ? readFileSync(`${ghState}.log`, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))
     : [];
