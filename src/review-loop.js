@@ -35,13 +35,37 @@ export function loopPassed(report) {
   return PASSING.has(report.outcome);
 }
 
-// A review is qualified when it has no blocking P0, P1, P2, or P3 finding and
-// its evidence is complete (derived verdict PASS). A pre-existing P2 or P3
-// finding does not block; a pre-existing P0 or P1 does. A review with no
-// finding but with limitations, unpassed verification, low confidence, or an
-// incomplete completion record is partial: absence of findings is not proof.
+// A review is qualified when it is a full review with no blocking P0, P1, P2,
+// or P3 finding and complete evidence (derived verdict PASS), the same rule the
+// ledger uses for verify_merge_readiness. A pre-existing P2 or P3 finding does
+// not block; a pre-existing P0 or P1 does. A review with no finding but with
+// limitations, unpassed verification, low confidence, an incomplete completion
+// record, or incremental mode is partial: absence of findings is not proof.
 export function isQualified(review) {
-  return deriveVerdict(review) === "PASS";
+  return review.target.mode === "full" && deriveVerdict(review) === "PASS";
+}
+
+// What a review could not verify: the same conditions that keep a finding-free
+// review from qualifying. A review can be partial with no recorded limitation.
+export function partialReasons(review) {
+  const reasons = [...review.limitations];
+  if (review.target.mode !== "full") reasons.push(`review mode is ${review.target.mode}, not full`);
+  for (const { command, status } of review.verification) {
+    if (status && status !== "passed") reasons.push(`verification ${status}: ${command}`);
+  }
+  if (review.confidence.quality < 85) reasons.push(`quality confidence ${review.confidence.quality} is below 85`);
+  if (review.confidence.evidence < 80) reasons.push(`evidence confidence ${review.confidence.evidence} is below 80`);
+  const completion = review.completion;
+  if (completion) {
+    if (!completion.review_complete) reasons.push("the review is not complete");
+    if (completion.required_checks !== "passed") reasons.push(`required checks ${completion.required_checks}`);
+    if (completion.unresolved_threads !== 0) reasons.push(`${completion.unresolved_threads} unresolved review thread(s)`);
+  }
+  return reasons;
+}
+
+function checkFailed(review) {
+  return review.verification.some(({ status }) => status === "failed") || review.completion?.required_checks === "failed";
 }
 
 // The recorded reviews of one commit qualify it when the ladder would stop
@@ -132,7 +156,10 @@ export function runReviewLadder(options, deps) {
     if (String(artifact.target.head_sha).toLowerCase() !== head) throw new LoopStop("error", { error: `The review from step ${step} names commit ${artifact.target.head_sha}, not the checkout commit ${head}.` });
     const action = deps.trigger(artifact);
     const entry = { step, path, head, qualified: isQualified(artifact), findings: blockingFindings(artifact).length, action: action.action };
-    if (!entry.qualified && entry.findings === 0) entry.partial = true;
+    if (!entry.qualified && entry.findings === 0) {
+      entry.partial = true;
+      if (checkFailed(artifact)) entry.check_failed = true;
+    }
     steps.push({ kind: "review", ...entry });
     reviews.push({ ...entry, review: artifact, request: action });
     if (action.action === "stop_for_person") throw new LoopStop("stop_for_person", { findings: action.findings });
@@ -171,7 +198,11 @@ export function runReviewLadder(options, deps) {
     // Only a review with a blocking finding gives the fixer work. When no
     // review found one, the open reviews are partial and a person decides.
     const fixSource = sameCommit.find((item) => !item.qualified && item.findings > 0);
-    if (!fixSource) return finish("partial", { limitations: sameCommit.flatMap((item) => item.review.limitations) });
+    if (!fixSource) {
+      const notVerified = sameCommit.filter((item) => item.partial)
+        .flatMap((item) => partialReasons(item.review).map((reason) => `step ${item.step}: ${reason}`));
+      return finish("partial", { limitations: notVerified });
+    }
     const request = fixSource.request;
     const requestPath = join(outDir, `${head.slice(0, 12)}-fix-request.json`);
     writeFileSync(requestPath, JSON.stringify(request, null, 2) + "\n");
@@ -214,7 +245,7 @@ export function formatLoopReport(report) {
   for (const step of report.steps) {
     if (step.kind === "check") lines.push(`- Check before ${step.before}: ${step.status}.`);
     else if (step.kind === "fix") lines.push(`- Fix: ${step.status}.`);
-    else lines.push(`- Review step ${step.step}: ${step.qualified ? "qualified" : step.partial ? "partial (no finding, evidence incomplete)" : `${step.findings} finding(s)`}.`);
+    else lines.push(`- Review step ${step.step}: ${step.qualified ? "qualified" : step.partial ? `partial (no finding, ${step.check_failed ? "a check failed" : "evidence incomplete"})` : `${step.findings} finding(s)`}.`);
   }
   if (report.error) lines.push(`Error: ${report.error}`);
   if (report.reported_findings?.length) lines.push(`Open findings: ${report.reported_findings.map((item) => `${item.id} ${item.title}`).join("; ")}`);

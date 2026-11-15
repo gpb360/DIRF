@@ -20,7 +20,9 @@ five agents: four reviewers and one code-cleaner. No step occurs twice.
 1. Read the recorded review of the current commit. If it is qualified, start no agents.
 2. One reviewer reviews the current commit. If the review is qualified, stop.
 3. Two more reviewers review the same commit. If two of the three reviews are
-   qualified, stop.
+   qualified, stop. If no review of the three has a blocking finding but fewer
+   than two are qualified, stop. Tell the person what the partial reviews could
+   not verify.
 4. One code-cleaner reads all three reviews and fixes the issues in one commit.
 5. One reviewer reviews that commit against the three earlier reviews.
 6. If that review is not qualified, stop. Tell the person that the work needs a
@@ -33,8 +35,12 @@ the author of the commit and stop.
 
 A reviewer only reviews. A code-cleaner only changes code. Neither starts agents.
 A review is qualified when it meets the gate that the user or task states.
-Without a stated gate, it is qualified when it has no blocking P0, P1, P2, or P3
-finding. A pre-existing P2 or P3 finding does not block. A pre-existing P0 or P1
+Without a stated gate, it is qualified when it is a full review with no blocking
+P0, P1, P2, or P3 finding and complete evidence: no limitation, every
+verification passed, quality confidence of 85 or more, evidence confidence of 80
+or more, and a complete completion record (review complete, required checks
+passed, no unresolved review threads). A review with no blocking finding but
+incomplete evidence is partial, not qualified. A pre-existing P2 or P3 finding does not block. A pre-existing P0 or P1
 finding blocks.
 
 Keep the detailed grade, confidence, and priority data in `review.json` and its
