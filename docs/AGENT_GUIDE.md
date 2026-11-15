@@ -370,7 +370,9 @@ summary and have reconciled its existing owner and content.
 | `dirf review ready <review.json>` | fail closed unless the exact PR is merge-ready |
 | `dirf review trigger <review.json>` | record the review round in the store and emit a fix, reconsider-approach, stop-for-person, continued review, or live-readiness check action |
 | `dirf review reset-rounds <pr> --reason "..."` | restart the round count after a person decides to continue |
-| `dirf review loop --pr N --reviewer CMD --fixer CMD [--check CMD] [--json]` | run the Review Ladder once for this checkout: check, up to three reviews, one fix, check, one review of the fix; never pushes or merges |
+| `dirf review next --pr N [--check CMD] [--reset] [--json]` | host mode: print the next Review Ladder step with a brief, the review output path, and the record command; run it with your host's own visible agent feature (one new agent per step); DIRF never starts an agent. A `--check` that differs from the check the run started with is refused; use `--reset` |
+| `dirf review record --pr N --step ID [--status passed\|failed] [--json]` | host mode: record the finished step and print the next one, or the outcome. `--step` is required: use the one from `record_with`. DIRF refuses a record with no `--step` or for another step, a review step with no review file, a finished run, or a checkout that moved, and keeps the state |
+| `dirf review loop --pr N --reviewer CMD --fixer CMD [--check CMD] [--json]` | CI mode: run the Review Ladder once with shell commands: check, up to three reviews, one fix, check, one review of the fix; never pushes or merges. Inside an agent host use `review next`/`record` instead, so every agent stays visible |
 | `dirf review verify-update <request.json> <updated-review.json>` | compare artifact targets and emit a re-review trigger; the harness must verify the live PR head |
 | `dirf ste check <file-or-dir>... [--words FILE] [--json]` | check prose against the ASD-STE100 writing rules |
 | `dirf ste rules` | list the STE rules that the checker tests |
