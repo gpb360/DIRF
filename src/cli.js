@@ -2210,7 +2210,6 @@ function parse(argv) {
     if (a === "--skip-render") { out.skipRender = true; continue; }
     if (a === "--confirm") { out.confirm = true; continue; }
     if (a === "--approved") { out.approved = true; continue; }
-    if (a === "--apply") { out.apply = true; continue; }
     if (a === "--no-sizes") { out.sizes = false; continue; }
     if (a === "--no-branches") { out.branches = false; continue; }
     if (a === "--shed-days") { out.shedDays = Number(rest[++i]); continue; }
