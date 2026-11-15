@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { ledgerAction } from "../skills/code-review/scripts/review-ledger.mjs";
-import { formatLoopReport, isQualified, loopPassed, recordedCommitQualified, runReviewLadder, runShellCommand } from "../src/review-loop.js";
+import { formatHostView, formatLoopReport, hostHint, hostView, isQualified, loopPassed, recordLadderResult, recordedCommitQualified, runReviewLadder, runShellCommand, startLadder } from "../src/review-loop.js";
 
 const SHA_A = "a".repeat(40);
 const SHA_B = "b".repeat(40);
@@ -281,4 +281,78 @@ test("a partial review of the fix needs a new examination", () => {
   const report = runReviewLadder(h.options, h.deps);
   assert.equal(report.outcome, "needs_new_examination");
   assert.equal(loopPassed(report), false);
+});
+
+// ── Host mode: the same ladder, one step at a time ──────────────────────────
+
+// Drive the ladder the way a host does: read the next action, run it with
+// the host's own agent (here the fake harness), record the result. The state
+// goes through JSON between steps, as the CLI stores it.
+function walkAsHost(h) {
+  let state = JSON.parse(JSON.stringify(startLadder(h.options, h.deps)));
+  const actions = [];
+  for (;;) {
+    const view = hostView(state, {});
+    if (view.done) return { report: view.report, actions };
+    actions.push(view.action.kind);
+    const command = view.action.kind === "check" ? h.options.check : view.action.kind === "review" ? h.options.reviewer : h.options.fixer;
+    const result = h.deps.run(command, view.action.env);
+    state = JSON.parse(JSON.stringify(recordLadderResult(state, view.action.kind === "review" ? {} : result, h.deps)));
+  }
+}
+
+test("host mode walks the same ladder and reaches the same outcome as the shell driver", () => {
+  for (const queue of [[false], [true, false, false], [true, true, true, false], [true, true, true, true], ["partial", "partial", "partial"]]) {
+    const shell = runReviewLadder(harness({ reviews: [...queue] }).options, harness({ reviews: [...queue] }).deps);
+    const host = walkAsHost(harness({ reviews: [...queue] }));
+    assert.equal(host.report.outcome, shell.outcome, JSON.stringify(queue));
+    assert.deepEqual(host.report.steps.map(({ kind }) => kind), shell.steps.map(({ kind }) => kind));
+    assert.deepEqual(host.actions, shell.steps.map(({ kind }) => kind));
+  }
+});
+
+test("host mode records a failed check and a fixer that made no commit", () => {
+  const failed = walkAsHost(harness({ checks: [1] }));
+  assert.equal(failed.report.outcome, "check_failed");
+  const noCommit = walkAsHost(harness({ reviews: [true, true, true], fixCommits: false }));
+  assert.equal(noCommit.report.outcome, "fixer_made_no_commit");
+});
+
+test("the host action carries a brief, the output path, and the record command", () => {
+  const h = harness({ reviews: [true, true, true] });
+  let state = startLadder(h.options, h.deps);
+  state = recordLadderResult(state, { status: 0 }, h.deps);
+  const view = hostView(state, {});
+  assert.equal(view.action.kind, "review");
+  assert.equal(view.action.env.DIRF_REVIEW_OUTPUT, view.action.write_to);
+  assert.ok(view.brief.includes(view.action.write_to));
+  assert.match(view.brief, /Do not push, merge/);
+  assert.equal(view.record_with, "dirf review record --pr 7");
+  assert.equal(view.guardrails.merge_is_not_authorized, true);
+  assert.match(formatHostView(view), /next step is review step 1/);
+});
+
+test("host hints name the host's own visible agent feature and never start one", () => {
+  assert.equal(hostHint({ T3CODE_THREAD_ID: "t" }).host, "t3");
+  assert.match(hostHint({ T3CODE_THREAD_ID: "t" }).how, /delegate_task/);
+  assert.match(hostHint({ CODEX_THREAD_ID: "c" }).how, /spawn_agent/);
+  assert.match(hostHint({ CLAUDECODE: "1" }).how, /Agent tool/);
+  assert.equal(hostHint({ DIRF_HARNESS: "zed" }).host, "zed");
+  assert.match(hostHint({}).how, /Do not start hidden background agents/);
+});
+
+test("a fix step asks for a new agent when the ledger wants a new approach", () => {
+  const trigger = (artifact) => ({ ...ledgerAction(artifact), new_agent: { required: true } });
+  const h = harness({ reviews: [true, true, true], trigger });
+  let state = startLadder(h.options, h.deps);
+  for (let step = 0; step < 4; step++) {
+    const kind = state.pending.kind;
+    const result = h.deps.run(kind === "check" ? "check" : "review", hostView(state, {}).action.env);
+    state = recordLadderResult(state, kind === "review" ? {} : result, h.deps);
+  }
+  const view = hostView(state, {});
+  assert.equal(view.action.kind, "fix");
+  assert.equal(view.action.new_agent, true);
+  assert.equal(view.action.env.DIRF_REVIEW_NEW_AGENT, "1");
+  assert.match(view.brief, /new approach/);
 });

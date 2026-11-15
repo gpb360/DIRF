@@ -497,3 +497,91 @@ test("dirf review loop refuses an unregistered checkout before it runs any comma
   assert.match(result.stderr, /no DIRF project/);
   assert.equal(existsSync(marker), false);
 });
+
+test("dirf review next and record let the host run every ladder step itself", () => {
+  const root = mkdtempSync(join(tmpdir(), "dirf-review-host-"));
+  const origin = join(root, "origin.git");
+  const work = join(root, "work");
+  mkdirSync(work);
+  git(root, ["init", "--bare", "-q", origin]);
+  git(work, ["init", "-q"]);
+  git(work, ["config", "user.email", "dirf@example.invalid"]);
+  git(work, ["config", "user.name", "DIRF Test"]);
+  git(work, ["remote", "add", "origin", origin]);
+  writeFileSync(join(work, "change.txt"), "base\n");
+  git(work, ["add", "change.txt"]);
+  git(work, ["commit", "-q", "-m", "base"]);
+  const base = git(work, ["rev-parse", "HEAD"]);
+  writeFileSync(join(work, "change.txt"), "head\n");
+  git(work, ["commit", "-q", "-am", "head"]);
+  const head = git(work, ["rev-parse", "HEAD"]);
+  assert.equal(run(work, ["state", "register"]).status, 0);
+  const template = reviewFor(pathToFileURL(origin).href, base, head, 5);
+
+  // The "host": reads each action and does it itself, then records it.
+  const step = (args) => {
+    const result = run(work, [...args, "--json"]);
+    assert.equal(result.status === 0 || result.status === 1, true, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  let view = step(["review", "next", "--pr", "5", "--check", "npm test"]);
+  assert.equal(view.mode, "host");
+  assert.equal(view.action.kind, "check");
+  assert.equal(view.action.command, "npm test");
+  assert.match(view.hint.how, /visible|subagent|delegate_task|spawn_agent|Agent tool/);
+  assert.notEqual(run(work, ["review", "record", "--pr", "5"]).status, 0, "a check needs --status");
+  // next again returns the same pending step: nothing ran.
+  assert.equal(step(["review", "next", "--pr", "5"]).action.kind, "check");
+
+  view = step(["review", "record", "--pr", "5", "--status", "passed"]);
+  const kinds = ["check"];
+  while (!view.done) {
+    const { action } = view;
+    kinds.push(action.kind);
+    if (action.kind === "review") {
+      const review = JSON.parse(JSON.stringify(template));
+      review.target.head_sha = action.head;
+      if (action.step !== 4) {
+        review.axes.correctness = { status: "finding", evidence: "P2-001" };
+        review.findings = [{ id: "P2-001", priority: "P2", confidence: 92, axis: "correctness", title: "Fix the text",
+          file: "change.txt", line: 1, body: "The text is wrong. Write the fixed text.", evidence: ["change.txt says head"] }];
+      }
+      writeFileSync(action.write_to, JSON.stringify(review));
+      view = step(["review", "record", "--pr", "5"]);
+    } else if (action.kind === "fix") {
+      assert.equal(JSON.parse(readFileSync(action.request, "utf8")).action, "fix_and_update_same_pr");
+      writeFileSync(join(work, "change.txt"), "fixed\n");
+      git(work, ["commit", "-q", "-am", "fix"]);
+      view = step(["review", "record", "--pr", "5"]);
+    } else {
+      view = step(["review", "record", "--pr", "5", "--status", "passed"]);
+    }
+  }
+  assert.equal(view.report.outcome, "qualified_after_fix");
+  assert.deepEqual(kinds, ["check", "review", "review", "review", "fix", "check", "review"]);
+  assert.deepEqual(view.report.steps.map(({ kind }) => kind), kinds);
+  assert.equal(git(work, ["status", "--porcelain"]), "");
+
+  // A finished run keeps its report; --reset starts over at the new head.
+  assert.equal(step(["review", "next", "--pr", "5"]).done, true);
+  const fresh = step(["review", "next", "--pr", "5", "--reset"]);
+  assert.equal(fresh.done, true, "the fixed head is already qualified in the ledger");
+  assert.equal(fresh.report.outcome, "already_qualified");
+});
+
+test("dirf review next refuses a checkout that moved outside the ladder", () => {
+  const work = mkdtempSync(join(tmpdir(), "dirf-review-host-moved-"));
+  git(work, ["init", "-q"]);
+  git(work, ["config", "user.email", "dirf@example.invalid"]);
+  git(work, ["config", "user.name", "DIRF Test"]);
+  writeFileSync(join(work, "a.txt"), "a");
+  git(work, ["add", "a.txt"]);
+  git(work, ["commit", "-q", "-m", "a"]);
+  assert.equal(run(work, ["state", "register"]).status, 0);
+  assert.equal(run(work, ["review", "next", "--pr", "9"]).status, 0);
+  git(work, ["commit", "-q", "--allow-empty", "-m", "moved"]);
+  const moved = run(work, ["review", "next", "--pr", "9"]);
+  assert.notEqual(moved.status, 0);
+  assert.match(moved.stderr, /moved .* outside the ladder.*--reset/s);
+  assert.equal(run(work, ["review", "next", "--pr", "9", "--reset"]).status, 0);
+});

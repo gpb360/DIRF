@@ -44,7 +44,16 @@ next. Run `dirf review ready review.json` before asking to merge. That command
 must confirm the report covers the current commit, no issues remain, the review
 is complete, required checks passed, and no review conversations remain open.
 
-To run the ladder without a person between steps, run `dirf review loop --pr N
+Inside an agent host, run the ladder in host mode. Run `dirf review next --pr N
+--check CMD` in the PR checkout. It prints the next step (check, review, or fix)
+with a brief, the review output path, and the record command, and it never
+starts an agent. Run each step with the host's own visible agent feature: one
+new agent per review or fix. Then run `dirf review record --pr N` (with
+`--status passed|failed` for a check, or `--status failed` for a failed fix).
+Repeat until `dirf review next` reports the outcome. Do not wrap an agent CLI in
+a shell command for the host to run: the host cannot see or stop that agent.
+
+For CI, where no agent host runs, run `dirf review loop --pr N
 --reviewer CMD --fixer CMD --check CMD` in the PR checkout. The reviewer command
 writes review JSON to `DIRF_REVIEW_OUTPUT` for the commit in `DIRF_REVIEW_HEAD`.
 The fixer command reads the reviews in `DIRF_REVIEW_FINDINGS` and adds one
