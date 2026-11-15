@@ -65,5 +65,12 @@ See [CONTRACT.md](CONTRACT.md) for the full allow/deny/approval contract.
   cleanup candidate into a PR.
 - `dirf worktree archive` records cleanup status; it does not move files.
   Moving a worktree is a separate filesystem action requiring its own approval.
+- `dirf worktree janitor` is a dry-run report. `--apply` deletes `node_modules`
+  folders and moves removable worktrees and merged branches to the recycle
+  bin, so an agent runs it only after the owner approves that report.
+  `--only remove|shed|orphans|branches` limits a run to the approved step.
+  `dirf worktree restore <id>` puts a binned worktree or branch back.
+- `dirf worktree purge --apply` deletes binned worktrees for good. An agent
+  runs it only after the owner approves the purge dry run.
 - The repository owner is the sole authority; no agent-initiated destructive
   action happens without their per-item single-use approval.
