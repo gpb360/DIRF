@@ -73,6 +73,11 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   fails, no reviewer starts; the check output goes to the commit's author.
 
 ### Fixed
+- **Partial reviews in `dirf review loop`** — a review with no blocking finding
+  qualifies only when it is a full review with complete evidence. When no review
+  of the three has a blocking finding but fewer than two qualify, the loop stops
+  with outcome `partial`, starts no fixer, and reports what each partial review
+  could not verify.
 - **`dirf learn` YouTube captions** — the yt-dlp fallback now asks for the
   original caption track (`en-orig`) before the translated one (`en`), which
   YouTube rate-limits with HTTP 429. When yt-dlp fails, the error now names its
