@@ -497,3 +497,264 @@ test("dirf review loop refuses an unregistered checkout before it runs any comma
   assert.match(result.stderr, /no DIRF project/);
   assert.equal(existsSync(marker), false);
 });
+
+test("dirf review next and record let the host run every ladder step itself", () => {
+  const root = mkdtempSync(join(tmpdir(), "dirf-review-host-"));
+  const origin = join(root, "origin.git");
+  const work = join(root, "work");
+  mkdirSync(work);
+  git(root, ["init", "--bare", "-q", origin]);
+  git(work, ["init", "-q"]);
+  git(work, ["config", "user.email", "dirf@example.invalid"]);
+  git(work, ["config", "user.name", "DIRF Test"]);
+  git(work, ["remote", "add", "origin", origin]);
+  writeFileSync(join(work, "change.txt"), "base\n");
+  git(work, ["add", "change.txt"]);
+  git(work, ["commit", "-q", "-m", "base"]);
+  const base = git(work, ["rev-parse", "HEAD"]);
+  writeFileSync(join(work, "change.txt"), "head\n");
+  git(work, ["commit", "-q", "-am", "head"]);
+  const head = git(work, ["rev-parse", "HEAD"]);
+  assert.equal(run(work, ["state", "register"]).status, 0);
+  const template = reviewFor(pathToFileURL(origin).href, base, head, 5);
+
+  // The "host": reads each action and does it itself, then records it.
+  const step = (args) => {
+    const result = run(work, [...args, "--json"]);
+    assert.equal(result.status === 0 || result.status === 1, true, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  let view = step(["review", "next", "--pr", "5", "--check", "npm test"]);
+  assert.equal(view.mode, "host");
+  assert.equal(view.action.kind, "check");
+  assert.equal(view.action.command, "npm test");
+  assert.match(view.hint.how, /needs no agent/);
+  assert.notEqual(run(work, ["review", "record", "--pr", "5", "--step", "check-1"]).status, 0, "a check needs --status");
+  // next again returns the same pending step: nothing ran.
+  assert.equal(step(["review", "next", "--pr", "5"]).action.kind, "check");
+
+  view = step(["review", "record", "--pr", "5", "--step", "check-1", "--status", "passed"]);
+  const kinds = ["check"];
+  while (!view.done) {
+    const { action } = view;
+    // The host copies --step from record_with, as the playbook says.
+    const stepArgs = ["--step", view.record_with.match(/--step (\S+)/)[1]];
+    kinds.push(action.kind);
+    if (action.kind === "review") {
+      const review = JSON.parse(JSON.stringify(template));
+      review.target.head_sha = action.head;
+      if (action.step !== 4) {
+        review.axes.correctness = { status: "finding", evidence: "P2-001" };
+        review.findings = [{ id: "P2-001", priority: "P2", confidence: 92, axis: "correctness", title: "Fix the text",
+          file: "change.txt", line: 1, body: "The text is wrong. Write the fixed text.", evidence: ["change.txt says head"] }];
+      }
+      writeFileSync(action.write_to, JSON.stringify(review));
+      view = step(["review", "record", "--pr", "5", ...stepArgs]);
+    } else if (action.kind === "fix") {
+      assert.equal(JSON.parse(readFileSync(action.request, "utf8")).action, "fix_and_update_same_pr");
+      writeFileSync(join(work, "change.txt"), "fixed\n");
+      git(work, ["commit", "-q", "-am", "fix"]);
+      view = step(["review", "record", "--pr", "5", ...stepArgs]);
+    } else {
+      view = step(["review", "record", "--pr", "5", ...stepArgs, "--status", "passed"]);
+    }
+  }
+  assert.equal(view.report.outcome, "qualified_after_fix");
+  assert.deepEqual(kinds, ["check", "review", "review", "review", "fix", "check", "review"]);
+  assert.deepEqual(view.report.steps.map(({ kind }) => kind), kinds);
+  assert.equal(git(work, ["status", "--porcelain"]), "");
+
+  // A finished run keeps its report; --reset starts over at the new head.
+  assert.equal(step(["review", "next", "--pr", "5"]).done, true);
+  const fresh = step(["review", "next", "--pr", "5", "--reset"]);
+  assert.equal(fresh.done, true, "the fixed head is already qualified in the ledger");
+  assert.equal(fresh.report.outcome, "already_qualified");
+});
+
+test("dirf review next refuses a checkout that moved outside the ladder", () => {
+  const work = mkdtempSync(join(tmpdir(), "dirf-review-host-moved-"));
+  git(work, ["init", "-q"]);
+  git(work, ["config", "user.email", "dirf@example.invalid"]);
+  git(work, ["config", "user.name", "DIRF Test"]);
+  writeFileSync(join(work, "a.txt"), "a");
+  git(work, ["add", "a.txt"]);
+  git(work, ["commit", "-q", "-m", "a"]);
+  assert.equal(run(work, ["state", "register"]).status, 0);
+  assert.equal(run(work, ["review", "next", "--pr", "9"]).status, 0);
+  git(work, ["commit", "-q", "--allow-empty", "-m", "moved"]);
+  const moved = run(work, ["review", "next", "--pr", "9"]);
+  assert.notEqual(moved.status, 0);
+  assert.match(moved.stderr, /moved .* outside the ladder.*--reset/s);
+  assert.equal(run(work, ["review", "next", "--pr", "9", "--reset"]).status, 0);
+});
+
+function hostRepo(prefix) {
+  const work = mkdtempSync(join(tmpdir(), prefix));
+  git(work, ["init", "-q"]);
+  git(work, ["config", "user.email", "dirf@example.invalid"]);
+  git(work, ["config", "user.name", "DIRF Test"]);
+  writeFileSync(join(work, "a.txt"), "a");
+  git(work, ["add", "a.txt"]);
+  git(work, ["commit", "-q", "-m", "a"]);
+  assert.equal(run(work, ["state", "register"]).status, 0);
+  return work;
+}
+
+const ladderState = (work, pr) => readFileSync(join(work, ".git", "dirf-review-loop", `pr-${pr}`, "loop-state.json"), "utf8");
+
+test("dirf review next refuses a finished run after the checkout moved past it", () => {
+  const work = hostRepo("dirf-review-host-finished-");
+  assert.equal(run(work, ["review", "next", "--pr", "9", "--check", "false"]).status, 0);
+  assert.equal(run(work, ["review", "record", "--pr", "9", "--step", "check-1", "--status", "failed"]).status, 1);
+  assert.equal(JSON.parse(run(work, ["review", "next", "--pr", "9", "--json"]).stdout).report.outcome, "check_failed");
+  git(work, ["commit", "-q", "--allow-empty", "-m", "moved"]);
+  const moved = run(work, ["review", "next", "--pr", "9", "--json"]);
+  assert.notEqual(moved.status, 0);
+  assert.equal(moved.stdout, "");
+  assert.match(moved.stderr, /moved .* outside the ladder.*--reset/s);
+  assert.equal(JSON.parse(run(work, ["review", "next", "--pr", "9", "--reset", "--check", "true", "--json"]).stdout).action.kind, "check");
+});
+
+test("dirf review record refuses a mismatched, premature, repeated, or late record and keeps the state", () => {
+  const work = hostRepo("dirf-review-host-step-");
+  const view = JSON.parse(run(work, ["review", "next", "--pr", "9", "--check", "true", "--json"]).stdout);
+  assert.equal(view.record_with, "dirf review record --pr 9 --step check-1 --status passed|failed");
+  const refuses = (args, pattern) => {
+    const before = ladderState(work, 9);
+    const result = run(work, ["review", "record", "--pr", "9", ...args]);
+    assert.notEqual(result.status, 0, args.join(" "));
+    assert.match(result.stderr, pattern);
+    assert.equal(ladderState(work, 9), before, `state changed by ${args.join(" ")}`);
+  };
+  refuses(["--step", "1", "--status", "passed"], /--step 1 is not the pending step check-1/);
+  assert.equal(run(work, ["review", "record", "--pr", "9", "--step", "check-1", "--status", "passed"]).status, 0);
+  // A repeated record of the check is not applied to review step 1.
+  refuses(["--step", "check-1", "--status", "passed"], /not the pending step 1/);
+  // Review step 1 has no review file yet: premature.
+  refuses(["--step", "1"], /has no review at .* yet/);
+  // A record without --step is refused and names the pending step.
+  refuses([], /needs --step; the pending step is 1\..*--step 1/s);
+  const next = JSON.parse(run(work, ["review", "next", "--pr", "9", "--json"]).stdout);
+  assert.equal(next.action.kind, "review");
+  assert.equal(next.record_with, "dirf review record --pr 9 --step 1");
+  // A record after the run finished is refused too.
+  assert.equal(run(work, ["review", "record", "--pr", "9", "--step", "1", "--status", "failed"]).status, 1);
+  refuses(["--step", "1", "--status", "failed"], /is finished \(error\)/);
+});
+
+test("a retried review-3 record without --step is not applied to the fix step", () => {
+  const root = mkdtempSync(join(tmpdir(), "dirf-review-host-retry-"));
+  const origin = join(root, "origin.git");
+  const work = join(root, "work");
+  mkdirSync(work);
+  git(root, ["init", "--bare", "-q", origin]);
+  git(work, ["init", "-q"]);
+  git(work, ["config", "user.email", "dirf@example.invalid"]);
+  git(work, ["config", "user.name", "DIRF Test"]);
+  git(work, ["remote", "add", "origin", origin]);
+  writeFileSync(join(work, "change.txt"), "base\n");
+  git(work, ["add", "change.txt"]);
+  git(work, ["commit", "-q", "-m", "base"]);
+  const base = git(work, ["rev-parse", "HEAD"]);
+  writeFileSync(join(work, "change.txt"), "head\n");
+  git(work, ["commit", "-q", "-am", "head"]);
+  const head = git(work, ["rev-parse", "HEAD"]);
+  assert.equal(run(work, ["state", "register"]).status, 0);
+  let view = JSON.parse(run(work, ["review", "next", "--pr", "7", "--json"]).stdout);
+  for (const stepNumber of [1, 2, 3]) {
+    assert.equal(view.action.kind, "review");
+    const review = reviewFor(pathToFileURL(origin).href, base, head, 7);
+    review.axes.correctness = { status: "finding", evidence: "P2-001" };
+    review.findings = [{ id: "P2-001", priority: "P2", confidence: 92, axis: "correctness", title: "Fix the text",
+      file: "change.txt", line: 1, body: "The text is wrong. Write the fixed text.", evidence: ["change.txt says head"] }];
+    writeFileSync(view.action.write_to, JSON.stringify(review));
+    const recorded = run(work, ["review", "record", "--pr", "7", "--step", String(stepNumber), "--json"]);
+    assert.equal(recorded.status, 0, recorded.stderr);
+    view = JSON.parse(recorded.stdout);
+  }
+  assert.equal(view.action.kind, "fix");
+  const before = ladderState(work, 7);
+  for (const args of [[], ["--step", "3"]]) {
+    const retry = run(work, ["review", "record", "--pr", "7", ...args]);
+    assert.notEqual(retry.status, 0, args.join(" "));
+    assert.match(retry.stderr, /pending step (is )?fix/);
+    assert.equal(ladderState(work, 7), before, "a retried record left the fix pending");
+  }
+  assert.equal(git(work, ["rev-parse", "HEAD"]), head);
+  assert.equal(JSON.parse(run(work, ["review", "next", "--pr", "7", "--json"]).stdout).action.kind, "fix");
+});
+
+test("dirf review next refuses a --check that differs from the stored run", () => {
+  const work = hostRepo("dirf-review-host-check-");
+  assert.equal(run(work, ["review", "next", "--pr", "9"]).status, 0);
+  const before = ladderState(work, 9);
+  const added = run(work, ["review", "next", "--pr", "9", "--check", "npm test", "--json"]);
+  assert.notEqual(added.status, 0);
+  assert.equal(added.stdout, "");
+  assert.match(added.stderr, /started without --check.*--reset --check "npm test"/s);
+  assert.equal(ladderState(work, 9), before);
+  // The same check, or none, continues the run; a new run with --reset takes the check.
+  assert.equal(run(work, ["review", "next", "--pr", "9", "--reset", "--check", "true"]).status, 0);
+  assert.equal(JSON.parse(run(work, ["review", "next", "--pr", "9", "--check", "true", "--json"]).stdout).action.kind, "check");
+  assert.equal(JSON.parse(run(work, ["review", "next", "--pr", "9", "--json"]).stdout).action.kind, "check");
+  const changed = run(work, ["review", "next", "--pr", "9", "--check", "false"]);
+  assert.notEqual(changed.status, 0);
+  assert.match(changed.stderr, /started with --check "true"/);
+});
+
+test("dirf review record refuses a check or review after the checkout moved", () => {
+  const work = hostRepo("dirf-review-host-record-moved-");
+  assert.equal(run(work, ["review", "next", "--pr", "9", "--check", "true"]).status, 0);
+  git(work, ["commit", "-q", "--allow-empty", "-m", "moved"]);
+  const before = ladderState(work, 9);
+  const moved = run(work, ["review", "record", "--pr", "9", "--step", "check-1", "--status", "passed"]);
+  assert.notEqual(moved.status, 0);
+  assert.match(moved.stderr, /moved .* outside the ladder.*--reset/s);
+  assert.equal(ladderState(work, 9), before);
+  git(work, ["reset", "-q", "--hard", "HEAD~1"]);
+  assert.equal(run(work, ["review", "record", "--pr", "9", "--step", "check-1", "--status", "passed"]).status, 0);
+  writeFileSync(join(work, "a.txt"), "b");
+  git(work, ["commit", "-q", "-am", "moved again"]);
+  const review = run(work, ["review", "record", "--pr", "9", "--step", "1", "--status", "failed"]);
+  assert.notEqual(review.status, 0);
+  assert.match(review.stderr, /moved .* outside the ladder/);
+  assert.equal(JSON.parse(ladderState(work, 9)).pending.kind, "review");
+});
+
+test("dirf review next keeps showing fixer_failed after a fixer committed and then failed", () => {
+  const root = mkdtempSync(join(tmpdir(), "dirf-review-host-fixfail-"));
+  const origin = join(root, "origin.git");
+  const work = join(root, "work");
+  mkdirSync(work);
+  git(root, ["init", "--bare", "-q", origin]);
+  git(work, ["init", "-q"]);
+  git(work, ["config", "user.email", "dirf@example.invalid"]);
+  git(work, ["config", "user.name", "DIRF Test"]);
+  git(work, ["remote", "add", "origin", origin]);
+  writeFileSync(join(work, "change.txt"), "base\n");
+  git(work, ["add", "change.txt"]);
+  git(work, ["commit", "-q", "-m", "base"]);
+  const base = git(work, ["rev-parse", "HEAD"]);
+  writeFileSync(join(work, "change.txt"), "head\n");
+  git(work, ["commit", "-q", "-am", "head"]);
+  const head = git(work, ["rev-parse", "HEAD"]);
+  assert.equal(run(work, ["state", "register"]).status, 0);
+  const step = (args) => JSON.parse(run(work, [...args, "--json"]).stdout);
+  let view = step(["review", "next", "--pr", "6"]);
+  while (view.action?.kind === "review") {
+    const review = reviewFor(pathToFileURL(origin).href, base, head, 6);
+    review.axes.correctness = { status: "finding", evidence: "P2-001" };
+    review.findings = [{ id: "P2-001", priority: "P2", confidence: 92, axis: "correctness", title: "Fix the text",
+      file: "change.txt", line: 1, body: "The text is wrong.", evidence: ["change.txt says head"] }];
+    writeFileSync(view.action.write_to, JSON.stringify(review));
+    view = step(["review", "record", "--pr", "6", "--step", String(view.action.step)]);
+  }
+  assert.equal(view.action.kind, "fix");
+  writeFileSync(join(work, "change.txt"), "half fixed\n");
+  git(work, ["commit", "-q", "-am", "half fix"]);
+  view = step(["review", "record", "--pr", "6", "--step", "fix", "--status", "failed"]);
+  assert.equal(view.report.outcome, "fixer_failed");
+  const again = run(work, ["review", "next", "--pr", "6", "--json"]);
+  assert.equal(again.status, 1, again.stderr);
+  assert.equal(JSON.parse(again.stdout).report.outcome, "fixer_failed");
+});
