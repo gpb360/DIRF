@@ -38,7 +38,8 @@ function review(head, withFinding) {
 
 // A fake checkout. `reviews` is the queue of review results (see review()).
 // `checks` is the queue of check exit statuses.
-function harness({ reviews = [], checks = [], fixStatus = 0, fixCommits = true, recorded = [], trigger, descends = true } = {}) {
+// `edit` changes each review artifact before the reviewer writes it.
+function harness({ reviews = [], checks = [], fixStatus = 0, fixCommits = true, recorded = [], trigger, descends = true, edit } = {}) {
   let head = SHA_B;
   const calls = [];
   const deps = {
@@ -50,7 +51,9 @@ function harness({ reviews = [], checks = [], fixStatus = 0, fixCommits = true, 
       calls.push({ command, env });
       if (command === "check") return { status: checks.shift() ?? 0, output: "lint: 1 error" };
       if (command === "review") {
-        writeFileSync(env.DIRF_REVIEW_OUTPUT, JSON.stringify(review(env.DIRF_REVIEW_HEAD, reviews.shift())));
+        const artifact = review(env.DIRF_REVIEW_HEAD, reviews.shift());
+        edit?.(artifact);
+        writeFileSync(env.DIRF_REVIEW_OUTPUT, JSON.stringify(artifact));
         return { status: 0, output: "" };
       }
       if (command === "fix") {
@@ -262,10 +265,10 @@ test("partial reviews without any finding stop for a person and never start the 
   assert.equal(report.outcome, "partial");
   assert.equal(loopPassed(report), false);
   assert.deepEqual(h.commands(), ["check", "review", "review", "review"]);
-  assert.deepEqual(report.limitations, ["Could not run the integration tests", "Could not run the integration tests"]);
+  assert.deepEqual(report.limitations, ["step 1: Could not run the integration tests", "step 2: Could not run the integration tests"]);
   const text = formatLoopReport(report);
   assert.match(text, /partial \(no finding, evidence incomplete\)/);
-  assert.match(text, /Not verified: Could not run the integration tests/);
+  assert.match(text, /Not verified: step 1: Could not run the integration tests/);
   assert.match(text, /give this result to a person/);
 });
 
@@ -378,4 +381,53 @@ test("a fixer that commits and then fails keeps its outcome readable", () => {
   const host = walkAsHost(h);
   assert.equal(host.report.outcome, "fixer_failed");
   assert.equal(host.report.head, SHA_B, "the report keeps the reviewed head");
+});
+
+test("a clean incremental review is partial, as the ledger records it", () => {
+  const incremental = (artifact) => {
+    artifact.target.mode = "incremental";
+    artifact.target.previous_head_sha = SHA_A;
+  };
+  const clean = review(SHA_B, false);
+  incremental(clean);
+  assert.equal(isQualified(clean), false);
+  assert.notEqual(ledgerAction(clean).action, "verify_merge_readiness");
+  const h = harness({ reviews: [false, false, false], edit: incremental });
+  const report = runReviewLadder(h.options, h.deps);
+  assert.equal(report.outcome, "partial");
+  assert.equal(loopPassed(report), false);
+  assert.ok(report.limitations.includes("step 1: review mode is incremental, not full"));
+});
+
+test("a partial review with no limitation still reports what it could not verify", () => {
+  const pending = (artifact) => {
+    artifact.verification[0].status = "pending";
+    artifact.confidence.evidence = 60;
+    artifact.completion.required_checks = "pending";
+  };
+  const h = harness({ reviews: [false, false, false], edit: pending });
+  const report = runReviewLadder(h.options, h.deps);
+  assert.equal(report.outcome, "partial");
+  assert.deepEqual(report.limitations.filter((item) => item.startsWith("step 1: ")), [
+    "step 1: verification pending: node --test",
+    "step 1: evidence confidence 60 is below 80",
+    "step 1: required checks pending",
+  ]);
+  const text = formatLoopReport(report);
+  assert.match(text, /Not verified: step 1: verification pending: node --test/);
+  assert.match(text, /partial \(no finding, evidence incomplete\)/);
+});
+
+test("a partial review with a failed check is not labelled evidence incomplete", () => {
+  const failed = (artifact) => {
+    artifact.verification[0].status = "failed";
+  };
+  const h = harness({ reviews: [false, false, false], edit: failed });
+  const report = runReviewLadder(h.options, h.deps);
+  assert.equal(report.outcome, "partial");
+  assert.equal(report.steps.find(({ kind }) => kind === "review").check_failed, true);
+  const text = formatLoopReport(report);
+  assert.match(text, /Review step 1: partial \(no finding, a check failed\)/);
+  assert.doesNotMatch(text, /evidence incomplete/);
+  assert.match(text, /Not verified: step 1: verification failed: node --test/);
 });
