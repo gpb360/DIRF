@@ -25,6 +25,14 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 - **Unfinished-work notice** — `dirf build`, `dirf plan`, and `dirf create`
   print the top five open Attempts and passing-but-unmerged PRs on stderr with
   a `dirf board` / `dirf cleanup` hint before they continue.
+- **DIRF reaches subagents and resists silent skips.** `dirf state active --hook`
+  takes `--event SessionStart|SubagentStart`, and `dirf host setup` now also
+  merges a `SubagentStart` hook, because subagents never receive SessionStart.
+  In a configured checkout the hook envelope starts with a `Required:`
+  directive; unconfigured folders get none. `dirf host setup --guard` adds an
+  opt-in PreToolUse edit guard (`dirf state guard --hook`) that denies
+  Edit/Write in a configured checkout that no attempt owns and fails open on
+  bad input.
 - **Pull request lifecycle playbooks** — four playbooks cover the work around a
   pull request that the Review Ladder does not: `pr-watch` (watch checks and
   review bots, fix the real findings, stop when ready), `pr-modernize` (bring an

@@ -10,7 +10,7 @@
 //   dirf list [--path DIR]                               list saved attempts
 //   dirf status [--path DIR] [--json]                    show project and repository state
 //   dirf resume <name-or-id> [--path DIR] [--json|--full] claim task and show its next action
-//   dirf host setup [--settings FILE] [--skill-dir DIR]  one-time host bootstrap: SessionStart hook + global dirf skill
+//   dirf host setup [--settings FILE] [--skill-dir DIR] [--guard]  one-time host bootstrap: SessionStart + SubagentStart hooks, opt-in edit guard, global dirf skill
 //   dirf state active [--path DIR] [--json|--hook] [--unresolved-work-cursor TOKEN]
 //   dirf validate                                        validate registries + workflows
 //   dirf skills scan [--path DIR]                        scan host, print installed skills + resolved refs
@@ -981,24 +981,40 @@ function cmdSetup(args) {
 const HOST_SKILL_SOURCE = join(ROOT, "host", "dirf-skill", "SKILL.md");
 const DEFAULT_SKILL_DIR = join(homedir(), ".zcode", "skills");
 
-function hookCommandLine() {
-  return `node "${join(ROOT, "src", "cli.js")}" state active --hook`;
+const CLI_COMMAND = `node "${join(ROOT, "src", "cli.js")}"`;
+const GUARD_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|apply_patch";
+
+function hookCommandLine(event = "SessionStart") {
+  return `${CLI_COMMAND} state active --hook${event === "SessionStart" ? "" : ` --event ${event}`}`;
 }
 
-function hookGroup() {
-  return { hooks: [{ type: "command", command: hookCommandLine() }] };
+function hookGroup(event = "SessionStart") {
+  return { hooks: [{ type: "command", command: hookCommandLine(event) }] };
 }
 
-function hookSnippet() {
-  return JSON.stringify({ hooks: { SessionStart: [hookGroup()] } }, null, 2);
+function guardGroup() {
+  return { matcher: GUARD_MATCHER, hooks: [{ type: "command", command: `${CLI_COMMAND} state guard --hook` }] };
 }
 
-function installHook(settingsPath) {
-  // Merge the SessionStart hook group into an existing settings file without
-  // touching anything else. Backs up the original once; re-runs are a no-op.
+// Event -> hook group. SubagentStart reaches subagents, which never see SessionStart.
+// The PreToolUse edit guard is opt-in because it blocks work.
+function hookGroups({ guard = false } = {}) {
+  const groups = { SessionStart: hookGroup("SessionStart"), SubagentStart: hookGroup("SubagentStart") };
+  if (guard) groups.PreToolUse = guardGroup();
+  return groups;
+}
+
+function hookSnippet({ guard = false } = {}) {
+  const hooks = Object.fromEntries(Object.entries(hookGroups({ guard })).map(([event, group]) => [event, [group]]));
+  return JSON.stringify({ hooks }, null, 2);
+}
+
+function installHook(settingsPath, { guard = false } = {}) {
+  // Merge DIRF hook groups into an existing settings file without touching
+  // anything else. Backs up the original once; re-runs are a no-op.
   // Two host schema shapes are auto-detected from the file's existing hooks:
-  //   Claude Code / Codex:  hooks.SessionStart = [ { hooks: [...] } ]
-  //   ZCode config:         hooks.events.SessionStart = [ ... ], gated by hooks.enabled
+  //   Claude Code / Codex:  hooks.<Event> = [ { hooks: [...] } ]  (SessionStart, SubagentStart, opt-in PreToolUse guard)
+  //   ZCode config:         hooks.events.SessionStart = [ ... ], gated by hooks.enabled (SessionStart only)
   const original = readFileSync(settingsPath, "utf8");
   const settings = JSON.parse(original);
   if (typeof settings !== "object" || settings === null || Array.isArray(settings)) {
@@ -1013,12 +1029,20 @@ function installHook(settingsPath) {
   const eventsShape = settings.hooks?.events !== undefined;
   const hooks = settings.hooks ?? (settings.hooks = {});
   const target = eventsShape ? (hooks.events ??= {}) : hooks;
-  const list = target.SessionStart ?? (target.SessionStart = []);
-  if (!Array.isArray(list)) throw new Error(`${eventsShape ? "settings.hooks.events.SessionStart" : "settings.hooks.SessionStart"} must be an array or absent`);
-  const command = hookCommandLine();
-  const present = list.some((group) => Array.isArray(group?.hooks) && group.hooks.some((entry) => entry?.type === "command" && entry?.command === command));
-  if (present) return { installed: false, enabledChanged: false };
-  list.push(hookGroup());
+  const wanted = Object.entries(eventsShape ? { SessionStart: hookGroup() } : hookGroups({ guard }));
+  for (const [event] of wanted) {
+    if (target[event] !== undefined && !Array.isArray(target[event])) {
+      throw new Error(`${eventsShape ? "settings.hooks.events" : "settings.hooks"}.${event} must be an array or absent`);
+    }
+  }
+  let added = 0;
+  for (const [event, group] of wanted) {
+    const list = target[event] ?? (target[event] = []);
+    const command = group.hooks[0].command;
+    const present = list.some((existing) => Array.isArray(existing?.hooks) && existing.hooks.some((entry) => entry?.type === "command" && entry?.command === command));
+    if (!present) { list.push(group); added += 1; }
+  }
+  if (!added) return { installed: false, enabledChanged: false };
   let enabledChanged = false;
   if (eventsShape && hooks.enabled !== true) { hooks.enabled = true; enabledChanged = true; }
   const backup = `${settingsPath}.dirf-bak`;
@@ -1043,9 +1067,10 @@ function installHostSkill(skillDir, force = false) {
 
 function cmdHost(args) {
   const sub = args._[0] || "setup";
-  if (sub === "hook-snippet") { console.log(hookSnippet()); return; }
+  const guard = Boolean(args.guard);
+  if (sub === "hook-snippet") { console.log(hookSnippet({ guard })); return; }
   if (sub !== "setup") {
-    console.error("usage: dirf host [setup] [--settings FILE] [--skill-dir DIR] [--skip-hook] [--skip-skill] [--force]\n       dirf host hook-snippet");
+    console.error("usage: dirf host [setup] [--settings FILE] [--skill-dir DIR] [--skip-hook] [--skip-skill] [--guard] [--force]\n       dirf host hook-snippet [--guard]");
     process.exit(2);
   }
 
@@ -1053,7 +1078,7 @@ function cmdHost(args) {
     if (args.settings) {
       const settingsPath = resolve(args.settings);
       try {
-        const result = installHook(settingsPath);
+        const result = installHook(settingsPath, { guard });
         if (result.installed) {
           const enabledNote = result.enabledChanged ? " Set hooks.enabled = true (ZCode config requires it for hooks to run)." : "";
           console.log(`Hook installed in ${settingsPath} (backup at ${settingsPath}.dirf-bak).${enabledNote}`);
@@ -1065,8 +1090,8 @@ function cmdHost(args) {
         process.exitCode = 1;
       }
     } else {
-      console.log("SessionStart hook — add to the host's settings file, or re-run with --settings <settings.json> to install:");
-      console.log(hookSnippet());
+      console.log("DIRF hooks — add to the host's settings file, or re-run with --settings <settings.json> to install:");
+      console.log(hookSnippet({ guard }));
     }
   }
 
@@ -1355,7 +1380,43 @@ function startupDetailLines(result) {
   return lines;
 }
 
+const HOOK_EVENTS = ["SessionStart", "SubagentStart"];
+// Configured checkouts only: an unconfigured or scratch folder must not be pushed into DIRF.
+const HOOK_DIRECTIVE = "Required: this checkout uses DIRF. Before you edit, build, or do other tracked work, run `dirf state active` (or load the dirf skill) and follow its next action. Work outside a DIRF attempt is not tracked. A subagent reports the attempt id it worked under.";
+
+function hookEvent(args) {
+  const event = args.event ?? "SessionStart";
+  if (!HOOK_EVENTS.includes(event)) throw new Error(`--event must be ${HOOK_EVENTS.join(" or ")}`);
+  return event;
+}
+
+// PreToolUse edit guard. It denies edits in a configured checkout that no attempt
+// owns. It never blocks on its own failure: bad input or an error allows the edit.
+function cmdStateGuard(args) {
+  if (!args.hook) throw new Error("state guard runs as a host hook: dirf state guard --hook");
+  let payload;
+  try { payload = JSON.parse(readFileSync(0, "utf8")); } catch { return; }
+  try {
+    const file = payload?.tool_input?.file_path || payload?.tool_input?.notebook_path;
+    const base = typeof payload?.cwd === "string" && payload.cwd ? payload.cwd : process.cwd();
+    const dir = typeof file === "string" && file ? dirname(resolve(base, file)) : base;
+    if (!existsSync(dir)) return;
+    const target = projectRoot(dir);
+    const project = resolveProject(target, { touch: false, migrate: false });
+    if (!project) return;
+    const state = checkoutSummary(project.slug, checkoutRoot(target)).responsibility.state;
+    if (state === "active") return;
+    const reason = state === "conflict"
+      ? "DIRF: more than one attempt claims this checkout. Ask the user which attempt owns it, then run `dirf resume <id>`."
+      : "DIRF: no attempt owns this checkout. Run `dirf state active`, then `dirf build <name> \"<task>\"` for new work or `dirf resume <id>` for planned work, before you edit.";
+    console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } }));
+  } catch {
+    // Fail open: a guard bug must not stop the host.
+  }
+}
+
 function cmdStateActive(args) {
+  const event = args.hook ? hookEvent(args) : "SessionStart";
   const target = projectRoot(args.path || ".");
   const project = resolveProject(target, { touch: false, migrate: false });
   const checkout = checkoutRoot(target);
@@ -1364,7 +1425,7 @@ function cmdStateActive(args) {
     const result = { schema_version: 1, state: "idle", configured: false, project: null, checkout };
     if (args.hook) {
       console.log(JSON.stringify({ hookSpecificOutput: {
-        hookEventName: "SessionStart",
+        hookEventName: event,
         additionalContext: "DIRF is available, but this checkout is not configured. Run dirf setup before routing new work; do not borrow attempts or context from another project.",
       } }));
     } else if (args.json) console.log(JSON.stringify(result, null, 2));
@@ -1432,7 +1493,8 @@ function cmdStateActive(args) {
     const details = startupDetailLines(result);
     if (active?.needs_refresh) additionalContext = `Related-checkpoint warning. ${additionalContext}`;
     if (details.length) additionalContext += `\n${details.join("\n")}`;
-    console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext } }));
+    additionalContext = `${HOOK_DIRECTIVE} ${additionalContext}`;
+    console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext } }));
     return;
   }
   if (args.json) { console.log(JSON.stringify(result, null, 2)); return; }
@@ -2065,6 +2127,13 @@ function parse(argv) {
     if (a === "--settings") { out.settings = rest[++i]; continue; }
     if (a === "--skill-dir") { out.skillDir = rest[++i]; continue; }
     if (a === "--skip-hook") { out.skipHook = true; continue; }
+    if (a === "--guard") { out.guard = true; continue; }
+    if (a === "--event") {
+      const value = rest[++i];
+      if (!value || value.startsWith("--")) throw new Error("--event requires a value");
+      out.event = value;
+      continue;
+    }
     if (a === "--skip-skill") { out.skipSkill = true; continue; }
     if (a === "--project") { out.project = true; continue; }
     if (a === "--slug") { out.slug = rest[++i]; continue; }
@@ -2217,7 +2286,8 @@ Usage:
   dirf state write-handoff --file FILE|- [...]        write the canonical handoff
   dirf state list-attempts [--path DIR|--slug S]      list attempts for a project
   dirf state get-attempt <id> [...]                   show one attempt
-  dirf state active [--path DIR] [--json|--hook] [--unresolved-work-cursor TOKEN]  report ownership and bounded unresolved work without claiming it
+  dirf state active [--path DIR] [--json|--hook [--event SessionStart|SubagentStart]] [--unresolved-work-cursor TOKEN]  report ownership and bounded unresolved work without claiming it
+  dirf state guard --hook                             PreToolUse edit guard: deny edits in a configured checkout no attempt owns (opt-in via host setup --guard)
   dirf state summary --attempt ID|UNIQUE_NAME [--path DIR|--slug SLUG] [--json]  read compact current state without claiming or changing files
     summary pages use --requirements-cursor TOKEN and --unresolved-work-cursor TOKEN (also available with resume --summary)
     page planned attempts with state summary; start them before using resume --summary continuation cursors
@@ -2538,6 +2608,7 @@ async function main() {
     else if (sub === "list-attempts") cmdStateListAttempts(subArgs);
     else if (sub === "get-attempt") cmdStateGetAttempt(subArgs);
     else if (sub === "active") cmdStateActive(subArgs);
+    else if (sub === "guard") cmdStateGuard(subArgs);
     else if (sub === "summary") cmdStateSummary(subArgs);
     else if (sub === "import-handoff") cmdStateImportHandoff(subArgs);
     else if (sub === "migrate-cleanup") cmdStateMigrateCleanup(subArgs);
