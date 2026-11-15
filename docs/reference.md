@@ -217,14 +217,16 @@ dirf state read-handoff [--path DIR|--slug S]        print the canonical project
 dirf state write-handoff --file FILE|- [...]         write the canonical project handoff
 dirf state list-attempts [--path DIR|--slug S]       list attempts for a project
 dirf state get-attempt <id> [...]                    show one attempt
-dirf state active [--path DIR] [--json|--hook]       report checkout-scoped responsibility
+dirf state active [--path DIR] [--json|--hook] [--event E] report checkout-scoped responsibility
 dirf state import-handoff [--path DIR] [--force]     promote a local HANDOFF.md into the store
 dirf state migrate-cleanup [--path DIR]              remove migration backup(s) once the store works
 
 # host bootstrap (one-time; see "How a fresh agent discovers DIRF" in docs/AGENT_GUIDE.md)
-dirf host setup [--settings FILE] [--skill-dir DIR] [--skip-hook] [--skip-skill] [--force]
-                                                     install the SessionStart hook + global dirf skill
-dirf host hook-snippet                               print the SessionStart hook JSON only
+dirf host setup [--settings FILE] [--skill-dir DIR] [--skip-hook] [--skip-skill] [--guard] [--force]
+                                                     install SessionStart + SubagentStart hooks, the opt-in
+                                                     edit guard (--guard), and the global dirf skill
+dirf host hook-snippet [--guard]                     print the hook JSON only
+dirf state guard --hook                              PreToolUse edit guard (reads the host hook payload on stdin)
 
 # typed artifact provenance
 dirf artifact list <attempt> [--json]                list artifacts and governing versions
@@ -614,10 +616,28 @@ loading the portfolio or full handoffs at every session start:
   "hooks": {
     "SessionStart": [{
       "hooks": [{ "type": "command", "command": "dirf state active --hook" }]
+    }],
+    "SubagentStart": [{
+      "hooks": [{ "type": "command", "command": "dirf state active --hook --event SubagentStart" }]
     }]
   }
 }
 ```
+
+Subagents do not receive SessionStart, so the SubagentStart group gives them
+the same envelope. In a configured checkout the envelope starts with a
+`Required:` directive. To block untracked edits, add the opt-in guard:
+
+```json
+"PreToolUse": [{
+  "matcher": "Edit|Write|MultiEdit|NotebookEdit|apply_patch",
+  "hooks": [{ "type": "command", "command": "dirf state guard --hook" }]
+}]
+```
+
+The guard denies an edit only in a configured checkout that no attempt owns.
+It allows the edit when the checkout is unconfigured or when its input or
+lookup fails.
 
 The hook keeps DIRF available for idle checkouts, reuses the one in-progress
 attempt bound to an active checkout, and reports conflicts instead of choosing

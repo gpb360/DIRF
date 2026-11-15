@@ -30,7 +30,13 @@ surfaces make discovery automatic, in order of strength:
    `hooks.enabled = true` when the ZCode shape requires it). Every new session
    then receives a small envelope: active attempt + phase + exact next action +
    lazy paths, or idle/conflict instructions. This is the strongest surface
-   because it costs the agent nothing.
+   because it costs the agent nothing. In a configured checkout the envelope
+   starts with a `Required:` directive; an unconfigured folder gets none.
+   In the direct schema, setup also merges a `SubagentStart` hook
+   (`state active --hook --event SubagentStart`), because subagents never
+   receive SessionStart. `--guard` adds an opt-in PreToolUse edit guard
+   (`state guard --hook`): it denies Edit/Write in a configured checkout that
+   no attempt owns, and it allows the edit when its input or lookup fails.
 2. **In-repo bootstrap block.** `dirf setup` appends a marker-guarded block to
    the project's `AGENTS.md` and context file. It names the one command that
    matters (`dirf state active`), the canonical store path for this project,
@@ -386,8 +392,9 @@ summary and have reconciled its existing owner and content.
 | `dirf project complete\|archive\|reopen` | explicit project status override (derived classification otherwise) |
 | `dirf export obsidian` | render the portfolio into an Obsidian vault (notes + canvas dashboard) |
 | `dirf export graphify` | render the portfolio as a graphify graph + interactive HTML |
-| `dirf host setup [--settings FILE] [--skill-dir DIR] [--skip-hook] [--skip-skill] [--force]` | one-time host bootstrap: SessionStart hook + global dirf skill |
-| `dirf host hook-snippet` | print the SessionStart hook JSON only |
+| `dirf host setup [--settings FILE] [--skill-dir DIR] [--skip-hook] [--skip-skill] [--guard] [--force]` | one-time host bootstrap: SessionStart + SubagentStart hooks, opt-in edit guard, global dirf skill |
+| `dirf host hook-snippet [--guard]` | print the hook JSON only |
+| `dirf state guard --hook` | PreToolUse edit guard; denies edits in a configured checkout that no attempt owns |
 | `dirf skills scan` | show installed skills + resolved refs on this host |
 | `dirf skills materialize --attempt <id> --host <claude\|codex\|agents> [--path DIR] [--include a,b]` | copy an attempt's skills into a checkout so spawned agents can use them; never overwrites a skill and hides the copies from Git |
 | `dirf skills clean --host <host> [--path DIR]` | remove only the skills that `materialize` copied |
