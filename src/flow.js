@@ -225,7 +225,7 @@ export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
   return errors;
 }
 
-function branchesFor(task, playbookAgents, forced = []) {
+function branchesFor(task, forced = []) {
   const branches = new Set(forced);
   const text = (task || "").toLowerCase();
   if (/\b(ui|page|component|landing|frontend|interface|button|form|screen)\b/.test(text)) branches.add("ui");
@@ -237,9 +237,8 @@ function branchesFor(task, playbookAgents, forced = []) {
   if (/\b(multi[- ]session|spec(?:ification)?|tickets?|roadmap|large feature|large project)\b/.test(text)) {
     branches.add("multi-session");
   }
-  if (playbookAgents?.some((agent) => ["frontend-developer", "ui-designer", "ux-researcher"].includes(agent))) {
-    branches.add("ui");
-  }
+  // The task text alone turns on `ui`. A playbook listing frontend agents is
+  // not evidence that this task touches a UI surface.
   return branches;
 }
 
@@ -542,7 +541,7 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
   const affirmativeTask = affirmativeRoutingText(context.task);
   const requestedTask = explicitRequests ? affirmativeSkillRequests(affirmativeTask, Object.keys(skillIndex)) : "";
   const namedRequests = explicitRequests ? namedSkillRequests(requestedTask, Object.keys(skillIndex)) : new Map();
-  const branches = branchesFor(affirmativeTask, selection.agents, context.branches);
+  const branches = branchesFor(affirmativeTask, context.branches);
   const requirements = flow.steps
     .filter((step) => !step.branch || branches.has(step.branch))
     .map(({ branch: _branch, skill: _legacySkill, ...step }) => ({ ...step, capability: step.capability || step.stage }));

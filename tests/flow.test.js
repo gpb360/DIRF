@@ -1044,3 +1044,32 @@ test("built-in checks are only valid on verify gates", () => {
     [],
   );
 });
+
+test("frontend agents alone do not turn on the ui branch", () => {
+  const selection = {
+    playbook: "fullstack-feature",
+    agents: ["frontend-developer", "ui-designer", "backend-architect"],
+    skill_flow: {
+      label: "build",
+      steps: [
+        { stage: "design", branch: "ui", capability: "frontend design", reason: "Design UI" },
+        { stage: "build", capability: "testing", reason: "Test" },
+      ],
+    },
+  };
+  const skills = {
+    "frontend-design": { capabilities: ["frontend design"], provider: "claude" },
+    tdd: { capabilities: ["testing"], provider: "claude" },
+  };
+  const backend = buildFlow(selection, { task: "add a GL import endpoint and migration", bundledIndex: {} }, skills);
+  assert.deepEqual(backend.steps.map(({ skill }) => skill), ["tdd"]);
+  assert.ok(!backend.branches.includes("ui"));
+  const ui = buildFlow(selection, { task: "add an import button to the settings screen", bundledIndex: {} }, skills);
+  assert.deepEqual(ui.steps.map(({ skill }) => skill), ["frontend-design", "tdd"]);
+});
+
+test("fullstack-feature runs the product-quality pass only on the ui branch", async () => {
+  const { loadPlaybooks } = await import("../src/router.js");
+  const step = loadPlaybooks()["fullstack-feature"].skill_flow.steps.find((s) => s.capability === "product quality");
+  assert.equal(step.branch, "ui");
+});
