@@ -29,7 +29,7 @@ test("a named installed model skill is selected and bound to its executable inst
   const out = join(root, "instructions");
   buildInstructions(plan, out, bindings);
   assert.match(readFileSync(join(out, "skills", "01-clear-updates", "README.md"), "utf8"), /SKILL\.md/);
-  assert.match(readFileSync(join(out, "README.md"), "utf8"), /Load and apply the selected skills in this order/);
+  assert.match(readFileSync(join(out, "README.md"), "utf8"), /A skill the task names, and every user checkpoint, is required/);
 });
 
 test("installed communication skills stay optional unless named", () => {
