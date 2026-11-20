@@ -28,7 +28,7 @@ function writeSkill(home, name, description) {
 test("create --profile routes only through the named skills and records missing entries", () => {
   const home = mkdtempSync(join(tmpdir(), "dirf-profile-home-"));
   const target = mkdtempSync(join(tmpdir(), "dirf-profile-target-"));
-  const env = { DIRF_HOME: home, HOME: home, USERPROFILE: home };
+  const env = { DIRF_HOME: home, HOME: home, USERPROFILE: home, DIRF_SKILLS_SCOPE: "all" };
   execFileSync("git", ["init", "-q"], { cwd: target, timeout: TIMEOUT });
   run(["setup", target], env, target);
   writeSkill(home, "tdd", "Test-first development with red and green checks");
@@ -85,7 +85,7 @@ test("create --profile routes only through the named skills and records missing 
 test("dirf plan persists a narrow planning roster with exactly one owner per phase", () => {
   const home = mkdtempSync(join(tmpdir(), "dirf-plan-contract-home-"));
   const target = mkdtempSync(join(tmpdir(), "dirf-plan-contract-target-"));
-  const env = { DIRF_HOME: home, HOME: home, USERPROFILE: home };
+  const env = { DIRF_HOME: home, HOME: home, USERPROFILE: home, DIRF_SKILLS_SCOPE: "all" };
   execFileSync("git", ["init", "-q"], { cwd: target, timeout: TIMEOUT });
   run(["setup", target], env, target);
 
@@ -117,7 +117,7 @@ test("dirf plan persists a narrow planning roster with exactly one owner per pha
 test("create --profile rejects a malformed skills allowlist", () => {
   const home = mkdtempSync(join(tmpdir(), "dirf-profile-invalid-home-"));
   const target = mkdtempSync(join(tmpdir(), "dirf-profile-invalid-target-"));
-  const env = { ...process.env, DIRF_HOME: home, HOME: home, USERPROFILE: home };
+  const env = { ...process.env, DIRF_HOME: home, HOME: home, USERPROFILE: home, DIRF_SKILLS_SCOPE: "all" };
   execFileSync("git", ["init", "-q"], { cwd: target, timeout: TIMEOUT });
   run(["setup", target], env, target);
   const profilePath = join(target, "invalid-profile.json");

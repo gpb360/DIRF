@@ -48,7 +48,7 @@ function writeAgent(home, name) {
 test("Grill Me builds, renders, resumes, and respects its decision and soft gates", () => {
   const home = mkdtempSync(join(tmpdir(), "dirf-grill-home-"));
   const target = mkdtempSync(join(tmpdir(), "dirf-grill-target-"));
-  const env = { DIRF_HOME: home, HOME: home, USERPROFILE: home };
+  const env = { DIRF_HOME: home, HOME: home, USERPROFILE: home, DIRF_SKILLS_SCOPE: "all" };
   execFileSync("git", ["init", "-q"], { cwd: target, timeout: TIMEOUT });
   execFileSync("git", ["remote", "add", "origin", "https://example.invalid/fixture/dirf-grill.git"], { cwd: target, timeout: TIMEOUT });
   run(["setup", target], env, target);
@@ -152,7 +152,7 @@ test("Grill Me builds, renders, resumes, and respects its decision and soft gate
 test("Grill With Docs binds its interview engine and documentation dependency", () => {
   const home = mkdtempSync(join(tmpdir(), "dirf-grill-docs-home-"));
   const target = mkdtempSync(join(tmpdir(), "dirf-grill-docs-target-"));
-  const env = { DIRF_HOME: home, HOME: home, USERPROFILE: home };
+  const env = { DIRF_HOME: home, HOME: home, USERPROFILE: home, DIRF_SKILLS_SCOPE: "all" };
   execFileSync("git", ["init", "-q"], { cwd: target, timeout: TIMEOUT });
   execFileSync("git", ["remote", "add", "origin", "https://example.invalid/fixture/dirf-grill-docs.git"], { cwd: target, timeout: TIMEOUT });
   run(["setup", target], env, target);
@@ -208,7 +208,7 @@ test("Grill With Docs binds its interview engine and documentation dependency", 
 test("a mixed Grill Me request continues into the requested PR review", () => {
   const home = mkdtempSync(join(tmpdir(), "dirf-grill-review-home-"));
   const target = mkdtempSync(join(tmpdir(), "dirf-grill-review-target-"));
-  const env = { DIRF_HOME: home, HOME: home, USERPROFILE: home };
+  const env = { DIRF_HOME: home, HOME: home, USERPROFILE: home, DIRF_SKILLS_SCOPE: "all" };
   execFileSync("git", ["init", "-q"], { cwd: target, timeout: TIMEOUT });
   execFileSync("git", ["remote", "add", "origin", "https://example.invalid/fixture/dirf-grill-review.git"], { cwd: target, timeout: TIMEOUT });
   run(["setup", target], env, target);
@@ -267,7 +267,7 @@ test("a mixed Grill Me request continues into the requested PR review", () => {
 test("negated and action-first interview requests stay coherent end to end", () => {
   const home = mkdtempSync(join(tmpdir(), "dirf-grill-order-home-"));
   const target = mkdtempSync(join(tmpdir(), "dirf-grill-order-target-"));
-  const env = { DIRF_HOME: home, HOME: home, USERPROFILE: home };
+  const env = { DIRF_HOME: home, HOME: home, USERPROFILE: home, DIRF_SKILLS_SCOPE: "all" };
   execFileSync("git", ["init", "-q"], { cwd: target, timeout: TIMEOUT });
   execFileSync("git", ["remote", "add", "origin", "https://example.invalid/fixture/dirf-grill-order.git"], { cwd: target, timeout: TIMEOUT });
   run(["setup", target], env, target);
@@ -410,7 +410,7 @@ test("negated and action-first interview requests stay coherent end to end", () 
 test("a broken explicit human router fails validation before an attempt is created", () => {
   const home = mkdtempSync(join(tmpdir(), "dirf-grill-broken-home-"));
   const target = mkdtempSync(join(tmpdir(), "dirf-grill-broken-target-"));
-  const env = { ...process.env, DIRF_HOME: home, HOME: home, USERPROFILE: home };
+  const env = { ...process.env, DIRF_HOME: home, HOME: home, USERPROFILE: home, DIRF_SKILLS_SCOPE: "all" };
   execFileSync("git", ["init", "-q"], { cwd: target, timeout: TIMEOUT });
   execFileSync("git", ["remote", "add", "origin", "https://example.invalid/fixture/dirf-grill-broken.git"], { cwd: target, timeout: TIMEOUT });
   run(["setup", target], env, target);
