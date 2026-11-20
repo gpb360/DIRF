@@ -179,19 +179,49 @@ test("buildFlow assembles an existing Selection without classifying again", () =
   });
 });
 
-test("single-word capabilities resolve against local install descriptions", () => {
+test("word overlap alone does not bind a skill; the step stays plain text", () => {
+  const selection = {
+    playbook: "demo", agents: [],
+    skill_flow: { label: "demo", steps: [
+      { stage: "write", capability: "copywriting", reason: "Write the copy" },
+      { stage: "design", capability: "frontend design", reason: "Shape the page" },
+    ] },
+  };
+  // No declared capabilities, no name match — only description words.
+  const flow = buildFlow(selection, {}, {
+    "copywriter-coach": { path: "/s", description: "Professional copywriting coach with frameworks and feedback", provider: "project" },
+    "page-kit": { path: "/p", description: "Frontend design helpers for landing pages", category: "frontend", provider: "project" },
+  });
+  assert.deepEqual(flow.steps, []);
+  assert.deepEqual(flow.gaps, [], "an unmatched step asks no gap question");
+});
+
+test("a declared capability or an exact name still binds", () => {
+  const selection = {
+    playbook: "demo", agents: [],
+    skill_flow: { label: "demo", steps: [
+      { stage: "write", capability: "copywriting", reason: "Write the copy" },
+      { stage: "design", capability: "frontend design", reason: "Shape the page" },
+    ] },
+  };
+  const flow = buildFlow(selection, {}, {
+    "copy-helper": { path: "/c", description: "Writes copy", capabilities: ["copywriting"], provider: "project" },
+    "frontend-design": { path: "/f", description: "Page layout", provider: "project" },
+    "design-notes": { path: "/d", description: "Frontend design notes and frontend design tips", provider: "project" },
+  });
+  assert.deepEqual(flow.steps.map(({ skill }) => skill), ["copy-helper", "frontend-design"]);
+  assert.deepEqual(flow.steps[1].rejected_candidates, [], "overlap-only candidates are not ranked");
+});
+
+test("an unmatched step keeps a gap when a trusted source declares the capability", () => {
   const selection = {
     playbook: "demo", agents: [],
     skill_flow: { label: "demo", steps: [{ stage: "write", capability: "copywriting", reason: "Write the copy" }] },
   };
-  // No declared capabilities, no name match — only the local skill's own
-  // description, including a morphological variant of the capability word.
-  const flow = buildFlow(selection, {}, {
-    "copywriter-coach": { path: "/s", description: "Professional copywriting coach with frameworks and feedback", provider: "project" },
-  });
-  assert.equal(flow.steps.length, 1);
-  assert.equal(flow.steps[0].skill, "copywriter-coach");
-  assert.deepEqual(flow.gaps, []);
+  const source = { name: "trusted-copy", capabilities: ["copywriting"] };
+  const flow = buildFlow(selection, { trustedSources: [source] }, {});
+  assert.equal(flow.gaps.length, 1);
+  assert.deepEqual(flow.gaps[0].trusted_candidates, [source]);
 });
 
 test("automatic routing skips incomplete skill packages", () => {
@@ -262,18 +292,18 @@ test("user-invoked skills are not routing candidates when model-invoked ones exi
     playbook: "demo", agents: [],
     skill_flow: { label: "demo", steps: [{ stage: "write", capability: "copywriting", reason: "Write the copy" }] },
   };
-  // The user-invoked skill is the strictly better match (declared capability)
-  // but its description is human-facing by design — it must not win routing.
+  // Both declare the capability, but the user-invoked skill's description is
+  // human-facing by design — it must not win routing.
   const flow = buildFlow(selection, {}, {
     "copywriter-coach": { path: "/u", description: "Professional copywriting coach with frameworks", capabilities: ["copywriting"], provider: "project", invocation: "user" },
-    "copywriter-model": { path: "/m", description: "Professional copywriting coach with frameworks", provider: "project" },
+    "copywriter-model": { path: "/m", description: "Professional copywriting coach with frameworks", capabilities: ["copywriting"], provider: "project" },
   });
   assert.equal(flow.steps.length, 1);
   assert.equal(flow.steps[0].skill, "copywriter-model");
   assert.equal(flow.steps[0].invocation, undefined);
 });
 
-test("user-invoked-only hosts leave an automatic routing gap", () => {
+test("user-invoked-only hosts leave the step unbound", () => {
   const selection = {
     playbook: "demo", agents: [],
     skill_flow: { label: "demo", steps: [{ stage: "write", capability: "copywriting", reason: "Write the copy" }] },
@@ -282,7 +312,7 @@ test("user-invoked-only hosts leave an automatic routing gap", () => {
     "copywriter-coach": { path: "/u", description: "Professional copywriting coach with frameworks", capabilities: ["copywriting"], provider: "project", invocation: "user", disclosures: ["mocking.md", "tests.md"] },
   });
   assert.deepEqual(flow.steps, []);
-  assert.equal(flow.gaps[0].capability, "copywriting");
+  assert.equal(flow.unbound[0].capability, "copywriting");
 });
 
 test("a human router lends its capability to one installed model engine", () => {
@@ -590,12 +620,12 @@ test("single-word capabilities do not match a passing description mention", () =
     skill_flow: { label: "demo", steps: [{ stage: "verify", capability: "testing", reason: "Verify" }] },
   };
   // "test" appears only in the description — not in the skill's identity —
-  // so this must stay a gap rather than a misleading match.
+  // so this must stay unbound rather than a misleading match.
   const flow = buildFlow(selection, { bundledIndex: {} }, {
     "skill-creator": { path: "/s", description: "create skills and run evals to test them", provider: "project" },
   });
   assert.deepEqual(flow.steps, []);
-  assert.equal(flow.gaps[0].capability, "testing");
+  assert.equal(flow.unbound[0].capability, "testing");
 });
 
 test("kit ships zero skills: bundled units are fallback-only and labeled", () => {
@@ -629,7 +659,7 @@ test("bundled human-only skills stay out of automatic routing", () => {
   assert.equal(bundled["wait-what"].invocation, "user");
   const flow = buildFlow(selection, { bundledIndex: bundled, allowedSkills: ["wait-what"] }, {});
   assert.deepEqual(flow.steps, []);
-  assert.equal(flow.gaps[0].capability, "plain-language repair");
+  assert.equal(flow.unbound[0].capability, "plain-language repair");
 });
 
 test("generic planning uses plan-interview instead of the explicit Grill With Docs branch", () => {
@@ -658,7 +688,7 @@ test("buildFlow rejects incidental one-word overlap", () => {
   };
   const flow = buildFlow(selection, { bundledIndex: {} }, { formatter: { description: "formats code", provider: "project" } });
   assert.deepEqual(flow.steps, []);
-  assert.equal(flow.gaps[0].capability, "code review");
+  assert.equal(flow.unbound[0].capability, "code review");
 });
 
 test("buildFlow does not infer UI from the word build", () => {

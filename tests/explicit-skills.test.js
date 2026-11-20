@@ -80,7 +80,7 @@ test("a negated skill is not selected automatically for a playbook capability", 
   const skills = { "clear-updates": { ...index["clear-updates"], capabilities: ["reporting"] } };
   const flow = buildFlow(selected, { task: "Report without clear-updates", bundledIndex: {} }, skills);
   assert.deepEqual(flow.steps, []);
-  assert.equal(flow.gaps.length, 1);
+  assert.deepEqual(flow.unbound.map(({ capability }) => capability), ["reporting"]);
 });
 
 test("a negated bundled fallback cannot re-enter through capability matching", () => {
@@ -89,7 +89,7 @@ test("a negated bundled fallback cannot re-enter through capability matching", (
     "clear-updates": { ...index["clear-updates"], capabilities: ["reporting"] },
   } }, {});
   assert.deepEqual(flow.steps, []);
-  assert.equal(flow.gaps.length, 1);
+  assert.deepEqual(flow.unbound.map(({ capability }) => capability), ["reporting"]);
 });
 
 test("a mixed negated list does not invoke a manual prose checkpoint", () => {

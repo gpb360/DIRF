@@ -19,10 +19,10 @@ function run(args, env, cwd) {
   });
 }
 
-function writeSkill(home, name, description) {
+function writeSkill(home, name, description, capabilities = []) {
   const folder = join(home, ".codex", "skills", name);
   mkdirSync(folder, { recursive: true });
-  writeFileSync(join(folder, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\nUse this skill.\n`);
+  writeFileSync(join(folder, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\ncapabilities: ${JSON.stringify(capabilities)}\n---\nUse this skill.\n`);
 }
 
 test("create --profile routes only through the named skills and records missing entries", () => {
@@ -31,7 +31,7 @@ test("create --profile routes only through the named skills and records missing 
   const env = { DIRF_HOME: home, HOME: home, USERPROFILE: home, DIRF_SKILLS_SCOPE: "all" };
   execFileSync("git", ["init", "-q"], { cwd: target, timeout: TIMEOUT });
   run(["setup", target], env, target);
-  writeSkill(home, "tdd", "Test-first development with red and green checks");
+  writeSkill(home, "tdd", "Test-first development with red and green checks", ["testing"]);
   writeSkill(home, "code-review", "Review code against standards and specifications");
 
   const profilePath = join(target, "focused-profile.json");
@@ -50,7 +50,7 @@ test("create --profile routes only through the named skills and records missing 
   });
   assert.ok(workflow.skill_flow.steps.some((step) => step.skill === "tdd"));
   assert.ok(workflow.skill_flow.steps.every((step) => step.skill === "tdd"));
-  assert.ok(workflow.skill_flow.gaps.length > 0);
+  assert.ok(workflow.skill_flow.unbound.length > 0, "steps the profile leaves uncovered stay unbound");
   assert.ok(workflow.questions.some((question) => question.includes("missing-skill")));
   assert.doesNotMatch(JSON.stringify(workflow), new RegExp(profilePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 
