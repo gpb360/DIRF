@@ -371,6 +371,10 @@ function assembleTaskRouting(task, path, options = {}) {
     const planningStages = new Set(["discover", "model", "research", "specify", "slice", "handoff", "requested", "prose"]);
     skillFlow.steps = skillFlow.steps.filter((step) => planningStages.has(step.stage));
     skillFlow.gaps = skillFlow.gaps.filter((gap) => planningStages.has(gap.stage));
+    if (skillFlow.unbound) {
+      skillFlow.unbound = skillFlow.unbound.filter((step) => planningStages.has(step.stage));
+      if (!skillFlow.unbound.length) delete skillFlow.unbound;
+    }
   }
   const blockingGaps = skillFlow.gaps.filter((gap) => gap.blocking === true);
   if (blockingGaps.length) {
