@@ -225,7 +225,7 @@ export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
   return errors;
 }
 
-function branchesFor(task, playbookAgents, forced = []) {
+function branchesFor(task, forced = []) {
   const branches = new Set(forced);
   const text = (task || "").toLowerCase();
   if (/\b(ui|page|component|landing|frontend|interface|button|form|screen)\b/.test(text)) branches.add("ui");
@@ -237,9 +237,8 @@ function branchesFor(task, playbookAgents, forced = []) {
   if (/\b(multi[- ]session|spec(?:ification)?|tickets?|roadmap|large feature|large project)\b/.test(text)) {
     branches.add("multi-session");
   }
-  if (playbookAgents?.some((agent) => ["frontend-developer", "ui-designer", "ux-researcher"].includes(agent))) {
-    branches.add("ui");
-  }
+  // The task text alone turns on `ui`. A playbook listing frontend agents is
+  // not evidence that this task touches a UI surface.
   return branches;
 }
 
@@ -437,7 +436,17 @@ function explicitHumanRouter(requirement, task, skillIndex) {
     .sort(([a], [b]) => a.localeCompare(b))[0] || null;
 }
 
-function selectCapability(requirement, selection, context, skillIndex) {
+function overlapMatches(name, item, capabilityWords, overlap) {
+  // Multi-word capabilities refuse incidental one-word overlap. A single-word
+  // capability must anchor in the skill's identity (name, category, tags),
+  // not a passing mention in its description.
+  const identity = words([name, item.category, ...(item.tags || [])].join(" "));
+  const required = Math.max(Math.min(2, capabilityWords.size), Math.ceil(capabilityWords.size / 2));
+  const anchored = capabilityWords.size > 1 || [...capabilityWords].some((word) => identity.has(word));
+  return overlap >= required && anchored;
+}
+
+function selectCapability(requirement, selection, context, skillIndex, { byOverlap = false } = {}) {
   const capabilityWords = words(requirement.capability);
   // User-invoked skills (`disable-model-invocation`) are human-only: their
   // descriptions are written for a person, not for routing, so scoring them
@@ -452,14 +461,14 @@ function selectCapability(requirement, selection, context, skillIndex) {
     const normalizedCapability = requirement.capability.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     const directMatch = declared.includes(requirement.capability) || normalizedName === normalizedCapability;
     const overlap = [...capabilityWords].filter((word) => candidate.has(word)).length;
-    // Multi-word capabilities still refuse incidental one-word overlap. A
-    // single-word capability can match too — otherwise it could never resolve
-    // against a local install — but must anchor in the skill's own identity
-    // (name, category, tags), not a passing mention in its description.
-    const identity = words([name, item.category, ...(item.tags || [])].join(" "));
-    const required = Math.max(Math.min(2, capabilityWords.size), Math.ceil(capabilityWords.size / 2));
-    const anchored = capabilityWords.size > 1 || [...capabilityWords].some((word) => identity.has(word));
-    if (!directMatch && (overlap < required || !anchored)) return { name, item, score: 0 };
+    // Only a declared capability or an exact name binds. Word overlap with a
+    // description bound skills that never claimed the step (a benchmark skill
+    // on a landing page), so it only breaks ties between direct matches.
+    // Exception: picking the engine among the references of a router the user
+    // named, where the candidates are already the router's own dependencies.
+    if (!directMatch && !(byOverlap && overlapMatches(name, item, capabilityWords, overlap))) {
+      return { name, item, score: 0 };
+    }
     const score = (declared.includes(requirement.capability) ? 100 : normalizedName === normalizedCapability ? 50 : 0) + overlap * 5;
     return { name, item, score };
   }).filter(({ score }) => score > 0)
@@ -542,12 +551,13 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
   const affirmativeTask = affirmativeRoutingText(context.task);
   const requestedTask = explicitRequests ? affirmativeSkillRequests(affirmativeTask, Object.keys(skillIndex)) : "";
   const namedRequests = explicitRequests ? namedSkillRequests(requestedTask, Object.keys(skillIndex)) : new Map();
-  const branches = branchesFor(affirmativeTask, selection.agents, context.branches);
+  const branches = branchesFor(affirmativeTask, context.branches);
   const requirements = flow.steps
     .filter((step) => !step.branch || branches.has(step.branch))
     .map(({ branch: _branch, skill: _legacySkill, ...step }) => ({ ...step, capability: step.capability || step.stage }));
   const steps = [];
   const gaps = [];
+  const unbound = [];
   const scoped = scopedSkillIndex(skillIndex, context.allowedSkills);
   const installed = withRouterCapabilities(
     withoutNegatedSkills(context.task, scoped, { taskCue, affirmativeRouting: affirmativeTask }));
@@ -633,7 +643,7 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
         continue;
       }
       const referencedIndex = Object.fromEntries(references.map((name) => [name, installed[name]]));
-      const engine = selectCapability(requirement, selection, context, referencedIndex);
+      const engine = selectCapability(requirement, selection, context, referencedIndex, { byOverlap: true });
       if (engine) {
         steps.push({
           ...engine,
@@ -682,15 +692,22 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
       status: "fallback",
       selection_reason: `bundled fallback for ${requirement.capability || requirement.stage} — no matching skill in the local install`,
     });
-    else gaps.push({
-      stage: requirement.stage,
-      capability: requirement.capability,
-      question: `No installed capability covers ${requirement.capability}. Would you like DIRF to suggest a trusted skill or derive a repo-local pattern?`,
-      reason: requirement.reason,
-      requires_approval: true,
-      trusted_candidates: (context.trustedSources || []).filter((source) =>
-        (source.capabilities || []).includes(requirement.capability)),
-    });
+    else {
+      // No skill covers the step: the agent does it from the workflow text.
+      // Ask only when a trusted source offers the capability; otherwise just
+      // record it so `dirf setup` can report the gap.
+      const trusted = (context.trustedSources || []).filter((source) =>
+        (source.capabilities || []).includes(requirement.capability));
+      if (!trusted.length) unbound.push({ stage: requirement.stage, capability: requirement.capability, reason: requirement.reason });
+      else gaps.push({
+        stage: requirement.stage,
+        capability: requirement.capability,
+        question: `No installed skill covers ${requirement.capability}. A trusted source offers it. Would you like DIRF to suggest it?`,
+        reason: requirement.reason,
+        requires_approval: true,
+        trusted_candidates: trusted,
+      });
+    }
   }
 
   // Explicit final prose work may not be part of the selected playbook.
@@ -770,6 +787,7 @@ export function buildFlow(selection, context = {}, skillIndex = {}) {
     label: flow.label,
     steps,
     gaps,
+    ...(unbound.length ? { unbound } : {}),
     branches: [...branches],
   };
 }
@@ -782,7 +800,7 @@ export function findCapabilityGaps(playbooks, skillIndex, context = {}) {
     // blocking requested-skill gaps.
     const flow = buildFlow({ playbook: name, agents: playbook.agents, skill_flow: playbook.skill_flow },
       { ...context, task: playbook.description, suppressExplicitRequests: true }, skillIndex);
-    for (const gap of flow.gaps) gaps.set(gap.capability, gap);
+    for (const gap of [...flow.gaps, ...(flow.unbound || [])]) gaps.set(gap.capability, gap);
   }
   return [...gaps.values()].sort((a, b) => a.capability.localeCompare(b.capability));
 }

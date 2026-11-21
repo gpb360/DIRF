@@ -179,6 +179,7 @@ Use this policy in every generated workflow prompt.
 ## Verification Contract
 - Name each phase's verification command before work starts; a phase is done only with that command's output attached to the evidence.
 - Do not assume a skill, tool, or integration is available unless the resolved workflow, registry, or this policy lists it.
+- Skills in a skill flow are optional aids. Use one when its step needs it and skip it otherwise. A skill the task names, and every user checkpoint, is required. Name each skill you used in the handoff.
 - When a named verification cannot run, say so and mark the claim unverified rather than reporting success.
 
 ## Governance Boundary
