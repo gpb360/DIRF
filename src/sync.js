@@ -9,6 +9,7 @@
 // --apply closes only the shipped attempts. Sync never merges, never
 // abandons, and never records a gate decision.
 import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyCleanup, boardSnapshot, cleanupPlan, defaultGh, handoffPullRequests } from "./board.js";
@@ -16,7 +17,10 @@ import { listAttempts, readAttemptHandoff, readHandoff } from "./state.js";
 
 const DAY_MS = 86_400_000;
 const DEFAULT_SINCE_DAYS = 30;
-const HINT_GH_TIMEOUT_MS = 5_000;
+// The state active check spends at most this long on gh in total, reads
+// only the latest PRs, and looks up no PR one by one.
+const HINT_GH_BUDGET_MS = 5_000;
+const HINT_CLOSED_PR_LIMIT = 100;
 const LIST_LIMIT = 15;
 
 // The checkout this CLI runs from, compared with its local origin/main ref.
@@ -24,6 +28,9 @@ const LIST_LIMIT = 15;
 export function cliFreshness(repo = join(dirname(fileURLToPath(import.meta.url)), "..")) {
   const git = (...args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).trim();
   try {
+    // Inside an enclosing repository (a project's node_modules, a home
+    // directory under Git) git answers for that repository, not this CLI.
+    if (realpathSync(git("rev-parse", "--show-toplevel")) !== realpathSync(repo)) return null;
     const branch = git("rev-parse", "--abbrev-ref", "HEAD");
     let behind = null;
     let ahead = null;
@@ -52,8 +59,8 @@ function recordedPullRequests(slug) {
   return numbers;
 }
 
-export function syncSnapshot(slug, { checkout, gh = defaultGh, now = new Date(), sinceDays = DEFAULT_SINCE_DAYS, requireOrigin = true, mergeBase, cli = cliFreshness() } = {}) {
-  const board = boardSnapshot(slug, { checkout, gh, now, requireOrigin, mergeBase, nameLinks: true });
+export function syncSnapshot(slug, { checkout, gh = defaultGh, now = new Date(), sinceDays = DEFAULT_SINCE_DAYS, requireOrigin = true, mergeBase, cli = cliFreshness(), closedPrLimit, lookupMissing = true } = {}) {
+  const board = boardSnapshot(slug, { checkout, gh, now, requireOrigin, mergeBase, nameLinks: true, lookupMissing, ...(closedPrLimit ? { closedPrLimit } : {}) });
   // Merges need a review and a person; sync leaves them to dirf cleanup.
   const actions = cleanupPlan(board).filter((action) => action.kind !== "merge" && !(action.kind === "close" && action.requires_merge.length));
   // A started attempt can name work after its PR (a hosted migration, a
@@ -65,7 +72,9 @@ export function syncSnapshot(slug, { checkout, gh = defaultGh, now = new Date(),
     const attempt = byId.get(action.attempt);
     return attempt?.status === "planned" || attempt?.next_action_done === true || !attempt?.next_action;
   };
-  const closeActions = actions.filter((action) => action.kind === "close");
+  // Sync closes on GitHub evidence only. An attempt whose next action says
+  // done but that has no merged PR is left to dirf cleanup.
+  const closeActions = actions.filter((action) => action.kind === "close" && action.prs.length > 0);
   const linked = new Set(board.attempts.flatMap((attempt) => attempt.prs.map((pr) => pr.number)));
   const recorded = recordedPullRequests(slug);
   const since = now.getTime() - sinceDays * DAY_MS;
@@ -102,7 +111,7 @@ export function formatSync(snapshot, { apply = false } = {}) {
   const cli = cliLine(snapshot.cli);
   if (cli) lines.push(cli);
   lines.push("", `Shipped attempts to close: ${snapshot.close.length}`);
-  for (const action of snapshot.close) lines.push(`  ${action.name} · PR ${action.prs.map((n) => `#${n}`).join(", ") || "none"}`);
+  for (const action of snapshot.close) lines.push(`  ${action.name} · PR ${action.prs.map((n) => `#${n}`).join(", ")}`);
   lines.push("", `PRs merged, but the next action names more work (a person decides): ${snapshot.review.length}`);
   for (const action of snapshot.review) lines.push(`  ${action.name} · PR ${action.prs.map((n) => `#${n}`).join(", ")} · next: ${clip(action.next_action, 70)}`);
   lines.push("", `Merged PRs no attempt records (last ${snapshot.since_days}d): ${snapshot.untracked_merged_prs.length}`);
@@ -131,13 +140,20 @@ export function applySync(slug, snapshot, { checkout, gh = defaultGh, log = cons
 
 // One line for dirf state active, or null. Never throws and never prompts:
 // a slow or missing gh must not stop a session from starting.
-export function syncHint(slug, { checkout, gh = defaultGh, now = new Date(), env = process.env, cli } = {}) {
+export function syncHint(slug, { checkout, gh = defaultGh, now = new Date(), env = process.env, cli, budgetMs = HINT_GH_BUDGET_MS, clock = Date.now } = {}) {
   if (env.DIRF_SYNC_CHECK === "0") return null;
   try {
-    const quickGh = (args, options = {}) => gh(args, { ...options, timeout: HINT_GH_TIMEOUT_MS });
-    const snapshot = syncSnapshot(slug, { checkout, gh: quickGh, now, ...(cli !== undefined ? { cli } : {}) });
+    // One deadline for every gh call: each gets only the time left, and none
+    // starts once it has passed (the board then reports GitHub unavailable).
+    const deadline = clock() + budgetMs;
+    const quickGh = (args, options = {}) => {
+      const left = deadline - clock();
+      if (left <= 0) throw new Error("the sync check used its time limit");
+      return gh(args, { ...options, timeout: left });
+    };
+    const snapshot = syncSnapshot(slug, { checkout, gh: quickGh, now, closedPrLimit: HINT_CLOSED_PR_LIMIT, lookupMissing: false, ...(cli !== undefined ? { cli } : {}) });
     const parts = [];
-    const shipped = snapshot.close.length + snapshot.review.length;
+    const shipped = snapshot.github.available ? snapshot.close.length + snapshot.review.length : 0;
     if (shipped) parts.push(`${shipped} attempt(s) shipped on GitHub but still open`);
     if (snapshot.untracked_merged_prs.length) parts.push(`${snapshot.untracked_merged_prs.length} merged PR(s) in the last ${snapshot.since_days}d that no attempt records`);
     const cliText = cliLine(snapshot.cli);

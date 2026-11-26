@@ -81,14 +81,14 @@ function githubOrigin(checkout) {
 // One `gh pr list` for open PRs (with checks and mergeability) and, when
 // asked, one for merged/closed PRs (light fields) so cleanup can tell shipped
 // work from abandoned branches.
-export function readPullRequests(checkout, { gh = defaultGh, includeClosed = true, requireOrigin = true } = {}) {
+export function readPullRequests(checkout, { gh = defaultGh, includeClosed = true, requireOrigin = true, closedLimit = CLOSED_PR_LIST_LIMIT } = {}) {
   if (requireOrigin && !githubOrigin(checkout)) {
     return { available: false, reason: "this checkout has no GitHub origin", prs: [] };
   }
   try {
     const open = JSON.parse(gh(["pr", "list", "--state", "open", "--limit", PR_LIST_LIMIT, "--json", OPEN_PR_FIELDS], { cwd: checkout }) || "[]");
     const closed = includeClosed
-      ? JSON.parse(gh(["pr", "list", "--state", "all", "--limit", CLOSED_PR_LIST_LIMIT, "--json", CLOSED_PR_FIELDS], { cwd: checkout }) || "[]")
+      ? JSON.parse(gh(["pr", "list", "--state", "all", "--limit", String(closedLimit), "--json", CLOSED_PR_FIELDS], { cwd: checkout }) || "[]")
       : [];
     if (!Array.isArray(open) || !Array.isArray(closed)) throw new Error("unexpected gh output");
     const byNumber = new Map();
@@ -360,13 +360,13 @@ export function branchMatchesAttemptName(branch, name) {
   return leaf === attemptName || (attemptName.startsWith("build-") && leaf === attemptName.slice("build-".length));
 }
 
-export function boardSnapshot(slug, { checkout, now = new Date(), gh = defaultGh, includeClosedPrs = true, requireOrigin = true, lookupMissing = includeClosedPrs, mergeBase, nameLinks = false } = {}) {
+export function boardSnapshot(slug, { checkout, now = new Date(), gh = defaultGh, includeClosedPrs = true, requireOrigin = true, lookupMissing = includeClosedPrs, mergeBase, nameLinks = false, closedPrLimit = CLOSED_PR_LIST_LIMIT } = {}) {
   const work = projectWorkSnapshot(slug, now);
   const staleDays = staleAttemptDays();
   const openAttempts = work.attempts.filter((attempt) => attempt.tracked && OPEN_STATES.has(attempt.lifecycle_status));
   const base = checkout || work.project.main_path;
   const github = base
-    ? readPullRequests(base, { gh, includeClosed: includeClosedPrs, requireOrigin })
+    ? readPullRequests(base, { gh, includeClosed: includeClosedPrs, requireOrigin, closedLimit: closedPrLimit })
     : { available: false, reason: "no local checkout", prs: [] };
   const prsByNumber = new Map(github.prs.map((pr) => [pr.number, pr]));
   const origin = base ? readOrigin(base) : null;

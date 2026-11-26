@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { branchMatchesAttemptName } from "../src/board.js";
-import { cliFreshness } from "../src/sync.js";
+import { deriveSlug } from "../src/state.js";
+import { cliFreshness, syncHint } from "../src/sync.js";
 
 const CLI = join(process.cwd(), "src", "cli.js");
 
@@ -41,7 +42,7 @@ function fixture() {
   for (const args of [["init", "-q"], ["config", "user.name", "DIRF Test"], ["config", "user.email", "dirf@example.invalid"], ["commit", "--allow-empty", "-q", "-m", "init"], ["remote", "add", "origin", "https://github.com/example/repo.git"]]) git(...args);
   assert.equal(run(["setup", dir]).status, 0);
   const setPrs = (prs) => writeFileSync(ghState, JSON.stringify(prs));
-  return { dir, run, setPrs };
+  return { home, dir, run, setPrs };
 }
 
 const later = (minutes) => new Date(Date.now() + minutes * 60_000).toISOString();
@@ -137,6 +138,49 @@ test("dirf state active names GitHub drift in one line, and DIRF_SYNC_CHECK=0 tu
   assert.doesNotMatch(f.run(["state", "active"], { DIRF_SYNC_CHECK: "0" }).stdout, /Sync:/);
 });
 
+test("an attempt whose next action says done but has no merged PR is not closed by sync, and the Sync: line does not count it", () => {
+  const f = fixture();
+  const id = plannedAttempt(f, "wine-filters");
+  assert.equal(f.run(["attempt", "start", id]).status, 0);
+  const progress = f.run(["record-progress", "Finished the work", "--attempt", id, "--next", "Done"]);
+  assert.equal(progress.status, 0, progress.stderr);
+  const dry = JSON.parse(f.run(["sync", "--json"]).stdout);
+  assert.equal(dry.close.length, 0);
+  assert.equal(dry.review.length, 0);
+  assert.equal(f.run(["sync", "--apply"]).status, 0);
+  assert.notEqual(JSON.parse(f.run(["state", "get-attempt", id, "--json"]).stdout).status, "closed");
+  const active = f.run(["state", "active"], { DIRF_GH: join(f.dir, "missing-gh-binary") });
+  assert.equal(active.status, 0, active.stderr);
+  assert.doesNotMatch(active.stdout, /Sync:/);
+});
+
+test("the state active sync check spends one time budget on gh and looks up no PR one by one", () => {
+  const f = fixture();
+  const id = plannedAttempt(f, "wine-filters");
+  assert.equal(f.run(["attempt", "start", id]).status, 0);
+  // The handoff names a PR the lists do not return; a full sync looks it up.
+  assert.equal(f.run(["record-progress", "Opened PR #99", "--attempt", id, "--next", "Wait for review of PR #99"]).status, 0);
+  const slug = deriveSlug(f.dir);
+  const hint = (stepMs) => {
+    let now = 0;
+    const calls = [];
+    const gh = (args, options = {}) => { calls.push({ args, timeout: options.timeout }); now += stepMs; return "[]"; };
+    const saved = process.env.DIRF_HOME;
+    process.env.DIRF_HOME = f.home;
+    try {
+      syncHint(slug, { checkout: f.dir, gh, clock: () => now, cli: null, env: {} });
+    } finally {
+      if (saved === undefined) delete process.env.DIRF_HOME; else process.env.DIRF_HOME = saved;
+    }
+    return calls;
+  };
+  const calls = hint(3_000);
+  assert.deepEqual(calls.map(({ args, timeout }) => [args[0], args[1], timeout]), [["pr", "list", 5_000], ["pr", "list", 2_000]]);
+  assert.equal(calls[1].args[calls[1].args.indexOf("--limit") + 1], "100");
+  // Once the budget is spent, no further gh call starts.
+  assert.equal(hint(6_000).length, 1);
+});
+
 test("dirf sync and state active work without gh", () => {
   const f = fixture();
   plannedAttempt(f, "wine-filters");
@@ -159,4 +203,8 @@ test("cliFreshness reports a CLI checkout behind its local origin/main", () => {
   git("reset", "-q", "--hard", old);
   assert.deepEqual(cliFreshness(repo), { repo, branch: "feat/old", behind: 1, ahead: 0, stale: true });
   assert.equal(cliFreshness(mkdtempSync(join(tmpdir(), "dirf-sync-nogit-"))), null);
+  // An installed CLI inside a project repository is not a DIRF checkout.
+  const installed = join(repo, "node_modules", "dirf");
+  mkdirSync(installed, { recursive: true });
+  assert.equal(cliFreshness(installed), null);
 });

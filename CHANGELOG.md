@@ -18,7 +18,12 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
   done, as shipped with the PR as evidence. A started attempt whose next
   action names more work goes to a person. Sync never merges, abandons, or
   records a gate. `dirf state active` (and its hook) adds one `Sync:` line
-  when it finds drift; `DIRF_SYNC_CHECK=0` turns the check off.
+  when it finds drift; that check spends at most 5 seconds on `gh` in total,
+  reads only the latest 100 PRs, and looks up no PR one by one.
+  `DIRF_SYNC_CHECK=0` turns the check off. Sync closes an attempt only on a
+  merged PR; an attempt whose next action says done with no PR is left to
+  `dirf cleanup`. The CLI freshness line appears only when the CLI directory
+  is itself the root of a Git checkout.
 - **Host mode for the Review Ladder** — `dirf review next --pr N [--check CMD]`
   prints the next ladder step (check, review, or fix) as JSON or text with a
   paste-ready brief, the review output path, the same `DIRF_REVIEW_*` values the
