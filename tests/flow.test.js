@@ -1096,6 +1096,11 @@ test("frontend agents alone do not turn on the ui branch", () => {
   assert.ok(!backend.branches.includes("ui"));
   const ui = buildFlow(selection, { task: "add an import button to the settings screen", bundledIndex: {} }, skills);
   assert.deepEqual(ui.steps.map(({ skill }) => skill), ["frontend-design", "tdd"]);
+  for (const task of ["add login screens to the app", "build signup pages with forms", "redesign the settings components and buttons"]) {
+    const plural = buildFlow(selection, { task, bundledIndex: {} }, skills);
+    assert.ok(plural.branches.includes("ui"), task);
+    assert.deepEqual(plural.steps.map(({ skill }) => skill), ["frontend-design", "tdd"], task);
+  }
 });
 
 test("fullstack-feature runs the product-quality pass only on the ui branch", async () => {

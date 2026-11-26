@@ -95,6 +95,12 @@ function homeRootNames(host, scope) {
   return [...others, ZCODE_CACHE, ...own];
 }
 
+function projectRootNames(host) {
+  // Same host-last order as the home roots, so the host's project copy wins.
+  const own = HOST_HOME_ROOTS[host] || HOST_ROOT_NAMES;
+  return [...HOST_ROOT_NAMES.filter((name) => !own.includes(name)), ...own, "skills"];
+}
+
 function skillRoots(projectRoot, { home, host, scope }) {
   // Return all skill scan roots that exist on disk, lowest priority first.
   // projectRoot null/undefined defaults to ROOT (the kit's own roots).
@@ -104,7 +110,7 @@ function skillRoots(projectRoot, { home, host, scope }) {
     const candidate = join(home, name);
     if (isDir(candidate)) roots.push(candidate);
   }
-  for (const name of PROJECT_ROOT_NAMES) {
+  for (const name of projectRootNames(host)) {
     const candidate = join(projectRoot, name);
     if (samePath(candidate, BUNDLED_DIR)) continue;
     if (isDir(candidate)) roots.push(candidate);
@@ -423,9 +429,11 @@ function invokingRepoRoots(projectRoot, invokingRoot) {
 
 function findSkillFolders(projectRoot) {
   // Auto-detect any directory named `skills` under the project root (one level
-  // of parent nesting: <root>/X/skills and <root>/skills). Returns absolute
-  // paths. Skips node_modules, .git, and the standard roots already scanned.
+  // of parent nesting: <root>/X/skills; <root>/skills is a standard root). Returns absolute
+  // paths. Skips node_modules, .git, and the standard roots skillRoots already
+  // scanned in host order; scanning them again here would undo that order.
   const out = [];
+  const standard = PROJECT_ROOT_NAMES.map((name) => join(projectRoot, name));
   const skip = new Set(["node_modules", ".git", "dist", "build", ".next", "coverage"]);
   let top;
   try {
@@ -433,13 +441,11 @@ function findSkillFolders(projectRoot) {
   } catch {
     return out;
   }
-  // <root>/skills
-  const rootSkills = join(projectRoot, "skills");
-  if (!samePath(rootSkills, BUNDLED_DIR) && isDir(rootSkills)) out.push(rootSkills);
   // <root>/<dir>/skills
   for (const entry of top) {
     if (!entry.isDirectory() || skip.has(entry.name)) continue;
     const skillsDir = join(projectRoot, entry.name, "skills");
+    if (standard.some((p) => samePath(p, skillsDir))) continue;
     if (!samePath(skillsDir, BUNDLED_DIR) && isDir(skillsDir)) out.push(skillsDir);
   }
   return out;

@@ -228,7 +228,7 @@ export function reconcile(playbooks, knownBranches = KNOWN_BRANCHES) {
 function branchesFor(task, forced = []) {
   const branches = new Set(forced);
   const text = (task || "").toLowerCase();
-  if (/\b(ui|page|component|landing|frontend|interface|button|form|screen)\b/.test(text)) branches.add("ui");
+  if (/\b(ui|pages?|components?|landing|frontend|interfaces?|buttons?|forms?|screens?)\b/.test(text)) branches.add("ui");
   if (/\b(react|hook|jsx|component)\b/.test(text)) branches.add("react");
   if (/\b(security|auth(?:enticated|entication|orization)?|privacy|permission|secret|credential|no[- ]spend|token spend|billing|kie|generation)\b/.test(text)) {
     branches.add("security");

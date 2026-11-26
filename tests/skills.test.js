@@ -411,6 +411,20 @@ test("project skills still win over the host home root", () => {
   assert.equal(skills.discover(project, { home, host: "claude", invokingRoot: null }).shared.description, "project copy");
 });
 
+test("the host's copy wins a clash between project host roots", () => {
+  const home = mkdtempSync(join(tmpdir(), "dirf-home-"));
+  const project = makeRoot();
+  for (const tag of ["claude", "codex"]) {
+    write(join(project, `.${tag}`, "skills", "twin"), "SKILL.md", `---\nname: twin\ndescription: ${tag} project copy\n---\nbody`);
+  }
+  for (const host of ["claude", "codex"]) {
+    const opts = { home, host, invokingRoot: null };
+    assert.equal(skills.discover(project, opts).twin.description, `${host} project copy`, host);
+    const twin = skills.skillClashes(project, opts).find((c) => c.name === "twin");
+    assert.match(twin.paths[0].replace(/\\/g, "/"), new RegExp(`\\.${host}/skills/twin$`), host);
+  }
+});
+
 test("skillClashes lists same-name copies that differ, winner first", () => {
   const home = fakeHome();
   const project = makeRoot();
