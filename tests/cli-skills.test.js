@@ -45,3 +45,23 @@ test("skills scan reports invocation classes, reference graph, and token budget"
   assert.match(out, /missing-ref → absent-skill \(referenced, not installed\)/);
   assert.match(out, /Token budget: \d+ tokens always loaded \(metadata tier\)/);
 });
+
+test("skills scan stays on the host's home roots and warns on differing copies", () => {
+  const { home, root } = skillFixture();
+  const write = (folder, content) => {
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, "SKILL.md"), content, "utf-8");
+  };
+  write(join(home, ".agents", "skills", "twin"), "---\nname: twin\ndescription: Use when agents.\n---\nagents body");
+  write(join(home, ".claude", "skills", "twin"), "---\nname: twin\ndescription: Use when claude.\n---\nclaude body");
+  write(join(home, ".claude", "skills", "claude-only"), "---\nname: claude-only\ndescription: Use when claude.\n---\nbody");
+  const env = { DIRF_HOME: home, USERPROFILE: home, HOME: home, DIRF_HARNESS: "codex", CODEX_THREAD_ID: "t", CLAUDECODE: "" };
+  const codex = run(["skills", "scan", "--path", root], env, root);
+  assert.match(codex, /across project and codex home roots/);
+  assert.doesNotMatch(codex, /claude-only|Same-name skills/);
+
+  const all = run(["skills", "scan", "--path", root, "--skills-scope", "all"], env, root);
+  assert.match(all, /across project and all home roots/);
+  assert.match(all, /Same-name skills with different content \(1\)/);
+  assert.match(all, /twin: .*\.agents[\/]skills[\/]twin \| .*\.claude[\/]skills[\/]twin/);
+});

@@ -2287,7 +2287,18 @@ function claimAttemptCheckoutLocked(slug, idOrName, worktreePath, now = new Date
     candidate.status === "in_progress" &&
     candidate.responsibility_path &&
     (normalizeIdentityKey(candidate.responsibility_path) === key || (branch && candidate.responsibility_branch === branch)));
-  if (owner) throw new Error(`checkout is already governed by ${owner.id}`);
+  if (owner) {
+    // Name the field that matched and the way out, so the caller can recover
+    // without re-deriving the ownership rule.
+    const byPath = normalizeIdentityKey(owner.responsibility_path) === key;
+    const reason = byPath
+      ? `it owns ${owner.responsibility_path}`
+      : `it owns branch ${branch}, claimed in ${owner.responsibility_path}`;
+    const remedy = byPath
+      ? `Continue ${owner.id} here, or block or close it first`
+      : `Switch this checkout to another branch, or close ${owner.id} if its work has shipped`;
+    throw new Error(`checkout is already governed by ${owner.id} (${reason}). ${remedy}.`);
+  }
   if (!attempt.responsibility_path) {
     return writeAttempt(slug, { ...attempt, responsibility_path: portable(resolvedPath), responsibility_branch: branch, updated_at: now.toISOString() });
   }
