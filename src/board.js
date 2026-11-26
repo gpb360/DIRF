@@ -81,14 +81,14 @@ function githubOrigin(checkout) {
 // One `gh pr list` for open PRs (with checks and mergeability) and, when
 // asked, one for merged/closed PRs (light fields) so cleanup can tell shipped
 // work from abandoned branches.
-export function readPullRequests(checkout, { gh = defaultGh, includeClosed = true, requireOrigin = true } = {}) {
+export function readPullRequests(checkout, { gh = defaultGh, includeClosed = true, requireOrigin = true, closedLimit = CLOSED_PR_LIST_LIMIT } = {}) {
   if (requireOrigin && !githubOrigin(checkout)) {
     return { available: false, reason: "this checkout has no GitHub origin", prs: [] };
   }
   try {
     const open = JSON.parse(gh(["pr", "list", "--state", "open", "--limit", PR_LIST_LIMIT, "--json", OPEN_PR_FIELDS], { cwd: checkout }) || "[]");
     const closed = includeClosed
-      ? JSON.parse(gh(["pr", "list", "--state", "all", "--limit", CLOSED_PR_LIST_LIMIT, "--json", CLOSED_PR_FIELDS], { cwd: checkout }) || "[]")
+      ? JSON.parse(gh(["pr", "list", "--state", "all", "--limit", String(closedLimit), "--json", CLOSED_PR_FIELDS], { cwd: checkout }) || "[]")
       : [];
     if (!Array.isArray(open) || !Array.isArray(closed)) throw new Error("unexpected gh output");
     const byNumber = new Map();
@@ -350,13 +350,23 @@ function prView(pr, review, { origin = null, mergeBase = () => null, link = null
 
 // Board for one project: every open attempt (planned, in progress, blocked)
 // with its linked PRs, plus open PRs no attempt claims.
-export function boardSnapshot(slug, { checkout, now = new Date(), gh = defaultGh, includeClosedPrs = true, requireOrigin = true, lookupMissing = includeClosedPrs, mergeBase } = {}) {
+// An attempt's branch is often its name under a prefix (builder/<name>), and a
+// "build-<name>" attempt builds the same branch. Only `dirf sync` reads this
+// link, and only for an attempt that records no branch of its own.
+export function branchMatchesAttemptName(branch, name) {
+  const leaf = String(branch || "").split("/").pop().toLowerCase();
+  const attemptName = String(name || "").toLowerCase();
+  if (!leaf || !attemptName) return false;
+  return leaf === attemptName || (attemptName.startsWith("build-") && leaf === attemptName.slice("build-".length));
+}
+
+export function boardSnapshot(slug, { checkout, now = new Date(), gh = defaultGh, includeClosedPrs = true, requireOrigin = true, lookupMissing = includeClosedPrs, mergeBase, nameLinks = false, closedPrLimit = CLOSED_PR_LIST_LIMIT } = {}) {
   const work = projectWorkSnapshot(slug, now);
   const staleDays = staleAttemptDays();
   const openAttempts = work.attempts.filter((attempt) => attempt.tracked && OPEN_STATES.has(attempt.lifecycle_status));
   const base = checkout || work.project.main_path;
   const github = base
-    ? readPullRequests(base, { gh, includeClosed: includeClosedPrs, requireOrigin })
+    ? readPullRequests(base, { gh, includeClosed: includeClosedPrs, requireOrigin, closedLimit: closedPrLimit })
     : { available: false, reason: "no local checkout", prs: [] };
   const prsByNumber = new Map(github.prs.map((pr) => [pr.number, pr]));
   const origin = base ? readOrigin(base) : null;
@@ -381,6 +391,8 @@ export function boardSnapshot(slug, { checkout, now = new Date(), gh = defaultGh
       const finishedAt = Date.parse(pr.mergedAt || pr.closedAt || 0) || 0;
       if (branches.has(pr.headRefName) && (pr.state === "OPEN" || finishedAt >= createdAt)) links.set(pr.number, "strong");
       else if (pr.state === "OPEN" && String(pr.body || "").includes(attempt.id)) links.set(pr.number, "strong");
+      else if (nameLinks && !branches.size && links.get(pr.number) !== "strong" && branchMatchesAttemptName(pr.headRefName, attempt.name)
+        && (pr.state === "OPEN" || finishedAt >= createdAt)) links.set(pr.number, "branch-name");
     }
     return { attempt, folder, links };
   });
@@ -451,6 +463,9 @@ export function boardSnapshot(slug, { checkout, now = new Date(), gh = defaultGh
     },
     attempts,
     unlinked_prs: unlinked,
+    merged_prs: github.prs.filter((pr) => pr.state === "MERGED").map((pr) => ({
+      number: pr.number, title: pr.title || null, branch: pr.headRefName || null, url: pr.url || null, merged_at: pr.mergedAt || null,
+    })),
   };
 }
 
@@ -528,9 +543,11 @@ export function cleanupPlan(board) {
   const closing = new Set();
   for (const attempt of board.attempts) {
     const known = attempt.prs.filter((pr) => pr.state);
-    // Only strongly linked PRs count as this attempt's shipped work.
-    const merged = known.filter((pr) => pr.state === "MERGED" && pr.link === "strong").map((pr) => pr.number);
-    const pendingMerge = known.filter((pr) => pr.state === "OPEN" && merging.has(pr.number) && pr.link === "strong").map((pr) => pr.number);
+    // Only strongly linked PRs count as this attempt's shipped work. A
+    // branch-name link exists only when `dirf sync` asks for it.
+    const owned = (pr) => pr.link === "strong" || pr.link === "branch-name";
+    const merged = known.filter((pr) => pr.state === "MERGED" && owned(pr)).map((pr) => pr.number);
+    const pendingMerge = known.filter((pr) => pr.state === "OPEN" && merging.has(pr.number) && owned(pr)).map((pr) => pr.number);
     const pendingAny = known.filter((pr) => pr.state === "OPEN" && merging.has(pr.number)).map((pr) => pr.number);
     const stillOpen = known.filter((pr) => pr.state === "OPEN" && !merging.has(pr.number));
     const unresolved = attempt.prs.some((pr) => !pr.state || pr.state === "UNKNOWN");

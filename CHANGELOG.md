@@ -8,6 +8,22 @@ currently pre-1.0 (`0.x`), so anything may change between releases.
 ## Unreleased
 
 ### Added
+- **GitHub sync** — `dirf sync [--path DIR] [--apply] [--since-days N] [--json]`
+  compares the store with GitHub. It lists open attempts whose own PRs merged,
+  merged PRs that no attempt or handoff records, open PRs that no attempt owns,
+  and a DIRF CLI checkout that is behind its local `origin/main`. An attempt
+  with no recorded branch links to a PR whose branch is its name under a
+  prefix (`builder/<name>`; a `build-<name>` attempt builds the same branch).
+  `--apply` closes only planned attempts, or attempts whose next action says
+  done, as shipped with the PR as evidence. A started attempt whose next
+  action names more work goes to a person. Sync never merges, abandons, or
+  records a gate. `dirf state active` (and its hook) adds one `Sync:` line
+  when it finds drift; that check spends at most 5 seconds on `gh` in total,
+  reads only the latest 100 PRs, and looks up no PR one by one.
+  `DIRF_SYNC_CHECK=0` turns the check off. Sync closes an attempt only on a
+  merged PR; an attempt whose next action says done with no PR is left to
+  `dirf cleanup`. The CLI freshness line appears only when the CLI directory
+  is itself the root of a Git checkout.
 - **Host mode for the Review Ladder** — `dirf review next --pr N [--check CMD]`
   prints the next ladder step (check, review, or fix) as JSON or text with a
   paste-ready brief, the review output path, the same `DIRF_REVIEW_*` values the

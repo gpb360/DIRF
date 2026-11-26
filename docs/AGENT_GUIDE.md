@@ -387,6 +387,7 @@ summary and have reconciled its existing owner and content.
 | `dirf state list` | all registered projects (works from anywhere) |
 | `dirf board [--path DIR] [--json]` | this project's open attempts with phase, idle days, next action, stale flag, and linked PRs (review at head, checks, mergeable) |
 | `dirf cleanup [--path DIR] [--apply] [--yes]` | dry run by default; with `--apply`, asks per item to squash-merge reviewed PRs, close shipped attempts, and keep/close/abandon stale ones |
+| `dirf sync [--path DIR] [--apply] [--since-days N] [--json]` | compare DIRF with GitHub: shipped attempts, merged PRs no attempt records, open PRs no attempt owns, a stale CLI; `--apply` closes only planned or done attempts whose own PRs merged |
 | `dirf portfolio` | cross-project status view: every project + attempt classified active/idle/stale/completed/archived/empty |
 | `dirf project status [--json]` | reconciled project work view; JSON contains every attempt and continuation handoff |
 | `dirf project complete\|archive\|reopen` | explicit project status override (derived classification otherwise) |

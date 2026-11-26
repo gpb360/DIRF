@@ -56,6 +56,7 @@ import { LADDER_STATE_FILE, formatHostView, formatLoopReport, hostView, loopPass
 import { bindingsFromPlan, refreshSkillBindings } from "./skill-bindings.js";
 import { runSteCheck } from "./ste.js";
 import { applyCleanup, boardSnapshot, cleanupPlan, formatBoard, formatCleanupPlan, unfinishedWorkNotice } from "./board.js";
+import { applySync, formatSync, syncHint, syncSnapshot } from "./sync.js";
 
 const MERGED_REVIEW_NEXT = "Confirm the merged work is complete, then record completion or a new next step.";
 
@@ -1505,6 +1506,8 @@ function cmdStateActive(args) {
     warnings_omitted: Math.max(0, (current.summary?.warnings.length || 0) - 5),
     evidence_completeness: current.summary?.evidence_completeness || "unverified",
   };
+  const sync = syncHint(project.slug, { checkout });
+  if (sync) result.sync = sync;
 
   if (args.hook) {
     let additionalContext;
@@ -1524,6 +1527,7 @@ function cmdStateActive(args) {
     const details = startupDetailLines(result);
     if (active?.needs_refresh) additionalContext = `Related-checkpoint warning. ${additionalContext}`;
     if (details.length) additionalContext += `\n${details.join("\n")}`;
+    if (sync) additionalContext += `\n${sync}`;
     additionalContext = `${HOOK_DIRECTIVE} ${additionalContext}`;
     console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext } }));
     return;
@@ -1553,6 +1557,7 @@ function cmdStateActive(args) {
     console.log("DIRF idle: available for new work; no in-progress attempt is bound to this checkout.");
     for (const line of startupDetailLines(result)) console.log(line);
   }
+  if (sync) console.log(sync);
 }
 
 function artifactProjection(slug, id) {
@@ -1953,6 +1958,27 @@ async function cmdCleanup(args) {
   }
 }
 
+async function cmdSync(args) {
+  const { slug, checkout } = boardTarget(args);
+  const sinceDays = args.sinceDays === undefined ? undefined : Number(args.sinceDays);
+  if (sinceDays !== undefined && (!Number.isInteger(sinceDays) || sinceDays < 1)) throw new Error("--since-days must be a positive whole number");
+  const snapshot = syncSnapshot(slug, { checkout, ...(sinceDays ? { sinceDays } : {}) });
+  if (!args.apply) {
+    console.log(args.json ? JSON.stringify({ applied: false, ...snapshot }, null, 2) : formatSync(snapshot));
+    return;
+  }
+  if (!args.json) console.log(formatSync(snapshot, { apply: true }));
+  const results = await applySync(slug, snapshot, {
+    checkout: checkout || snapshot.project.main_path,
+    log: args.json ? () => {} : console.log,
+  });
+  if (args.json) { console.log(JSON.stringify({ applied: true, ...snapshot, results }, null, 2)); return; }
+  const counts = {};
+  for (const result of results) counts[result.result] = (counts[result.result] || 0) + 1;
+  console.log(results.length ? `Done: ${Object.entries(counts).map(([key, value]) => `${value} ${key}`).join(", ")}.` : "Done: no attempt to close.");
+  if (counts.failed) process.exitCode = 1;
+}
+
 function cmdProject(args) {
   const action = args._[0];
   if (!action) throw new Error("usage: dirf project <complete|reopen|archive|status> [--slug S|--path DIR]");
@@ -2234,6 +2260,7 @@ function parse(argv) {
     if (a === "--shed-days") { out.shedDays = Number(rest[++i]); continue; }
     if (a === "--remove-days") { out.removeDays = Number(rest[++i]); continue; }
     if (a === "--keep-days") { out.keepDays = Number(rest[++i]); continue; }
+    if (a === "--since-days") { out.sinceDays = rest[++i]; continue; }
     if (a === "--only") { out.only = rest[++i]; continue; }
     if (a === "--json") { out.json = true; continue; }
     if (a === "--full") { out.full = true; continue; }
@@ -2344,6 +2371,7 @@ Usage:
   dirf skills clean --host HOST [--path DIR]          remove only the copied skills
   dirf board [--path DIR] [--json]                    this project's open attempts with linked PRs, review at head, checks, mergeability
   dirf cleanup [--path DIR] [--apply] [--yes] [--json] dry run by default: merge reviewed PRs, close shipped attempts, triage stale ones
+  dirf sync [--path DIR] [--apply] [--since-days N] [--json]  compare DIRF with GitHub: shipped attempts, merged PRs no attempt records, a stale CLI; --apply closes shipped attempts only
   dirf portfolio [--json]                             cross-project status view (active/stale/completed/...)
   dirf project <complete|reopen|archive|status> [...] explicit project status or reconciled --json view
   dirf export playbooks                                regenerate legacy playbooks JSON
@@ -2768,6 +2796,7 @@ async function main() {
   else if (cmd === "portfolio") cmdPortfolio(args);
   else if (cmd === "board") cmdBoard(args);
   else if (cmd === "cleanup") await cmdCleanup(args);
+  else if (cmd === "sync") await cmdSync(args);
   else if (cmd === "artifact") cmdArtifact(args);
   else if (cmd === "project") cmdProject(args);
   else if (cmd === "inspect") { args._ = args._.length ? args._ : [args.path]; cmdInspect(args); }
