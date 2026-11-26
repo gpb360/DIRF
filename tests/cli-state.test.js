@@ -277,7 +277,7 @@ test("dirf state active keeps DIRF available and reuses the attempt claimed by t
     cwd: main, encoding: "utf8", timeout: TIMEOUT, env: { ...process.env, DIRF_HOME: home },
   });
   assert.notEqual(duplicate.status, 0);
-  assert.match(duplicate.stderr, new RegExp(`already governed by ${first.id}`, "i"));
+  assert.match(duplicate.stderr, new RegExp(`already governed by ${first.id} \\(it owns .+\\)\\. Continue ${first.id} here`, "i"));
 
   run(["attempt", "block", first.id, "--reason", "waiting", "--path", main], { DIRF_HOME: home }, main);
   run([
@@ -307,6 +307,35 @@ test("dirf state active keeps DIRF available and reuses the attempt claimed by t
   const conflict = JSON.parse(run(["state", "active", "--path", main, "--json"], { DIRF_HOME: home }, main));
   assert.equal(conflict.state, "conflict");
   assert.deepEqual(conflict.attempts.map(({ id }) => id), [second.id, third.id]);
+});
+
+test("a checkout claim refused by branch names the branch and how to recover", () => {
+  const home = freshHome();
+  const main = mkdtempSync(join(tmpdir(), "branch-claim-"));
+  const linked = `${main}-linked`;
+  const git = (args, cwd) => execFileSync("git", args, { cwd, timeout: TIMEOUT });
+  git(["init", "-q"], main);
+  git(["config", "user.email", "dirf@example.invalid"], main);
+  git(["config", "user.name", "DIRF Test"], main);
+  writeFileSync(join(main, "file.txt"), "A\n");
+  git(["add", "file.txt"], main);
+  git(["commit", "-qm", "A"], main);
+  run(["setup", main], { DIRF_HOME: home }, main);
+  git(["worktree", "add", "-q", "-b", "feature-x", linked], main);
+
+  const owner = JSON.parse(run(["build", "owner", "fix a behavior", "--path", linked, "--json"], { DIRF_HOME: home }, linked)).attempt;
+  run(["resume", owner.id, "--path", linked], { DIRF_HOME: home }, linked);
+  // The owner's branch moves to another checkout, as after a merge-and-switch.
+  git(["switch", "-q", "-c", "elsewhere"], linked);
+  git(["switch", "-q", "feature-x"], main);
+
+  const next = JSON.parse(run(["build", "next", "fix another behavior", "--path", main, "--json"], { DIRF_HOME: home }, main)).attempt;
+  const refused = spawnSync(process.execPath, [CLI, "resume", next.id, "--path", main], {
+    cwd: main, encoding: "utf8", timeout: TIMEOUT, env: { ...process.env, DIRF_HOME: home },
+  });
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, new RegExp(`already governed by ${owner.id} \\(it owns branch feature-x, claimed in .+\\)`));
+  assert.match(refused.stderr, new RegExp(`Switch this checkout to another branch, or close ${owner.id} if its work has shipped\\.`));
 });
 
 test("serialized update order wins when same-revision timestamps disagree", () => {
