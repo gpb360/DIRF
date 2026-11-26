@@ -359,3 +359,88 @@ test("an in-folder symlinked required file resolves through containment", () => 
   const idx = skills.discover(root);
   assert.equal(idx["linked-skill"].readiness, "ready", "an in-folder symlink must not be reported missing");
 });
+
+function fakeHome() {
+  // One copy of `shared` per home root, each with its own description, plus
+  // one skill unique to each root.
+  const home = mkdtempSync(join(tmpdir(), "dirf-home-"));
+  const roots = { agents: ".agents/skills", claude: ".claude/skills", codex: ".codex/skills" };
+  for (const [tag, rel] of Object.entries(roots)) {
+    write(join(home, rel, "shared"), "SKILL.md", `---\nname: shared\ndescription: ${tag} copy\n---\n${tag} body`);
+    write(join(home, rel, `${tag}-only`), "SKILL.md", `---\nname: ${tag}-only\ndescription: only in ${tag}\n---\nbody`);
+  }
+  write(join(home, ".zcode", "cli", "plugins", "cache", "plugin", "1.0", "skills", "zcode-only"), "SKILL.md",
+    "---\nname: zcode-only\ndescription: from the zcode cache\n---\nbody");
+  return home;
+}
+
+test("discover scans only the running host's home roots by default", () => {
+  const home = fakeHome();
+  const project = makeRoot();
+  const claude = skills.discover(project, { home, host: "claude", invokingRoot: null });
+  assert.ok(claude["claude-only"] && claude["agents-only"]);
+  assert.equal(claude["codex-only"], undefined, "Codex root is not scanned under Claude");
+  assert.equal(claude["zcode-only"], undefined, "zcode cache needs opt-in");
+  assert.equal(claude.shared.description, "claude copy", "host root wins a clash");
+
+  const codex = skills.discover(project, { home, host: "codex", invokingRoot: null });
+  assert.ok(codex["codex-only"] && codex["agents-only"]);
+  assert.equal(codex["claude-only"], undefined, "Claude root is not scanned under Codex");
+  assert.equal(codex.shared.description, "codex copy", "host root wins a clash");
+});
+
+test("discover scans every home root with scope all, host copy still wins", () => {
+  const home = fakeHome();
+  const project = makeRoot();
+  const idx = skills.discover(project, { home, host: "claude", scope: "all", invokingRoot: null });
+  for (const name of ["agents-only", "claude-only", "codex-only", "zcode-only"]) assert.ok(idx[name], name);
+  assert.equal(idx.shared.description, "claude copy");
+});
+
+test("discover with an unknown host scans the three host roots, not the zcode cache", () => {
+  const home = fakeHome();
+  const idx = skills.discover(makeRoot(), { home, host: null, invokingRoot: null });
+  for (const name of ["agents-only", "claude-only", "codex-only"]) assert.ok(idx[name], name);
+  assert.equal(idx["zcode-only"], undefined);
+});
+
+test("project skills still win over the host home root", () => {
+  const home = fakeHome();
+  const project = makeRoot();
+  write(join(project, "skills", "shared"), "SKILL.md", "---\nname: shared\ndescription: project copy\n---\nbody");
+  assert.equal(skills.discover(project, { home, host: "claude", invokingRoot: null }).shared.description, "project copy");
+});
+
+test("the host's copy wins a clash between project host roots", () => {
+  const home = mkdtempSync(join(tmpdir(), "dirf-home-"));
+  const project = makeRoot();
+  for (const tag of ["claude", "codex"]) {
+    write(join(project, `.${tag}`, "skills", "twin"), "SKILL.md", `---\nname: twin\ndescription: ${tag} project copy\n---\nbody`);
+  }
+  // A plain skills/ or nested <root>/X/skills source copy must not beat the
+  // host's installed copy.
+  write(join(project, "skills", "twin"), "SKILL.md", "---\nname: twin\ndescription: plain project copy\n---\nbody");
+  write(join(project, "plugin", "skills", "twin"), "SKILL.md", "---\nname: twin\ndescription: nested source copy\n---\nbody");
+  for (const host of ["claude", "codex"]) {
+    const opts = { home, host, invokingRoot: null };
+    assert.equal(skills.discover(project, opts).twin.description, `${host} project copy`, host);
+    const twin = skills.skillClashes(project, opts).find((c) => c.name === "twin");
+    assert.match(twin.paths[0].replace(/\\/g, "/"), new RegExp(`\\.${host}/skills/twin$`), host);
+  }
+});
+
+test("skillClashes lists same-name copies that differ, winner first", () => {
+  const home = fakeHome();
+  const project = makeRoot();
+  const clashes = skills.skillClashes(project, { home, host: "claude", invokingRoot: null });
+  const shared = clashes.find((c) => c.name === "shared");
+  assert.ok(shared, "shared differs between .agents and .claude");
+  assert.match(shared.paths[0].replace(/\\/g, "/"), /\.claude\/skills\/shared$/);
+  assert.equal(shared.paths.length, 2, "Codex copy is not scanned under Claude");
+
+  const same = mkdtempSync(join(tmpdir(), "dirf-home-"));
+  for (const rel of [".agents/skills", ".claude/skills"]) {
+    write(join(same, rel, "twin"), "SKILL.md", "---\nname: twin\ndescription: same\n---\nbody");
+  }
+  assert.deepEqual(skills.skillClashes(makeRoot(), { home: same, host: "claude", invokingRoot: null }), []);
+});

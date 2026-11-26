@@ -133,6 +133,9 @@ test("buildInstructions writes router + per-agent detail", () => {
   assert.ok(readme.includes("persisted-only"));
   assert.ok(readme.includes("## Next step"));
   assert.match(readme, /linked each step to the installed skill/i);
+  assert.match(readme, /Use a skill when its step needs it; skip it otherwise/);
+  assert.match(readme, /Name each skill you used in the handoff/);
+  assert.doesNotMatch(readme, /Load and apply the selected skills/);
   assert.doesNotMatch(readme, /Resolve each capability by name in the current host/);
   assert.ok(!/codex|claude/i.test(readme));
   const userProfileRoot = ["C:", "Users"].join("\\");
@@ -405,7 +408,9 @@ test("Markdown and HTML preserve verify-gate semantics", () => {
   assert.match(html, /dirf govern evaluate action\.json/);
   assert.match(markdown, /decision phase, a recorded accept \(user-owned\) plus any declared verification evidence/);
   assert.match(markdown, /Gate rules: advancing past a verify phase requires recorded evidence/);
-  assert.ok(html.includes("Load and apply the selected skills in this order"));
+  assert.ok(html.includes("Use a skill when its step needs it"));
+  assert.ok(html.includes("Name each skill you used in the handoff"));
+  assert.ok(!html.includes("Load and apply the selected skills"));
   assert.ok(!/codex|claude/i.test(html));
   assert.ok(html.includes("Definition of Done"));
   assert.ok(!html.includes("src=") && !html.includes('href="')); // no external assets

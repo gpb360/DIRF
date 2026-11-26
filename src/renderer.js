@@ -463,7 +463,7 @@ export function buildInstructions(workflow, outDir, skillBindings = []) {
     "DIRF linked each step to the installed skill selected on this machine. Open the step link to see its current file path.",
     "",
     "## Skill flow",
-    "Load and apply the selected skills in this order. Open each step and read its bound skill file. Names and summaries do not replace skill instructions.",
+    "Skills available for these steps, in order. Use a skill when its step needs it; skip it otherwise. A skill the task names, and every user checkpoint, is required. Before you use a skill, read its bound file; names and summaries do not replace skill instructions. Name each skill you used in the handoff.",
     "",
   );
   if (!flow?.steps) throw new Error(`workflow ${workflow.name || "?"}: missing persisted skill_flow`);
@@ -804,7 +804,7 @@ export function buildHtml(workflow, skillBindings = []) {
   parts.push(`<div class='gate'>⛔ Do not start the next phase until the current is verifiably done. Validation: ${escapeHtml(wf.validation || "—")}</div>`);
 
   parts.push("<h2>Skill flow</h2>");
-  parts.push("<p class='mute'>Load and apply the selected skills in this order. Read each bound skill file before its step.</p><ol>");
+  parts.push("<p class='mute'>Skills available for these steps, in order. Use a skill when its step needs it; skip it otherwise. A skill the task names, and every user checkpoint, is required. Read a skill's bound file before you use it. Name each skill you used in the handoff.</p><ol>");
   for (const [index, step] of workflow.skill_flow.steps.entries()) {
     const bindingStatus = skillBindings[index]?.status || step.status;
     const status = bindingStatus === SKILL_STATUS.installed

@@ -337,20 +337,31 @@ missing capabilities out of the executable flow.
 ```
 
 At build time, `discover()` scans the host environment and resolves each
-reference:
+step:
 
-- **installed** — found in a scanned root (path included)
-- **capability gap** — no installed match; DIRF asks before suggesting or creating anything
+- **installed** — a skill declares the step's capability (`capabilities:` in
+  its frontmatter) or its name equals the capability. Words shared with a
+  skill's description do not bind it.
+- **unbound** — no skill matches. The agent does the step from the workflow
+  text. DIRF lists it in `skill_flow.unbound` and asks nothing, unless a
+  trusted source declares the capability.
 
-Use an explicit JSON profile to limit one routing invocation to named skills:
+Skills in a flow are optional aids. The agent uses one when its step needs
+it. A skill the task names, and every user checkpoint, is required.
+
+**Pin skills with a profile.** To make a repo use a fixed set of skills, keep
+a JSON profile in the repo and pass it on every routing call:
 
 ```json
 {"skills":["tdd","code-review"]}
 ```
 
 Pass it with `--profile FILE` to `build`, `plan`, `create`, `flow`, or `learn`.
-Unavailable names remain visible gaps. `dirf skills scan` still shows the full
-installed inventory. Profiles have no automatic project default or layering.
+Only the named skills can bind; all other steps stay unbound. Unavailable
+names remain visible gaps. `dirf skills scan` still shows the full installed
+inventory. Profiles have no automatic project default or layering, so a
+script or host hook that always passes `--profile` is the way to make the pin
+permanent.
 
 Use a separate host-provided model catalog when diagnostic routing advice is
 useful:
@@ -384,14 +395,19 @@ different model mix is a file swap, not a rewrite. See the
 [model-advice contract](../skills/model-advice/README.md) for
 the matching rules, recorded evidence, and boundaries.
 
-**Scan roots** (all optional): `~/.agents/skills/`, `~/.codex/skills/`,
-`~/.claude/skills/`, `~/.zcode/.../skills/`, plus project-local equivalents.
+**Scan roots** (all optional): the project-local skill folders plus the
+running host's home roots: `~/.agents/skills/` and `~/.claude/skills/` under
+Claude Code, `~/.agents/skills/` and `~/.codex/skills/` under Codex. An
+unknown host scans all three. On a name clash the host's copy wins, and
+project skills win over home skills. `dirf skills scan` lists same-name
+copies whose files differ. Pass `--skills-scope all` (or set
+`DIRF_SKILLS_SCOPE=all`) to also scan the other host's root and the
+`~/.zcode/.../skills/` plugin cache.
 Discovery reads `SKILL.md` first, falling back to `skill.json` then `README.md`
-— so skills like `ui-ux-pro-max` (no `SKILL.md`) and `superpowers` (under a
-plugin cache) are still found.
+— so skills like `ui-ux-pro-max` (no `SKILL.md`) are still found.
 
 **Scoping with `--path`:** pass `--path <project>` to scan *that* project's
-local skill folders in addition to the global roots, so the instruction set
+local skill folders in addition to the host's home roots, so the instruction set
 reflects the target project's skills (e.g. a repo's own `.agents/skills/`).
 
 ### Agents follow the same contract

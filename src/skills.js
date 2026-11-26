@@ -19,14 +19,18 @@ import { homedir } from "node:os";
 import { loadJson, SKILLS, ROOT, isMaterializedCopy } from "./paths.js";
 import { loadUnit } from "./folders.js";
 
-// Home roots (resolved at call time). The zcode cache holds versioned plugin
-// dirs whose skills live under nested subfolders, so we recurse into it.
-const HOME_ROOT_NAMES = [
-  ".agents/skills",
-  ".codex/skills",
-  ".claude/skills",
-  ".zcode/cli/plugins/cache",
-];
+// Home roots (resolved at call time). By default only the running host's own
+// roots are scanned: `.agents/skills` (shared by Claude and Codex) plus the
+// host's root. Another host's copy of a same-name skill can differ, and
+// binding it gives the agent instructions its host never loaded. An unknown
+// host keeps the three host roots. Scope "all" adds every root and the zcode
+// cache, whose versioned plugin dirs nest skills, so it recurses.
+// Order matters: a later root wins a name clash, so the host root is last.
+const HOST_HOME_ROOTS = {
+  claude: [".agents/skills", ".claude/skills"],
+  codex: [".agents/skills", ".codex/skills"],
+};
+const ZCODE_CACHE = ".zcode/cli/plugins/cache";
 const HOST_ROOT_NAMES = [".agents/skills", ".codex/skills", ".claude/skills"];
 const PROJECT_ROOT_NAMES = [...HOST_ROOT_NAMES, "skills"];
 
@@ -67,20 +71,54 @@ const BUNDLED_DIR = join(ROOT, "skills");
 const BUNDLED_AGENTS_DIR = join(ROOT, "agents");
 const AGENT_ROOT_NAMES = [".agents/agents", ".codex/agents", ".claude/agents"];
 
-function skillRoots(projectRoot) {
-  // Return all skill scan roots that exist on disk.
-  // projectRoot null/undefined defaults to ROOT (the kit's own roots).
+export function detectSkillHost(env = process.env) {
+  // Session-scoped markers only, matching `attempt observe` host detection.
+  const named = String(env.DIRF_HARNESS || "").toLowerCase();
+  if (named === "claude" || named === "claude-code") return "claude";
+  if (named === "codex") return "codex";
+  if (env.CODEX_THREAD_ID) return "codex";
+  if (env.CLAUDECODE || env.CLAUDE_CODE_ENTRYPOINT) return "claude";
+  return null;
+}
+
+function scanOptions({ home = homedir(), host = detectSkillHost(), scope = process.env.DIRF_SKILLS_SCOPE } = {}) {
+  if (scope !== undefined && scope !== "" && scope !== "host" && scope !== "all") {
+    throw new Error(`skills scope must be "host" or "all", got "${scope}"`);
+  }
+  return { home, host, scope: scope || "host" };
+}
+
+function homeRootNames(host, scope) {
+  const own = HOST_HOME_ROOTS[host] || HOST_ROOT_NAMES;
+  if (scope !== "all") return own;
+  const others = HOST_ROOT_NAMES.filter((name) => !own.includes(name));
+  return [...others, ZCODE_CACHE, ...own];
+}
+
+function projectRootNames(host) {
+  // Same host-last order as the home roots, so the host's project copy wins.
+  // The plain skills/ folder comes first: it holds sources, not host installs.
+  const own = HOST_HOME_ROOTS[host] || HOST_ROOT_NAMES;
+  return ["skills", ...HOST_ROOT_NAMES.filter((name) => !own.includes(name)), ...own];
+}
+
+function skillRoots(projectRoot, { home, host, scope }) {
+  // Return all skill scan roots that exist on disk, lowest priority first.
+  // projectRoot null/undefined defaults to ROOT (the kit's own roots). A given
+  // projectRoot also gets its nested <root>/X/skills folders, right after the
+  // plain skills/ folder: they hold sources too, so the host's copy beats them.
+  const nested = projectRoot ? findSkillFolders(projectRoot) : [];
   if (!projectRoot) projectRoot = ROOT;
   const roots = [];
-  const home = homedir();
-  for (const name of HOME_ROOT_NAMES) {
+  for (const name of homeRootNames(host, scope)) {
     const candidate = join(home, name);
     if (isDir(candidate)) roots.push(candidate);
   }
-  for (const name of PROJECT_ROOT_NAMES) {
+  for (const name of projectRootNames(host)) {
     const candidate = join(projectRoot, name);
     if (samePath(candidate, BUNDLED_DIR)) continue;
     if (isDir(candidate)) roots.push(candidate);
+    if (name === "skills") roots.push(...nested);
   }
   return roots;
 }
@@ -314,29 +352,20 @@ function basenameDir(path) {
   return parts[parts.length - 2] || "skill";
 }
 
-export function discover(projectRoot, { invokingRoot = gitRoot(process.cwd()) } = {}) {
+export function discover(projectRoot, { invokingRoot = gitRoot(process.cwd()), ...options } = {}) {
   // Scan all roots and return an index: { skillName: { path, file, ... } }.
   // projectRoot null/undefined defaults to ROOT. Scans:
-  //   1. the standard home + project roots (skillRoots)
+  //   1. the host's home roots + project roots (skillRoots; options pick the
+  //      home dir, host, and scope "host" or "all")
   //   2. any directory named `skills` under the project root (auto-detect, so
   //      projects with non-standard layouts like `audit-runtime/skills/` are
-  //      found without configuration — the agnostic principle)
+  //      found without configuration — the agnostic principle). skillRoots
+  //      scans these right after the plain skills/ folder, before host roots
   //   3. the host skill roots of the repo the agent runs in, when --path
   //      targets another repo (the "home repo" pattern). These only fill
   //      names the target and user roots lack, so the target wins a clash.
   const index = {};
-  for (const root of skillRoots(projectRoot)) {
-    if (root.includes("cache")) {
-      scanRecursive(root, index);
-    } else {
-      scanFlat(root, index);
-    }
-  }
-  if (projectRoot) {
-    for (const root of findSkillFolders(projectRoot)) {
-      scanFlat(root, index);
-    }
-  }
+  for (const root of scanRoots(projectRoot, options)) scanRoot(root, index);
   const homeRepo = {};
   for (const root of invokingRepoRoots(projectRoot || ROOT, invokingRoot)) {
     scanFlat(root, homeRepo);
@@ -345,6 +374,40 @@ export function discover(projectRoot, { invokingRoot = gitRoot(process.cwd()) } 
     if (!(name in index)) index[name] = skill;
   }
   return index;
+}
+
+function scanRoots(projectRoot, options) {
+  return skillRoots(projectRoot, scanOptions(options));
+}
+
+function scanRoot(root, index) {
+  if (root.includes("cache")) scanRecursive(root, index);
+  else scanFlat(root, index);
+}
+
+export function skillClashes(projectRoot, options = {}) {
+  // Same-name skills whose files differ between scanned roots. Paths list the
+  // copy discover() binds first. Identical copies are not a clash.
+  const copies = {};
+  for (const root of scanRoots(projectRoot, options)) {
+    const one = {};
+    scanRoot(root, one);
+    for (const [name, skill] of Object.entries(one)) {
+      let text = "";
+      try { text = readFileSync(join(skill.path, skill.file), "utf-8"); } catch { /* unreadable: compare as empty */ }
+      (copies[name] ||= []).push({ path: skill.path, text });
+    }
+  }
+  const index = discover(projectRoot, { ...options, invokingRoot: null });
+  const clashes = [];
+  for (const [name, list] of Object.entries(copies)) {
+    if (new Set(list.map((copy) => copy.text)).size < 2) continue;
+    const winner = index[name]?.path;
+    const paths = [...new Set(list.map((copy) => copy.path))];
+    paths.sort((a, b) => Number(b === winner) - Number(a === winner));
+    clashes.push({ name, paths });
+  }
+  return clashes.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function gitRoot(start) {
@@ -370,9 +433,11 @@ function invokingRepoRoots(projectRoot, invokingRoot) {
 
 function findSkillFolders(projectRoot) {
   // Auto-detect any directory named `skills` under the project root (one level
-  // of parent nesting: <root>/X/skills and <root>/skills). Returns absolute
-  // paths. Skips node_modules, .git, and the standard roots already scanned.
+  // of parent nesting: <root>/X/skills; <root>/skills is a standard root). Returns absolute
+  // paths. Skips node_modules, .git, and the standard roots skillRoots already
+  // scanned in host order; scanning them again here would undo that order.
   const out = [];
+  const standard = PROJECT_ROOT_NAMES.map((name) => join(projectRoot, name));
   const skip = new Set(["node_modules", ".git", "dist", "build", ".next", "coverage"]);
   let top;
   try {
@@ -380,13 +445,11 @@ function findSkillFolders(projectRoot) {
   } catch {
     return out;
   }
-  // <root>/skills
-  const rootSkills = join(projectRoot, "skills");
-  if (!samePath(rootSkills, BUNDLED_DIR) && isDir(rootSkills)) out.push(rootSkills);
   // <root>/<dir>/skills
   for (const entry of top) {
     if (!entry.isDirectory() || skip.has(entry.name)) continue;
     const skillsDir = join(projectRoot, entry.name, "skills");
+    if (standard.some((p) => samePath(p, skillsDir))) continue;
     if (!samePath(skillsDir, BUNDLED_DIR) && isDir(skillsDir)) out.push(skillsDir);
   }
   return out;
