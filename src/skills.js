@@ -97,8 +97,9 @@ function homeRootNames(host, scope) {
 
 function projectRootNames(host) {
   // Same host-last order as the home roots, so the host's project copy wins.
+  // The plain skills/ folder comes first: it holds sources, not host installs.
   const own = HOST_HOME_ROOTS[host] || HOST_ROOT_NAMES;
-  return [...HOST_ROOT_NAMES.filter((name) => !own.includes(name)), ...own, "skills"];
+  return ["skills", ...HOST_ROOT_NAMES.filter((name) => !own.includes(name)), ...own];
 }
 
 function skillRoots(projectRoot, { home, host, scope }) {
