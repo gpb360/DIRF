@@ -29,7 +29,7 @@ test("a named installed model skill is selected and bound to its executable inst
   const out = join(root, "instructions");
   buildInstructions(plan, out, bindings);
   assert.match(readFileSync(join(out, "skills", "01-clear-updates", "README.md"), "utf8"), /SKILL\.md/);
-  assert.match(readFileSync(join(out, "README.md"), "utf8"), /Load and apply the selected skills in this order/);
+  assert.match(readFileSync(join(out, "README.md"), "utf8"), /A skill the task names, and every user checkpoint, is required/);
 });
 
 test("installed communication skills stay optional unless named", () => {
@@ -80,7 +80,7 @@ test("a negated skill is not selected automatically for a playbook capability", 
   const skills = { "clear-updates": { ...index["clear-updates"], capabilities: ["reporting"] } };
   const flow = buildFlow(selected, { task: "Report without clear-updates", bundledIndex: {} }, skills);
   assert.deepEqual(flow.steps, []);
-  assert.equal(flow.gaps.length, 1);
+  assert.deepEqual(flow.unbound.map(({ capability }) => capability), ["reporting"]);
 });
 
 test("a negated bundled fallback cannot re-enter through capability matching", () => {
@@ -89,7 +89,7 @@ test("a negated bundled fallback cannot re-enter through capability matching", (
     "clear-updates": { ...index["clear-updates"], capabilities: ["reporting"] },
   } }, {});
   assert.deepEqual(flow.steps, []);
-  assert.equal(flow.gaps.length, 1);
+  assert.deepEqual(flow.unbound.map(({ capability }) => capability), ["reporting"]);
 });
 
 test("a mixed negated list does not invoke a manual prose checkpoint", () => {

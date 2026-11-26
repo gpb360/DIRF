@@ -13,7 +13,7 @@
 //   dirf host setup [--settings FILE] [--skill-dir DIR] [--guard]  one-time host bootstrap: SessionStart + SubagentStart hooks, opt-in edit guard, global dirf skill
 //   dirf state active [--path DIR] [--json|--hook] [--unresolved-work-cursor TOKEN]
 //   dirf validate                                        validate registries + workflows
-//   dirf skills scan [--path DIR]                        scan host, print installed skills + resolved refs
+//   dirf skills scan [--path DIR] [--skills-scope all]                 scan host, print installed skills + resolved refs
 //   dirf review trigger|verify-update ...                 hand off findings to a same-PR fixer
 //   dirf validate|graph|run|render <folder>               operate an Eve-style folder DAG
 import { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
@@ -27,7 +27,7 @@ import { ROOT, REGISTRY, SKILLS, PLAYBOOKS, PLAYBOOK_DIR, POLICY, fileHash, fold
 import { collectRoutingFacts, loadPlaybooks, recommend } from "./router.js";
 import { detectWorktreeTool } from "./worktree-tool.js";
 import { applyJanitor, formatBinReport, formatJanitorReport, formatPurgeReport, listBin, planJanitor, purgeBin, restoreFromBin } from "./worktree-janitor.js";
-import { bundledSkills, detectHarnesses, discover, discoverAgents, enrichDiscovered, lintSkillMetadata, loadRegistry, loadTrustedSources, missingSkillFiles, providerForPath, resolveAgentSkills, skillIsIncomplete, tokenBudget } from "./skills.js";
+import { bundledSkills, detectHarnesses, discover, discoverAgents, enrichDiscovered, lintSkillMetadata, loadRegistry, loadTrustedSources, missingSkillFiles, providerForPath, resolveAgentSkills, detectSkillHost, skillClashes, skillIsIncomplete, tokenBudget } from "./skills.js";
 import { FOCUSED_OUTPUT_RULES, buildInstructions, buildHtml } from "./renderer.js";
 import { main as validateMain, validateSnapshot } from "./validate.js";
 import { inspect, detectStackProfile } from "./inspect.js";
@@ -371,6 +371,10 @@ function assembleTaskRouting(task, path, options = {}) {
     const planningStages = new Set(["discover", "model", "research", "specify", "slice", "handoff", "requested", "prose"]);
     skillFlow.steps = skillFlow.steps.filter((step) => planningStages.has(step.stage));
     skillFlow.gaps = skillFlow.gaps.filter((gap) => planningStages.has(gap.stage));
+    if (skillFlow.unbound) {
+      skillFlow.unbound = skillFlow.unbound.filter((step) => planningStages.has(step.stage));
+      if (!skillFlow.unbound.length) delete skillFlow.unbound;
+    }
   }
   const blockingGaps = skillFlow.gaps.filter((gap) => gap.blocking === true);
   if (blockingGaps.length) {
@@ -1184,7 +1188,16 @@ function cmdSkillsScan(args) {
   const scanRoot = args.path ? (isAbsolute(args.path) ? args.path : resolve(process.cwd(), args.path)) : null;
   const idx = discover(scanRoot);
   const incompleteCount = Object.values(idx).filter(skillIsIncomplete).length;
-  console.log(`Discovered ${Object.keys(idx).length} skill packages across scanned roots${incompleteCount ? ` (${incompleteCount} incomplete)` : ""}.`);
+  const host = detectSkillHost();
+  const scope = process.env.DIRF_SKILLS_SCOPE || "host";
+  const scanned = scope === "all" ? "all home roots" : host ? `${host} home roots` : "agents, claude, and codex home roots";
+  console.log(`Discovered ${Object.keys(idx).length} skill packages across project and ${scanned}${incompleteCount ? ` (${incompleteCount} incomplete)` : ""}.`);
+  const clashes = skillClashes(scanRoot);
+  if (clashes.length) {
+    console.log(`\nSame-name skills with different content (${clashes.length}); DIRF binds the first path:`);
+    for (const { name, paths } of clashes.slice(0, 20)) console.log(`  ${name}: ${paths.join(" | ")}`);
+    if (clashes.length > 20) console.log(`  … and ${clashes.length - 20} more`);
+  }
   const agentIdx = discoverAgents(scanRoot);
   const agentNames = Object.keys(agentIdx);
   console.log(`Discovered ${agentNames.length} installed agents${agentNames.length ? `: ${agentNames.slice(0, 12).join(", ")}${agentNames.length > 12 ? ", …" : ""}` : " — DIRF will offer its bundled defaults as a backup."}`);
@@ -2146,6 +2159,12 @@ function parse(argv) {
     if (a === "--name") { out.name = rest[++i]; continue; }
     if (a === "--language") { out.language = rest[++i]; continue; }
     if (a === "--playbooks") { out.playbooks = rest[++i]; continue; }
+    if (a === "--skills-scope") {
+      const scope = rest[++i];
+      if (scope !== "host" && scope !== "all") throw new Error("--skills-scope requires host or all");
+      out.skillsScope = scope;
+      continue;
+    }
     if (a === "--profile") {
       const file = rest[++i];
       if (!file || file.startsWith("--")) throw new Error("--profile requires FILE");
@@ -2319,7 +2338,7 @@ Usage:
   dirf settings <get|set>                              read or update cleanup settings (--stale-attempt-days N for board/cleanup)
   dirf migrate [<name>]                                remove runtime paths from saved snapshots
   dirf validate                                        validate registries
-  dirf skills scan [--path DIR]                        show installed skills
+  dirf skills scan [--path DIR] [--skills-scope all]   show installed skills (host roots by default)
   dirf skills materialize --attempt ID --host HOST [--path DIR] [--include a,b] [--json]
                                                       copy an attempt's skills into a checkout for spawned agents
   dirf skills clean --host HOST [--path DIR]          remove only the copied skills
@@ -2712,6 +2731,9 @@ async function main() {
   const { cmd, args } = parse(argv);
   if (args.help) { console.log(HELP); return; }
   validateCompactOptions(cmd, args);
+  // Every discover() call reads the scope from the environment, so one flag
+  // covers build, plan, create, and skills scan.
+  if (args.skillsScope) process.env.DIRF_SKILLS_SCOPE = args.skillsScope;
 
   if (cmd === "setup") cmdSetup(args);
   else if (cmd === "host") cmdHost(args);

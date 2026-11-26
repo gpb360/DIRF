@@ -447,7 +447,8 @@
         },
         {
           "stage": "quality",
-          "reason": "Apply the final product-quality gate.",
+          "reason": "Apply the final product-quality gate when the task has a UI surface.",
+          "branch": "ui",
           "capability": "product quality"
         },
         {
