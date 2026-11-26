@@ -417,8 +417,10 @@ test("the host's copy wins a clash between project host roots", () => {
   for (const tag of ["claude", "codex"]) {
     write(join(project, `.${tag}`, "skills", "twin"), "SKILL.md", `---\nname: twin\ndescription: ${tag} project copy\n---\nbody`);
   }
-  // A plain skills/ source copy must not beat the host's installed copy.
+  // A plain skills/ or nested <root>/X/skills source copy must not beat the
+  // host's installed copy.
   write(join(project, "skills", "twin"), "SKILL.md", "---\nname: twin\ndescription: plain project copy\n---\nbody");
+  write(join(project, "plugin", "skills", "twin"), "SKILL.md", "---\nname: twin\ndescription: nested source copy\n---\nbody");
   for (const host of ["claude", "codex"]) {
     const opts = { home, host, invokingRoot: null };
     assert.equal(skills.discover(project, opts).twin.description, `${host} project copy`, host);

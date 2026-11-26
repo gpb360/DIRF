@@ -104,7 +104,10 @@ function projectRootNames(host) {
 
 function skillRoots(projectRoot, { home, host, scope }) {
   // Return all skill scan roots that exist on disk, lowest priority first.
-  // projectRoot null/undefined defaults to ROOT (the kit's own roots).
+  // projectRoot null/undefined defaults to ROOT (the kit's own roots). A given
+  // projectRoot also gets its nested <root>/X/skills folders, right after the
+  // plain skills/ folder: they hold sources too, so the host's copy beats them.
+  const nested = projectRoot ? findSkillFolders(projectRoot) : [];
   if (!projectRoot) projectRoot = ROOT;
   const roots = [];
   for (const name of homeRootNames(host, scope)) {
@@ -115,6 +118,7 @@ function skillRoots(projectRoot, { home, host, scope }) {
     const candidate = join(projectRoot, name);
     if (samePath(candidate, BUNDLED_DIR)) continue;
     if (isDir(candidate)) roots.push(candidate);
+    if (name === "skills") roots.push(...nested);
   }
   return roots;
 }
@@ -355,7 +359,8 @@ export function discover(projectRoot, { invokingRoot = gitRoot(process.cwd()), .
   //      home dir, host, and scope "host" or "all")
   //   2. any directory named `skills` under the project root (auto-detect, so
   //      projects with non-standard layouts like `audit-runtime/skills/` are
-  //      found without configuration — the agnostic principle)
+  //      found without configuration — the agnostic principle). skillRoots
+  //      scans these right after the plain skills/ folder, before host roots
   //   3. the host skill roots of the repo the agent runs in, when --path
   //      targets another repo (the "home repo" pattern). These only fill
   //      names the target and user roots lack, so the target wins a clash.
@@ -372,9 +377,7 @@ export function discover(projectRoot, { invokingRoot = gitRoot(process.cwd()), .
 }
 
 function scanRoots(projectRoot, options) {
-  const roots = skillRoots(projectRoot, scanOptions(options));
-  if (projectRoot) roots.push(...findSkillFolders(projectRoot));
-  return roots;
+  return skillRoots(projectRoot, scanOptions(options));
 }
 
 function scanRoot(root, index) {
