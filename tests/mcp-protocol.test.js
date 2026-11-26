@@ -26,7 +26,7 @@ function exchange(messages, cwd = process.cwd(), home) {
 test('modern discovery and tool listing work without initialization', () => {
   const [discovery,list] = exchange([request(0,'server/discover'),request(1,'tools/list')]);
   assert.equal(discovery.id,0);
-  assert.deepEqual(discovery.result.supportedVersions,[version,'2024-11-05']);
+  assert.deepEqual(discovery.result.supportedVersions,[version,'2025-11-25','2025-06-18','2024-11-05']);
   for (const response of [discovery,list]) {
     assert.equal(response.result.resultType,'complete');
     assert.equal(response.result.cacheScope,'private');
@@ -51,6 +51,14 @@ test('versions and capabilities are validated per request, with no inherited mod
   assert.equal(responses[3].result.protocolVersion,'2024-11-05');
   assert.equal(responses[4].result.resultType,undefined);
   assert.equal(responses[5].result.resultType,'complete');
+});
+
+test('legacy initialize keeps a supported requested version and falls back otherwise', () => {
+  const initialize = (id, protocolVersion) => ({jsonrpc:'2.0',id,method:'initialize',params:{protocolVersion,capabilities:{},clientInfo:{name:'legacy',version:'1'}}});
+  // 2025-03-26 is excluded: that revision requires JSON-RPC batch arrays.
+  const requested = ['2025-11-25','2025-06-18','2024-11-05','2025-03-26','2099-01-01',version];
+  const offered = requested.map((v,i)=>exchange([initialize(i,v)])[0].result.protocolVersion);
+  assert.deepEqual(offered,['2025-11-25','2025-06-18','2024-11-05','2025-11-25','2025-11-25','2025-11-25']);
 });
 
 test('metadata-free tool calls require an explicit legacy initialization', () => {

@@ -14,7 +14,11 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { traceMcpToolCall } from "./mcp-trace.js";
 
-const PROTOCOL_VERSION = "2024-11-05";
+// Legacy handshake versions, newest first. The lifecycle spec requires echoing a
+// supported requested version and recommends offering the latest otherwise.
+// 2025-03-26 is omitted because it requires JSON-RPC batch handling.
+const LEGACY_VERSIONS = ["2025-11-25", "2025-06-18", "2024-11-05"];
+const LEGACY_FALLBACK = LEGACY_VERSIONS[0];
 const MODERN_VERSION = "2026-07-28";
 const VERSION_KEY = "io.modelcontextprotocol/protocolVersion";
 const CAPABILITIES_KEY = "io.modelcontextprotocol/clientCapabilities";
@@ -236,9 +240,10 @@ export function startMcpServer({ input = process.stdin, output = process.stdout,
       respondError(output, msg.id, -32602, "Invalid initialize parameters");
       return;
     }
-    // A legacy client may accept this supported version or disconnect.
+    // Keep a supported requested version; otherwise the client may accept the fallback or disconnect.
     legacyInitialized = true;
-    reply({ protocolVersion: PROTOCOL_VERSION, capabilities: { tools: {} }, serverInfo: SERVER_INFO });
+    const protocolVersion = LEGACY_VERSIONS.includes(params.protocolVersion) ? params.protocolVersion : LEGACY_FALLBACK;
+    reply({ protocolVersion, capabilities: { tools: {} }, serverInfo: SERVER_INFO });
     return;
   }
   if (!modern && !legacyInitialized) {
@@ -246,7 +251,7 @@ export function startMcpServer({ input = process.stdin, output = process.stdout,
     return;
   }
   if (msg.method === "server/discover") {
-    reply({ supportedVersions: [MODERN_VERSION, PROTOCOL_VERSION], capabilities: { tools: {} }, ...cache });
+    reply({ supportedVersions: [MODERN_VERSION, ...LEGACY_VERSIONS], capabilities: { tools: {} }, ...cache });
     return;
   }
   if (msg.method === "ping" && !modern) { reply({}); return; }

@@ -38,8 +38,8 @@ may require a wrapper such as `mcpServers`; consult its configuration format.
 
 ### Protocol versions
 
-DIRF supports modern MCP `2026-07-28` requests and legacy `2024-11-05`
-initialization. Modern clients can call `server/discover` before selecting a
+DIRF supports modern MCP `2026-07-28` requests and legacy `2025-11-25`,
+`2025-06-18` and `2024-11-05` initialization. Modern clients can call `server/discover` before selecting a
 version, or send a tool request directly. Each modern request supplies its own
 metadata; discovery does not establish a session:
 
@@ -64,7 +64,8 @@ use `ttlMs: 0` and `cacheScope: "private"`. Unknown modern versions are rejected
 before tool execution with error `-32022` and supported modern versions.
 
 Legacy clients continue to use `initialize` and `notifications/initialized`;
-the server offers `2024-11-05`. Requests without modern version metadata require
+the server keeps a requested legacy version it supports and otherwise offers
+its latest legacy version, `2025-11-25`. `2025-03-26` is not offered because it requires JSON-RPC batches. Requests without modern version metadata require
 this legacy initialization first. Legacy versions listed by discovery use this handshake, not
 modern per-request metadata. Updating a host's MCP command and restarting its
 server process is necessary to use a new checkout; changing files elsewhere
